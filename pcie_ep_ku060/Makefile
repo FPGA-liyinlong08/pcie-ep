@@ -1,6 +1,7 @@
 .PHONY: m00 m00-verilator m00-pcie-model m00-vcs \
 	m01-checker-selftest m01-lint m01-verilator m01-vcs m01-vivado m01 \
-	m02-checker-selftest m02-lint m02-verilator m02-vcs m02-vivado m02 clean
+	m02-checker-selftest m02-afifo-check m02-lint m02-verilator \
+	m02-verilator-signoff m02-vcs m02-vivado m02 clean
 
 PYTHON ?= python3
 
@@ -53,10 +54,39 @@ m02-checker-selftest:
 		exit 1; \
 	fi
 
+m02-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_async_pkt_fifo \
+		-G"LGFIFO=9" \
+		/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/common/pcie_gray_sync.sv \
+		rtl/common/pcie_async_pkt_fifo.sv
+
+m02-afifo-check:
+	./sim/common/check_afifo_dependency.sh
+
+m02-verilator: m02-afifo-check
+	./sim/verilator/m02/run_m02.sh
+
+m02-verilator-signoff: m02-afifo-check
+	./sim/verilator/m02_native/run_m02_native.sh
+
+m02-vcs: m02-afifo-check
+	./sim/vcs/run_m02.sh
+
+m02-vivado: m02-afifo-check
+	./fpga/ku060/run_m02_checks.sh
+
+m02: m02-checker-selftest m02-lint m02-verilator \
+	m02-verilator-signoff m02-vcs m02-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
 	./sim/verilator/m01/clean.sh
 	./sim/verilator/m02/clean.sh
+	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh
 	$(RM) -r fpga/ku060/build_m01
+	$(RM) -r fpga/ku060/build_m02

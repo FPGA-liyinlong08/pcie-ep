@@ -7,10 +7,10 @@ Endpoint，包括独立自研的 RTL 和验证环境。
 冻结该模块的架构、端口契约和仿真计划；当前模块未通过验收前，不得进入下一
 模块。
 
-当前状态：**M01 已通过——`pcie_clk_reset` 时钟复位模块已经冻结**。
+当前状态：**M02 已通过——`pcie_async_pkt_fifo` 整包异步 FIFO 已经冻结**。
 
-M02 尚未开始。开始异步 Packet FIFO 前，必须先完成并评审 M02 的架构、接口
-和 RTL 前仿真计划。
+M03 尚未开始。开始 KU060 GTH PHY 前，必须先完成并评审 M03 的架构、接口和
+RTL 前仿真计划。
 
 ## M00 快速回归
 
@@ -49,13 +49,38 @@ make m01-vcs
 make m01-vivado
 ```
 
+## M02 快速回归
+
+```sh
+make m02
+```
+
+M02 按要求直接复用以下未修改的 `afifo.v`，构建前会检查其 SHA-256：
+
+```text
+/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
+```
+
+聚合回归包含错误 Stub 自检、六种 RX/TX 时钟组合 cocotb 回归、每组一百万
+Packet 的 Verilator/C++ 高速 Scoreboard、VCS 和 KU060 Vivado 综合/CDC/DRC。
+
+```sh
+make m02-checker-selftest
+make m02-lint
+make m02-verilator
+make m02-verilator-signoff
+make m02-vcs
+make m02-vivado
+```
+
 ## 目录职责
 
 - `docs/architecture`：总体架构和各模块冻结后的架构说明。
 - `docs/interfaces`：RTL 与测试平台共同遵守的信号级接口契约。
 - `docs/verification`：RTL 编写前的仿真计划和阶段门模板。
 - `docs/reports`：完成后的阶段门报告与可复现证据。
-- `rtl`：独立自研的可综合 SystemVerilog；当前包含 M01 时钟复位模块。
+- `rtl`：独立自研的可综合 SystemVerilog；当前包含 M01 时钟复位和 M02 Packet
+  FIFO 封装。
 - `sim/verilator`：cocotb/Verilator 单元及集成测试。
 - `sim/vcs`：Xilinx 原语及后续串行链路 VCS 仿真。
 - `fpga/ku060`：Vivado 脚本、约束和 KU060 板级集成。
