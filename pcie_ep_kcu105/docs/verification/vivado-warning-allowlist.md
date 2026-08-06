@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1～K04-v1 已建立并冻结**
+状态：**K00-v1～K05-v1 已建立并冻结**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -81,3 +81,17 @@ K04 CRC 的 KU040 OOC 检查只允许以下固定普通 Warning；脚本对实�
 `report_cdc` 固定只有一组 `CDC-9 Info`，来源必须是 OOC 顶层 `rst_n` 到
 `pcie_reset_sync` 四级同步链；不允许 CDC Warning/Critical。`report_drc` 的
 `CFGBVS-1` 固定为 1 个，其他 DRC Warning、所有 Critical Warning 和 Error 均失败。
+
+## K05 Allowlist
+
+K05 DLLP/FC 的 KU040 OOC 检查允许且只允许：
+
+| 来源 | ID | 原因与处理 |
+|---|---|---|
+| 综合日志 | `Synth 8-7080` | K05 OOC 规模不足以启用并行综合 |
+| 时序日志 | `Timing 38-242` | OOC 顶层没有最终 `phy_pclk` BUFG_GT 位置 |
+| `report_drc` | `CFGBVS-1` | OOC 无板级配置属性；K01/K03 集成约束已固定 `1.8 V/GND` |
+
+`report_cdc` 固定只有 OOC `rst_n` 到四级同步链的一组 `CDC-9 Info`。Codec 内部
+CRC enable reset 来自同一 `phy_pclk` 域并经两级同步释放，不产生跨时钟路径。
+新增 Warning、CDC Warning/Critical、DRC Critical 或 Error 均失败。

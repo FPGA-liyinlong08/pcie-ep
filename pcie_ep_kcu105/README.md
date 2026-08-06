@@ -22,12 +22,15 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K04：**PASS / K04-v1 已冻结**；DLLP CRC16、TLP LCRC32、错误 Stub、
   cocotb Directed/随机、100 万算法向量和 KU040 250 MHz OOC 均通过；VCS
   编译兼容性沿用许可证延期记录，最迟在 K11 前补齐。
+- K05：**PASS / K05-v1 已冻结**；6 Byte DLLP Codec、InitFC1/2、UpdateFC、
+  VC0 P/NP/Cpl 信用、错误 Stub、10,000 个 cocotb 随机事件、100 万 Native
+  信用事件和 KU040 250 MHz OOC 均通过；尚未开始 K06。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
 - K02 已生成 standalone PHY 封装和 bring-up bitstream；用户批准延期两项 K02
-  动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04 已独立完成并冻结；
-  当前尚未开始 K05。
+  动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04、K05 已独立完成并
+  冻结；当前尚未开始 K06。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 
@@ -177,3 +180,26 @@ make k04-vivado
 单 bit 错误、协议错误恢复和 10,000 个随机 Packet。`k04-verilator-signoff`
 执行 1,000,000 个算法向量以及各 100,000 个 residue/单 bit 错误向量；
 `k04-vivado` 对 KU040 执行 250 MHz OOC 综合、时序、资源、CDC 和 DRC 门禁。
+
+## K05 命令
+
+完整回归：
+
+```bash
+make k05
+```
+
+可独立运行：
+
+```bash
+make k05-checker-selftest
+make k05-lint
+make k05-verilator
+make k05-verilator-signoff
+make k05-vivado
+```
+
+`k05-verilator` 与 `cocotbext-pcie Dllp` 逐 Byte 交叉比对，覆盖 InitFC/UpdateFC、
+可变 K03 拍型、CRC/长度/framing 错误、随机反压、有限/无限信用和 10,000 个随机
+事件。`k05-verilator-signoff` 执行 1,000,000 个独立信用事件；`k05-vivado` 执行
+KU040 250 MHz OOC 综合、时序、资源、CDC 和 DRC 门禁。

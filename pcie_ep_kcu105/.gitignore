@@ -19,3 +19,4 @@ fpga/kcu105/ip/pcie_phy_x1_gen3/*
 !fpga/kcu105/ip/pcie_phy_x1_gen3/pcie_phy_x1_gen3.xci
 # K04 Native 结果已摘要进阶段报告，原始文本由回归确定性重建。
 sim/verilator/k04_native/summary.txt
+sim/verilator/k05_native/summary.txt

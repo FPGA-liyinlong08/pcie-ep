@@ -7,7 +7,9 @@
 	k02-hw-probe k02-hw-program k02 \
 	k03-checker-selftest k03-lint k03-verilator k03-vivado k03 \
 	k04-checker-selftest k04-lint k04-verilator k04-verilator-signoff \
-	k04-vivado k04 clean
+	k04-vivado k04 \
+	k05-checker-selftest k05-lint k05-verilator k05-verilator-signoff \
+	k05-vivado k05 clean
 
 PYTHON ?= python3
 
@@ -211,6 +213,41 @@ k04-vivado:
 k04: k04-checker-selftest k04-lint k04-verilator \
 	k04-verilator-signoff k04-vivado
 
+k05-checker-selftest:
+	@$(MAKE) -C sim/verilator/k05 NEGATIVE_STUB=1 \
+		TESTCASE=initialization_and_credit_gating SIM_BUILD=sim_build_negative
+	@cp sim/verilator/k05/results.xml sim/verilator/k05/results_negative.xml
+	@if grep -q '<failure' sim/verilator/k05/results.xml; then \
+		echo "K05_CHECKER_SELFTEST_PASS"; \
+	else \
+		echo "错误：跳过InitFC的K05 Stub未被Checker检出"; \
+		exit 1; \
+	fi
+
+k05-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module k05_dllp_fc_test_top \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/dll/pcie_crc_stream.sv \
+		rtl/dll/pcie_crc16_dllp.sv \
+		rtl/dll/pcie_fc_local_credit_pool.sv \
+		rtl/dll/pcie_dllp_codec.sv \
+		rtl/dll/pcie_dllp_fc_manager.sv \
+		rtl/dll/pcie_dllp_fc.sv \
+		sim/verilator/k05/k05_dllp_fc_test_top.sv
+
+k05-verilator:
+	./sim/verilator/k05/run_k05.sh
+
+k05-verilator-signoff:
+	./sim/verilator/k05_native/run_k05_native.sh
+
+k05-vivado:
+	./fpga/kcu105/run_k05_dllp_fc_ooc.sh
+
+k05: k05-checker-selftest k05-lint k05-verilator \
+	k05-verilator-signoff k05-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
@@ -220,9 +257,12 @@ clean:
 	./sim/verilator/k03/clean.sh
 	./sim/verilator/k04/clean.sh
 	./sim/verilator/k04_native/clean.sh
+	./sim/verilator/k05/clean.sh
+	./sim/verilator/k05_native/clean.sh
 	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh
 	$(RM) -r fpga/kcu105/build_k00_m02
 	$(RM) -r fpga/kcu105/build_k01
 	$(RM) -r fpga/kcu105/build_k03
 	$(RM) -r fpga/kcu105/build_k04
+	$(RM) -r fpga/kcu105/build_k05
