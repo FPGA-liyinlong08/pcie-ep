@@ -41,7 +41,7 @@ flowchart LR
     AND --> PR["PIPE 4级复位同步器"]
 
     CCLK["phy_coreclk 250 MHz"] --> CR
-    PCLK["phy_pclk<br/>62.5/125/250 MHz"] --> PR
+    PCLK["phy_pclk<br/>125/250/250 MHz"] --> PR
     CR --> CORE["core_rst_n"]
     PR --> PIPE["pipe_rst_n"]
 ```

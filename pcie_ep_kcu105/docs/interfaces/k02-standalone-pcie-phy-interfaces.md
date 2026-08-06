@@ -1,6 +1,6 @@
 # K02 standalone PCIe PHY 原生接口契约
 
-状态：**K02-v1 接口冻结；Stub/Verilator/综合接口检查已通过，等待 VCS 动态与上板**
+状态：**K02-PHY32-v1.1 条件冻结；VCS 动态与上板延期**
 
 ## 1. 顶层模块 `kcu105_pcie_phy_wrapper`
 
@@ -20,7 +20,7 @@
 
 | 端口 | 方向 | 位宽 | 规则 |
 |---|---:|---:|---|
-| `phy_pclk` | 输出 | 1 | Gen1/2/3 为 62.5/125/250 MHz |
+| `phy_pclk` | 输出 | 1 | Gen1/2/3 为 125/250/250 MHz |
 | `phy_coreclk` | 输出 | 1 | 固定 250 MHz |
 | `phy_userclk` | 输出 | 1 | 固定 125 MHz，K02 不使用 |
 | `phy_mcapclk` | 输出 | 1 | PHY 生成，K02 只观测 |
@@ -45,8 +45,10 @@
 | `phy_rxstart_block` | 输出 | 1 | `phy_pclk` | Gen3 块开始 |
 | `phy_rxsync_header` | 输出 | 2 | `phy_pclk` | Gen3 Sync Header |
 
-K03 不得改变上述宽度或字节序；如协议实现需要内部格式转换，只能在 K03 MAC
-内部完成。
+端口名义宽度保持 32 bit，但有效宽度按速率固定：Gen1/2 只有
+`data[15:0]` 和 `datak[1:0]` 有效，每拍两个 8b/10b Symbol；Gen3 使用 32 bit
+block 数据。Gen1/2 时 `data[31:16]` 必须发送 0、接收侧不得采样。K03 不得改变
+上述宽度或字节序；如协议实现需要内部格式转换，只能在 K03 MAC 内部完成。
 
 ## 3. PHY 控制与状态
 

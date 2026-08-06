@@ -1,7 +1,8 @@
 # K02 standalone `pcie_phy_x1_gen3` 架构说明
 
-状态：**K02-v1.1 架构冻结；静态实现已验证，等待 VCS 动态与上板**  
-目标器件：`xcku040-ffva1156-2-e`  
+状态：**K02-v1.2 条件冻结；VCS 动态与上板延期**
+
+目标器件：`xcku040-ffva1156-2-e`
 IP：Vivado 2021.2 `xilinx.com:ip:pcie_phy:1.0`，Revision 19
 
 ## 1. 模块职责
@@ -97,7 +98,8 @@ PCIe Lane 0 管脚不相容。K02 首次完整布局实际得到 X0Y7，随后�
 
 - K01 `IBUFDS_GTE3.O` → PHY `phy_gtrefclk`；
 - K01 `IBUFDS_GTE3.ODIV2 → BUFG_GT` → PHY `phy_refclk`；
-- PHY 输出 `phy_pclk`：Gen1/2/3 分别为 62.5/125/250 MHz；
+- PHY 输出 `phy_pclk`：Gen1/2/3 分别为 125/250/250 MHz；
+- Gen1/2 每拍仅低 16 bit、两个 Symbol 有效；Gen3 使用完整 32 bit block 数据；
 - PHY 输出 `phy_coreclk`：固定 250 MHz；
 - PHY 输出 `phy_userclk`：固定 125 MHz，本阶段只观测；
 - PHY 输出 `phy_mcapclk`：本阶段只观测；

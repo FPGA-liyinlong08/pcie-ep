@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1、K01-v1 冻结；K02-v1 已建立**
+状态：**K00-v1、K01-v1 冻结；K02-v1、K03-v1 已建立**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -46,3 +46,23 @@ K02 使用 Vivado 2021.2 自动生成的 `pcie_phy v1.0` 与 GT Wizard RTL。未
 K02 Route 后 `report_drc` 必须为 0 违例。`report_cdc` 只允许 Xilinx PHY 内部及
 K01复位链的 `CDC-3 Info`、`CDC-9 Info`；Critical CDC 固定为 0。`check_timing`
 允许 PERST# 和 LED 已显式 false-path 的端口提示，内部无时钟和未约束端点必须为 0。
+
+## K03 Allowlist
+
+K03 OOC 允许以下唯一 Warning ID：
+
+| ID | 原因 |
+|---|---|
+| `Synth 8-3917` | K03 固定 Gen1，Gen3/EQ/协商状态输出按契约固定为常量 |
+| `Synth 8-7080` | OOC 模块规模不足以启用并行综合 |
+| `Synth 8-7129` | PHY32 高 16 bit 在 Gen1 契约中明确不采样 |
+| `Timing 38-242` | OOC 顶层没有 K02 BUFG_GT 的实际 `HD.CLK_SRC` |
+
+K03+K02 完整集成允许 K02 的六类固定 Warning，并新增 `Synth 8-3332`：集成
+bring-up 顶层在 DLL 尚未实现时把 TX Packet 输入固定为空，综合会移除不可达的 TX
+Framer 状态；Framer 完整实现由 K03 OOC 综合和随机回归签核。脚本比较唯一 ID 的
+精确集合，任何新增或减少均要求复核。
+
+OOC `report_cdc` 允许且只允许 `pipe_rst_n` 输入产生 CDC-7；这是单模块边界看不到
+K01 四级同步释放链造成的工具局限。完整集成 `report_cdc` 必须只把该链报告为
+CDC-9 Info，并保持 0 Critical。

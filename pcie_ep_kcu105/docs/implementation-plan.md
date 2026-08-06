@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**计划 v1 已冻结；K00、K01 PASS；K02 执行中、未冻结**
+状态：**计划 v1 已冻结；K00、K01 PASS；K02、K03 条件冻结；K04 未开始**
 
 ## 1. 阶段门
 
@@ -23,7 +23,7 @@
 | K00 | 新工程、中文基线文档、M00 通用验证和 M02 Packet FIFO 的 KU040 再签核 | Verilator/VCS 通过；六组共 600 万 Packet；KU040 OOC、BRAM、CDC、DRC 通过 |
 | K01 | `kcu105_refclk_reset`：REFCLK 缓冲、PERST# 分发、PIPE/Core 复位 | 1,000 组随机复位；VCS 原语；AB6/AB5、K22 约束；KU040 CDC/DRC |
 | K02 | Tcl 确定生成并封装 `pcie_phy_x1_gen3`，冻结原生端口/XCI | 指纹稳定；OOC/实现；GT 位置；VCS Detect/速率切换；上板检测到对端；第一可行性门 |
-| K03 | Gen1 x1 LTSSM/MAC：Detect、Polling、Configuration、Recovery、L0、Ordered Set、成帧 | Partner 注错；100 次训练；KCU105 Gen1 x1 L0 |
+| K03 | Gen1 x1 LTSSM/MAC：Detect、Polling、Configuration、Recovery、L0、Ordered Set、成帧 | 软件/静态门禁 PASS；VCS 真 PHY 串行和 KCU105 Gen1 x1 L0 经用户批准延期，最迟 K11 补齐 |
 | K04 | DLLP CRC16 与 TLP LCRC32 | Python 逐 Bit 模型；1～4096 Byte；全部末拍；100 万向量 |
 | K05 | DLLP、InitFC1/2、UpdateFC、VC0 P/NP/Cpl 信用 | 信用无上下溢；100 万事件；DLL Active 正确 |
 | K06 | 12-bit Sequence、ACK/NAK、Replay Timer/Buffer | 完整回绕；坏 LCRC、丢 ACK、NAK、重复、超时均恢复 |

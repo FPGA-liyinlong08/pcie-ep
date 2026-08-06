@@ -83,7 +83,7 @@ VCS 脚本按 Vivado 2021.2 生成目录和编译顺序维护固定源清单。V
 1. 100 MHz REFCLK、PERST# 保持至少 100 ns；
 2. 等待 `phy_phystatus_rst` 撤销和 PIPE/Core 时钟稳定；
 3. 测量 `phy_coreclk=250 MHz`、`phy_userclk=125 MHz`；
-4. Gen1 下测量 `phy_pclk=62.5 MHz`；
+4. Gen1 下测量 `phy_pclk=125 MHz`；
 5. 在 P1/Electrical Idle 下发 Receiver Detect，等待 PhyStatus，检查 RxStatus=011；
 6. 执行 Gen1→Gen2→Gen3→Gen1，每次等待 PhyStatus 并测量 PCLK；
 7. Rate Change 期间检查 Core Reset 保持释放、PIPE Reset 正确重新同步；
@@ -115,6 +115,6 @@ VCS 的 `SIM_RECEIVER_DETECT_PASS=TRUE` 只证明数字控制路径。无 Root P
 5. 分别在无主机和有主机条件测试，结果必须不同；
 6. 重复 20 次 PERST#/冷启动，Receiver Detect 结果一致。
 
-K02 只有在以下全部成立后才能冻结：错误 Stub、Verilator、XCI 指纹、VCS 真 IP、
-OOC、完整实现和真实 KCU105 Receiver Detect 全部 PASS。若没有可访问硬件，生成
-bitstream 只能记为“待上板”，不得把 K02 标为 PASS，也不得开始 K03。
+正常门禁要求错误 Stub、Verilator、XCI 指纹、VCS 真 IP、OOC、完整实现和真实
+KCU105 Receiver Detect 全部 PASS。2026-08-06 用户批准把 VCS 动态和实板验证延期
+并开始 K03；该例外只允许条件冻结，延期项最迟必须在 K11 Gen1 集成冻结前补齐。

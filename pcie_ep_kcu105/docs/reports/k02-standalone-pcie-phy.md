@@ -1,8 +1,10 @@
 # K02 standalone PCIe PHY 阶段报告
 
-日期：2026-08-06  
-状态：**执行中，未冻结，禁止开始 K03**  
-接口版本：`K02-PHY32-v1`
+日期：2026-08-06
+
+状态：**K02-v1.2 条件冻结；VCS 动态与实板验收经用户批准延期，允许开始 K03**
+
+接口版本：`K02-PHY32-v1.1`
 
 ## 1. 阶段结论
 
@@ -19,11 +21,13 @@ bring-up 顶层、行为验证和 KU040 完整实现。当前自动化结果为�
 | XCI/模型生成检查 | PASS | 连续两次 XCI 指纹一致，模型关键参数一致 |
 | Vivado OOC/完整实现 | PASS | Route、DRC、CDC、时序、bitstream 全部通过 |
 | VCS 真 IP 源码编译 | PASS | PHY、GT Wizard、K01/K02 与 testbench 均通过 `vlogan` |
-| VCS 真 IP 动态仿真 | **PENDING** | common elaboration 等待 `VCSCompiler_Net` 300 秒未获许可证 |
-| KCU105 Receiver Detect | **PENDING** | Hardware Manager 发现 Digilent 目标，但 JTAG 链上未检测到 FPGA |
+| VCS 真 IP 动态仿真 | **DEFERRED** | common elaboration 等待 `VCSCompiler_Net` 300 秒未获许可证 |
+| KCU105 Receiver Detect | **DEFERRED** | 当前不方便插入板卡，Hardware Manager 尚未检测到 FPGA |
 
-因此 K02 不能标记 PASS，也不能按阶段门进入 K03。动态 VCS 和真实硬件验收完成后，
-在本报告追加结果并冻结 K02。
+2026-08-06 用户明确要求记录许可证问题、待板卡可用后再做上板验证，并继续 K03。
+因此本阶段采用一次受控的门禁例外：已通过的接口、RTL、Verilator 和 Vivado 静态
+结果冻结；两项动态验收不记为 PASS，只记为延期，K03 可以开始。K11 Gen1 集成
+冻结前必须补齐这两项，不能把本例外解释为硬件或真 IP 动态验证已经通过。
 
 ## 2. 已实现内容
 
@@ -67,6 +71,19 @@ Lane 0。实现脚本会同时断言管脚和 GT LOC，防止配置再次漂移�
 - XCI `CONFIG.phy_async_en=true` 对应生成模型 `PHY_ASYNC_EN="FALSE"`；
 - GT 模型 `SIM_RECEIVER_DETECT_PASS="TRUE"`；
 - GT 模型 `SIM_RESET_SPEEDUP="TRUE"`。
+
+### 4.1 PHY32 Gen1/2 有效宽度勘误
+
+检查 Vivado 实际生成源和 Xilinx KCU105 PHY 示例后，修正原计划的时钟假设：
+
+- Gen1：`phy_pclk=125 MHz`，每拍低 16 bit 有效；
+- Gen2：`phy_pclk=250 MHz`，每拍低 16 bit 有效；
+- Gen3：`phy_pclk=250 MHz`，32 bit block 数据有效；
+- Gen1/2 的 `phy_txdatak/phy_rxdatak[1:0]` 分别对应低 16 bit 的两个字节，
+  高 16 bit 不属于 Gen1/2 数据通路。
+
+证据是生成 GT wrapper 的 `TX_DATA_WIDTH/RX_DATA_WIDTH=20`、`GT_TXDATAK[1:0]`
+接线以及 Xilinx 示例只生成两个 Gen1/2 Symbol。K03 以这一实际生成接口为准。
 
 只有 XCI 和生成 Tcl 纳入版本管理；生成 Verilog、DCP、XPR 和仿真库均被忽略。
 
@@ -155,4 +172,4 @@ make k02-vivado
 ```
 
 待 VCS 许可证和 KCU105 硬件可用后，只重跑未完成门禁；已经通过的接口和 RTL
-范围不得在未重新执行完整 K02 回归的情况下修改。
+范围不得在未重新执行完整 K02 回归的情况下修改。两项结果最迟在 K11 冻结前补齐。

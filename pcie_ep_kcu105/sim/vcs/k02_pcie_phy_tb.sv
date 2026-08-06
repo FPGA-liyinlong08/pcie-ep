@@ -234,7 +234,7 @@ module k02_pcie_phy_tb;
         end
         measure_core_clock();
         measure_user_clock();
-        measure_pclk(16_000);
+        measure_pclk(8_000);
 
         // 按 Xilinx standalone PHY 示例流程从 P1 进入 P0。
         phy_powerdown = 2'b00;
@@ -252,9 +252,9 @@ module k02_pcie_phy_tb;
 
         phy_powerdown = 2'b00;
         wait_phystatus("ReturnP0");
-        change_rate(2'b01, 8_000);
+        change_rate(2'b01, 4_000);
         change_rate(2'b10, 4_000);
-        change_rate(2'b00, 16_000);
+        change_rate(2'b00, 8_000);
 
         $display("K02_VCS_PHY_PASS receiver_detect=forced-model rate_sequence=G1-G2-G3-G1");
         $finish;

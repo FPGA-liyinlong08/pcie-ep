@@ -17,7 +17,7 @@
 | `pcie_refclk_p` | 1 | GT Reference | AB6 | 100 MHz 差分正端 |
 | `pcie_refclk_n` | 1 | GT Reference | AB5 | 100 MHz 差分负端 |
 | `pcie_perst_n` | 1 | 异步 | K22、LVCMOS18、上拉 | 板级 PERST#，低有效 |
-| `phy_pclk` | 1 | PIPE | K02 PHY 输出 | Gen1/2/3 分别为 62.5/125/250 MHz |
+| `phy_pclk` | 1 | PIPE | K02 PHY 输出 | Gen1/2/3 分别为 125/250/250 MHz |
 | `phy_coreclk` | 1 | Core | K02 PHY 输出 | 固定 250 MHz |
 | `phy_phystatus_rst` | 1 | 异步置位源 | K02 PHY 输出，高有效 | 只复位 PIPE 域 |
 
