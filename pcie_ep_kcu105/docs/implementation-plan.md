@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**计划 v1 已冻结；K00、K01 PASS，K02 未开始**
+状态：**计划 v1 已冻结；K00、K01 PASS；K02 执行中、未冻结**
 
 ## 1. 阶段门
 

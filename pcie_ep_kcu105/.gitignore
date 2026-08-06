@@ -14,3 +14,6 @@ __pycache__/
 sim/vcs/csrc/
 sim/vcs/ucli.key
 fpga/kcu105/build*/
+# K02 只版本管理可重建的 XCI；IP 输出产品由 Vivado 按需生成。
+fpga/kcu105/ip/pcie_phy_x1_gen3/*
+!fpga/kcu105/ip/pcie_phy_x1_gen3/pcie_phy_x1_gen3.xci

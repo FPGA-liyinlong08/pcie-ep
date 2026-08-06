@@ -63,7 +63,7 @@ Memory Request。
 | PCIe Lane 0 TX | `AC4/AC3` | `pcie_txp/n` |
 | PCIe REFCLK | `AB6/AB5` | 100 MHz，Quad 225 MGTREFCLK0 |
 | PERST# | `K22` | LVCMOS18，低有效 |
-| GT Channel | `GTHE3_CHANNEL_X0Y4` | Lane 0 |
+| GT Channel | `GTHE3_CHANNEL_X0Y7` | Quad 225 的 Channel 3，连接 PCIe Lane 0 |
 | GT Common | `GTHE3_COMMON_X0Y1` | QPLL1 |
 
 KCU105 的 `J74` 必须短接 1、2 脚以选择 x1。`G10/F10` 的 300 MHz 差分时钟
@@ -92,7 +92,7 @@ standalone PHY 的 K02 生成参数冻结为：
 | `phy_userclk_freq` | `125_MHz` |
 | `phy_coreclk_freq` | `250_MHz` |
 | `lane0_gt_bank` | `GTH_Quad_225` |
-| `lane0_gt_location` | `GTHE3_CHANNEL_X0Y4` |
+| `lane0_gt_location` | `GTHE3_CHANNEL_X0Y7` |
 | `refclk1_location` | `Bank_225_MGTREFCLK0` |
 | `pll_type` | `QPLL1` |
 | `pipeline_stages` | `0` |

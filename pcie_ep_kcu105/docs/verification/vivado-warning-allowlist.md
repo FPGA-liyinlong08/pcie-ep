@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1、K01-v1 冻结**
+状态：**K00-v1、K01-v1 冻结；K02-v1 已建立**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -27,3 +27,22 @@ Warning。构建脚本对实际 ID 集合做精确比较。
 
 K01 的 CDC 结果固定为 2 组 `CDC-9 Info`，分别是 PERST# 到 Core/PIPE 的四级
 同步释放链；DRC 固定为 0 违例。新增 Warning、Critical Warning 或 Error 均失败。
+
+## K02 Allowlist
+
+K02 使用 Vivado 2021.2 自动生成的 `pcie_phy v1.0` 与 GT Wizard RTL。未启用的
+外部 PLL、调试、保留端口和非当前配置分支会产生以下固定普通 Warning。构建脚本
+精确比较 ID 集合；所有 Critical Warning、Error 和新增普通 Warning 均失败。
+
+| 来源 | ID | 原因与处理 |
+|---|---|---|
+| PHY 生成 RTL | `Synth 8-3848` | 未选择的外部 PLL、DRP及调试网络无驱动；最终网表已优化，DRC 为 0 |
+| PHY 生成 RTL | `Synth 8-6014` | 未使用的 TX EQ/PLL 配置分支寄存器被移除 |
+| PHY 生成 RTL | `Synth 8-7023` | 生成器保留的非当前配置端口未连接，实例连接数提示 |
+| PHY 生成 RTL | `Synth 8-7071` | 未使用的调试/内部状态输出未连接 |
+| 综合器 | `Synth 8-7080` | IP OOC 与 K02 bring-up 顶层规模较小，未达到并行综合条件 |
+| PHY/GT Wizard 生成 RTL | `Synth 8-7129` | 未启用的校准、保留和复位输入无负载 |
+
+K02 Route 后 `report_drc` 必须为 0 违例。`report_cdc` 只允许 Xilinx PHY 内部及
+K01复位链的 `CDC-3 Info`、`CDC-9 Info`；Critical CDC 固定为 0。`check_timing`
+允许 PERST# 和 LED 已显式 false-path 的端口提示，内部无时钟和未约束端点必须为 0。

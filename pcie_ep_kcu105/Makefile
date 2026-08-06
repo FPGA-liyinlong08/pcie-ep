@@ -3,7 +3,8 @@
 	k00-m02-verilator k00-m02-verilator-signoff k00-m02-vcs \
 	k00-m02-vivado k00-m02 \
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
-	clean
+	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado \
+	k02-hw-probe k02-hw-program k02 clean
 
 PYTHON ?= python3
 
@@ -87,11 +88,61 @@ k01-vivado:
 
 k01: k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado
 
+k02-checker-selftest:
+	@$(MAKE) -C sim/verilator/k02 NEGATIVE_STUB=1 \
+		TESTCASE=reset_detect_and_rate SIM_BUILD=sim_build_negative
+	@cp sim/verilator/k02/results.xml sim/verilator/k02/results_negative.xml
+	@if grep -q '<failure' sim/verilator/k02/results.xml; then \
+		echo "K02_CHECKER_SELFTEST_PASS"; \
+	else \
+		echo "错误：故意释放复位的 K02 Stub 未被 Checker 检出"; \
+		exit 1; \
+	fi
+
+k02-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
+		-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+		--top-module kcu105_pcie_phy_bringup_top \
+		sim/verilator/k02/xilinx_primitive_stubs.sv \
+		sim/verilator/k02/pcie_phy_x1_gen3_behavioral_stub.sv \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/phy/kcu105_reset_ctrl.sv \
+		rtl/phy/kcu105_refclk_reset.sv \
+		rtl/phy/kcu105_pcie_phy_wrapper.sv \
+		rtl/phy/kcu105_pcie_phy_bringup_top.sv
+
+k02-verilator:
+	./sim/verilator/k02/run_k02.sh
+
+k02-ip:
+	./fpga/kcu105/run_k02_ip_generation.sh
+
+k02-vcs:
+	./sim/vcs/run_k02.sh
+
+k02-vivado:
+	./fpga/kcu105/run_k02_impl.sh
+
+k02-hw-probe:
+	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
+		-log fpga/kcu105/build_k02/hw_probe.log \
+		-tclargs localhost:3122 probe
+
+k02-hw-program:
+	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
+		-log fpga/kcu105/build_k02/hw_program.log \
+		-tclargs localhost:3122 program
+
+k02: k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
 	./sim/verilator/m02/clean.sh
 	./sim/verilator/k01/clean.sh
+	./sim/verilator/k02/clean.sh
 	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh
 	$(RM) -r fpga/kcu105/build_k00_m02
