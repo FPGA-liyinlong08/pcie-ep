@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**计划 v1 已冻结；K00、K01、K04～K06 PASS；K02、K03 条件冻结；K07 未开始**
+状态：**计划 v1 已冻结；K00、K01、K04～K07 PASS；K02、K03 条件冻结；K08 未开始**
 
 ## 1. 阶段门
 
@@ -27,7 +27,7 @@
 | K04 | DLLP CRC16 与 TLP LCRC32 | PASS；逐 Bit/交叉模型、1～4096 Byte、全部末拍、100 万算法向量、250 MHz OOC 均通过 |
 | K05 | DLLP、InitFC1/2、UpdateFC、VC0 P/NP/Cpl 信用 | PASS；9种FC DLLP、初始化/周期更新、100万信用事件、250 MHz OOC均通过 |
 | K06 | 12-bit Sequence、ACK/NAK、Replay Timer/Buffer | PASS；10,000随机Packet、1,048,576 Native事务、256次回绕、250 MHz OOC均通过 |
-| K07 | Cfg/Mem/Completion TLP Codec | 与 `cocotbext-pcie Tlp` 逐字段一致；非法请求进入 UR/错误路径 |
+| K07 | Cfg/Mem/Completion TLP Codec | PASS；12项回归、22,000随机Packet、多位置复位、11个计数器结构审计、错误/UR路径、严格lint和250 MHz OOC均通过 |
 | K08 | 4 KiB Type-0 配置空间和 PCIe Capability | `1234:e001`、4 KiB BAR0、逐 Bit 测试、RC 枚举 |
 | K09 | BAR0 命中、写拆分、读执行和 Completion | AXI 随机反压；10 万请求；MPS/RCB/4 KiB；错误转 CA |
 | K10 | 4 KiB Demo AXI4-Lite Slave | 签名、版本、状态、计数、Scratch、RAM 和 Byte Strobe |

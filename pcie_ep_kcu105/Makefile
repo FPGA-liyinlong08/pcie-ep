@@ -11,7 +11,8 @@
 	k05-checker-selftest k05-lint k05-verilator k05-verilator-signoff \
 	k05-vivado k05 \
 	k06-checker-selftest k06-lint k06-verilator k06-verilator-signoff \
-	k06-vivado k06 clean
+	k06-vivado k06 \
+	k07-checker-selftest k07-lint k07-verilator k07-vivado k07 clean
 
 PYTHON ?= python3
 
@@ -300,6 +301,40 @@ k06-vivado:
 k06: k06-checker-selftest k06-lint k06-verilator \
 	k06-verilator-signoff k06-vivado
 
+k07-checker-selftest:
+	@$(MAKE) -C sim/verilator/k07 NEGATIVE_STUB=1 \
+		TESTCASE=whole_packet_commit_guard SIM_BUILD=sim_build_negative \
+		COCOTB_RESULTS_FILE=results_negative.xml
+	@if grep -q '<failure' sim/verilator/k07/results_negative.xml; then \
+		echo "K07_CHECKER_SELFTEST_PASS"; \
+	else \
+		echo "错误：提前分派Cfg请求的K07 Stub未被Checker检出"; \
+		exit 1; \
+	fi
+
+k07-lint:
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module pcie_tlp_codec \
+		rtl/tl/pcie_tlp_codec.sv
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module k07_tlp_codec_ooc_top \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/tl/pcie_tlp_codec.sv \
+		rtl/tl/k07_tlp_codec_ooc_top.sv
+	./sim/verilator/k07/check_counter_saturation.py
+
+k07-verilator:
+	./sim/verilator/k07/run_k07.sh
+
+k07-vivado:
+	./fpga/kcu105/run_k07_tlp_codec_ooc.sh
+
+k07:
+	$(MAKE) k07-checker-selftest
+	$(MAKE) k07-lint
+	$(MAKE) k07-verilator
+	$(MAKE) k07-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
@@ -312,7 +347,9 @@ clean:
 	./sim/verilator/k05/clean.sh
 	./sim/verilator/k06/clean.sh
 	./sim/verilator/k06_native/clean.sh
+	./sim/verilator/k07/clean.sh
 	$(RM) -r fpga/kcu105/build_k06
+	$(RM) -r fpga/kcu105/build_k07
 	./sim/verilator/k05_native/clean.sh
 	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh

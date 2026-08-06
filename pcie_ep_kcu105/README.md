@@ -27,13 +27,17 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
   信用事件和 KU040 250 MHz OOC 均通过。
 - K06：**PASS / K06-v1 已冻结**；12-bit Sequence、ACK/NAK、LCRC、Replay
   Timer/Buffer、K05集成和两级TX仲裁均已实现；10,000个随机Packet、1,048,576
-  个Native事务、256次Sequence回绕及KU040 250 MHz OOC均通过；尚未开始K07。
+  个Native事务、256次Sequence回绕及KU040 250 MHz OOC均通过。
+- K07：**PASS / K07-TLP-CODEC-v1 已冻结**；Cfg/Mem/Cpl整包解码、严格格式检查、
+  UR/错误路径、Completion编码和K06信用事件均已实现；错误Stub、12项cocotb、
+  22,000个随机Packet、多位置复位、11个饱和计数器结构审计、严格lint及KU040
+  250 MHz OOC均通过；尚未开始K08。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
 - K02 已生成 standalone PHY 封装和 bring-up bitstream；用户批准延期两项 K02
   动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04、K05 已独立完成并
-  冻结；K06已完成并冻结，当前尚未开始K07。
+  冻结；K06、K07已完成并冻结，当前尚未开始K08。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 
@@ -50,7 +54,7 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 | `rtl/common` | 可复用同步器和异步 Packet FIFO |
 | `rtl/phy` | K01 时钟/复位、K02 PHY 封装、K03 Gen1 LTSSM/MAC |
 | `rtl/dll` | K04 CRC，以及后续 DLLP/FC/Replay 模块 |
-| `rtl/tl` | 后续 TLP、配置空间和 BAR 模块 |
+| `rtl/tl` | K07 TLP Codec，以及后续配置空间和 BAR 模块 |
 | `sim/verilator` | cocotb/Verilator 与 Native C++ 回归 |
 | `sim/vcs` | VCS/Xilinx 库 Smoke 和 FIFO 回归 |
 | `fpga/kcu105` | KU040 约束、Tcl 和阶段构建入口 |
@@ -230,3 +234,27 @@ make k06-vivado
 `k06-verilator-signoff`执行1,048,576个独立TX/ACK事务和256次完整Sequence回绕；
 `k06-vivado`对完整K05+K06 `pcie_dll`执行KU040 250 MHz OOC、CDC、DRC、资源及
 Warning精确白名单门禁。已有构建可用`K06_REUSE_BUILD=1 make k06-vivado`复核。
+
+## K07 命令
+
+完整回归：
+
+```bash
+make k07
+```
+
+可独立运行：
+
+```bash
+make k07-checker-selftest
+make k07-lint
+make k07-verilator
+make k07-vivado
+```
+
+`k07-checker-selftest`要求故意提前分派Cfg的错误Stub被检出；`k07-verilator`执行
+12项Directed/随机测试，包括10,000个Cfg/Cpl、5,000合法+5,000非法Raw Packet及
+2,000个Memory Packet，固定种子`20260806`；`k07-lint`还审计11个饱和计数器的
+15条增量路径。`k07-vivado`对KU040执行250 MHz OOC、TX状态可达性、CDC、DRC、
+资源和Warning精确白名单门禁；已有构建可用
+`K07_REUSE_BUILD=1 make k07-vivado`复核。

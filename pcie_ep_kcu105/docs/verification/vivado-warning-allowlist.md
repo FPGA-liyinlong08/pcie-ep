@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1～K06-v1 已建立并冻结**
+状态：**K00-v1～K07-v1 已建立并冻结**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -110,3 +110,20 @@ K06完整`pcie_dll`的KU040 250 MHz OOC检查按ID和数量精确限定：
 `report_cdc`固定只有OOC `rst_n`四级同步释放链的一组`CDC-9 Info`。构建脚本将
 普通Warning实际ID和数量与`k06_vivado_warning_allowlist.txt`逐行比较；任何新增、
 减少或数量改变均要求复核，所有Critical Warning和Error直接失败。
+
+## K07 Allowlist
+
+K07 TLP Codec的KU040 250 MHz OOC检查按ID和数量精确限定：
+
+| 来源 | ID / 数量 | 原因与处理 |
+|---|---|---|
+| 综合日志 | `Synth 8-6779` ×1 | OOC未布局条件下，综合网表wire-load没有专用延迟模型；已通过综合静态时序门禁，K11再做完整布局布线 |
+| 综合日志 | `Synth 8-7080` ×1 | OOC层次未达到并行综合条件，不影响网表 |
+| 综合网表 | `Netlist 29-101` ×1 | Codec在OOC综合网表中包含较多Primitive，不适合作为独立Floorplan单元；K11完整集成重新布局布线 |
+| 时序日志 | `Timing 38-242` ×2 | OOC顶层没有K02 `phy_coreclk` BUFG最终位置，K11集成时消除 |
+| `report_drc` | `CFGBVS-1` ×1 | OOC无板级配置属性；K01/K03集成约束已固定`1.8 V/GND` |
+
+签核包装层只为工具重建K01已经提供的四级异步置位/同步释放链；`report_cdc`必须
+只有1项`CDC-9 Info`，且目的端固定为`u_ooc_reset_sync/sync_reg_reg[0]/CLR`。
+`rx_mem`、`rx_payload_flat`和`tx_words`数据阵列不复位，不能出现`Synth 8-7137`；
+任何新增/减少的普通Warning、所有CDC Warning/Critical、DRC Critical或Error均失败。
