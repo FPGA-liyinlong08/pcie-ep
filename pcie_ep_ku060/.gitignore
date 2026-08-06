@@ -1,0 +1,16 @@
+build/
+sim_build*/
+results*.xml
+*.log
+*.vpd
+*.vcd
+*.fst
+*.fsdb
+__pycache__/
+.pytest_cache/
+.Xil/
+*.jou
+*.str
+sim/vcs/csrc/
+sim/vcs/ucli.key
+fpga/ku060/build*/

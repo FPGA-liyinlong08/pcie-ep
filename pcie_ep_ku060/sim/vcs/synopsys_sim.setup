@@ -1,0 +1,5 @@
+WORK > DEFAULT
+DEFAULT : build/work
+xil_defaultlib : build/xil_defaultlib
+OTHERS=/home/wx/Documents/vcs_compile_simlib/synopsys_sim.setup
+
