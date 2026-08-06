@@ -5,7 +5,9 @@
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
 	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado \
 	k02-hw-probe k02-hw-program k02 \
-	k03-checker-selftest k03-lint k03-verilator k03-vivado k03 clean
+	k03-checker-selftest k03-lint k03-verilator k03-vivado k03 \
+	k04-checker-selftest k04-lint k04-verilator k04-verilator-signoff \
+	k04-vivado k04 clean
 
 PYTHON ?= python3
 
@@ -178,6 +180,37 @@ k03-vivado:
 
 k03: k03-checker-selftest k03-lint k03-verilator k03-vivado
 
+k04-checker-selftest:
+	@$(MAKE) -C sim/verilator/k04 NEGATIVE_STUB=1 \
+		TESTCASE=known_vectors SIM_BUILD=sim_build_negative
+	@cp sim/verilator/k04/results.xml sim/verilator/k04/results_negative.xml
+	@if grep -q '<failure' sim/verilator/k04/results.xml; then \
+		echo "K04_CHECKER_SELFTEST_PASS"; \
+	else \
+		echo "错误：固定返回零的 K04 CRC Stub 未被 Checker 检出"; \
+		exit 1; \
+	fi
+
+k04-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module k04_crc_test_top \
+		rtl/dll/pcie_crc_stream.sv \
+		rtl/dll/pcie_crc16_dllp.sv \
+		rtl/dll/pcie_crc32_lcrc.sv \
+		sim/verilator/k04/k04_crc_test_top.sv
+
+k04-verilator:
+	./sim/verilator/k04/run_k04.sh
+
+k04-verilator-signoff:
+	./sim/verilator/k04_native/run_k04_native.sh
+
+k04-vivado:
+	./fpga/kcu105/run_k04_crc_ooc.sh
+
+k04: k04-checker-selftest k04-lint k04-verilator \
+	k04-verilator-signoff k04-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
@@ -185,8 +218,11 @@ clean:
 	./sim/verilator/k01/clean.sh
 	./sim/verilator/k02/clean.sh
 	./sim/verilator/k03/clean.sh
+	./sim/verilator/k04/clean.sh
+	./sim/verilator/k04_native/clean.sh
 	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh
 	$(RM) -r fpga/kcu105/build_k00_m02
 	$(RM) -r fpga/kcu105/build_k01
 	$(RM) -r fpga/kcu105/build_k03
+	$(RM) -r fpga/kcu105/build_k04

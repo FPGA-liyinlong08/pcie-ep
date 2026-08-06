@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1、K01-v1 冻结；K02-v1、K03-v1 已建立**
+状态：**K00-v1～K04-v1 已建立并冻结**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -66,3 +66,18 @@ Framer 状态；Framer 完整实现由 K03 OOC 综合和随机回归签核。脚
 OOC `report_cdc` 允许且只允许 `pipe_rst_n` 输入产生 CDC-7；这是单模块边界看不到
 K01 四级同步释放链造成的工具局限。完整集成 `report_cdc` 必须只把该链报告为
 CDC-9 Info，并保持 0 Critical。
+
+## K04 Allowlist
+
+K04 CRC 的 KU040 OOC 检查只允许以下固定普通 Warning；脚本对实际 ID 和数量
+做精确比较：
+
+| 来源 | ID | 原因与处理 |
+|---|---|---|
+| 综合日志 | `Synth 8-7080` | 两个 CRC 引擎规模较小，未达到并行综合条件 |
+| 时序日志 | `Timing 38-242` | OOC 顶层没有最终 `phy_pclk` BUFG_GT 位置，无法设置系统级 `HD.CLK_SRC` |
+| `report_drc` | `CFGBVS-1` | OOC 模块没有板级配置电压属性；K01/K03 集成顶层已固定 `1.8 V/GND` |
+
+`report_cdc` 固定只有一组 `CDC-9 Info`，来源必须是 OOC 顶层 `rst_n` 到
+`pcie_reset_sync` 四级同步链；不允许 CDC Warning/Critical。`report_drc` 的
+`CFGBVS-1` 固定为 1 个，其他 DRC Warning、所有 Critical Warning 和 Error 均失败。

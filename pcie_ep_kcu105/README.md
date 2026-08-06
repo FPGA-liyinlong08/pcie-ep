@@ -19,11 +19,15 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K03：**K03-v1 条件冻结**；架构/接口、错误 Stub、Verilator 随机回归、
   KU040 OOC 及 K02 PHY 联合布局布线均通过；VCS 真 PHY 串行仿真和 KCU105
   Gen1 x1 L0 因许可证/板卡不可用延期，最迟在 K11 前补齐。
+- K04：**PASS / K04-v1 已冻结**；DLLP CRC16、TLP LCRC32、错误 Stub、
+  cocotb Directed/随机、100 万算法向量和 KU040 250 MHz OOC 均通过；VCS
+  编译兼容性沿用许可证延期记录，最迟在 K11 前补齐。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
 - K02 已生成 standalone PHY 封装和 bring-up bitstream；用户批准延期两项 K02
-  动态门禁后继续实施 K03。K03 已完成软件与静态门禁，没有开始 K04。
+  动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04 已独立完成并冻结；
+  当前尚未开始 K05。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 
@@ -39,7 +43,8 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 | `docs/implementation-plan.md` | K00～K14 顺序、阶段门和验收目标 |
 | `rtl/common` | 可复用同步器和异步 Packet FIFO |
 | `rtl/phy` | K01 时钟/复位、K02 PHY 封装、K03 Gen1 LTSSM/MAC |
-| `rtl/dll`、`rtl/tl` | 后续自研协议模块，K00 为空 |
+| `rtl/dll` | K04 CRC，以及后续 DLLP/FC/Replay 模块 |
+| `rtl/tl` | 后续 TLP、配置空间和 BAR 模块 |
 | `sim/verilator` | cocotb/Verilator 与 Native C++ 回归 |
 | `sim/vcs` | VCS/Xilinx 库 Smoke 和 FIFO 回归 |
 | `fpga/kcu105` | KU040 约束、Tcl 和阶段构建入口 |
@@ -149,3 +154,26 @@ make k03-vivado
 K02 PHY+K03 顶层完整布局布线；完成一次构建后，可用
 `K03_REUSE_BUILD=1 make k03-vivado` 快速复核所有报告门禁。VCS 真 PHY 串行与
 上板 Gen1 L0 按阶段报告登记为延期，不包含在当前自动 `make k03` 中。
+
+## K04 命令
+
+完整回归：
+
+```bash
+make k04
+```
+
+可独立运行：
+
+```bash
+make k04-checker-selftest
+make k04-lint
+make k04-verilator
+make k04-verilator-signoff
+make k04-vivado
+```
+
+`k04-verilator` 执行已知向量、全部 15 种末拍 `keep`、DLLP 交叉模型、residue、
+单 bit 错误、协议错误恢复和 10,000 个随机 Packet。`k04-verilator-signoff`
+执行 1,000,000 个算法向量以及各 100,000 个 residue/单 bit 错误向量；
+`k04-vivado` 对 KU040 执行 250 MHz OOC 综合、时序、资源、CDC 和 DRC 门禁。

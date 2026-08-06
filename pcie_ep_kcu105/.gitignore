@@ -17,3 +17,5 @@ fpga/kcu105/build*/
 # K02 只版本管理可重建的 XCI；IP 输出产品由 Vivado 按需生成。
 fpga/kcu105/ip/pcie_phy_x1_gen3/*
 !fpga/kcu105/ip/pcie_phy_x1_gen3/pcie_phy_x1_gen3.xci
+# K04 Native 结果已摘要进阶段报告，原始文本由回归确定性重建。
+sim/verilator/k04_native/summary.txt
