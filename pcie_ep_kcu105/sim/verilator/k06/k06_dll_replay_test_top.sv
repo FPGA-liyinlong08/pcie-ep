@@ -1,0 +1,87 @@
+`timescale 1ns/1ps
+`default_nettype none
+
+module k06_dll_replay_test_top (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire         dll_active,
+    input  wire         mac_rx_valid,
+    input  wire [15:0]  mac_rx_data,
+    input  wire [1:0]   mac_rx_keep,
+    input  wire         mac_rx_sop,
+    input  wire         mac_rx_eop,
+    input  wire         mac_rx_is_dllp,
+    input  wire [3:0]   mac_rx_error,
+    output wire         mac_tx_valid,
+    input  wire         mac_tx_ready,
+    output wire [15:0]  mac_tx_data,
+    output wire [1:0]   mac_tx_keep,
+    output wire         mac_tx_sop,
+    output wire         mac_tx_eop,
+    output wire         mac_tx_is_dllp,
+    output wire         mac_tx_bad,
+    input  wire         rx_dllp_valid,
+    input  wire [31:0]  rx_dllp_data,
+    input  wire         rx_dllp_crc_good,
+    input  wire [3:0]   rx_dllp_error,
+    output wire         tx_ack_dllp_valid,
+    input  wire         tx_ack_dllp_ready,
+    output wire [31:0]  tx_ack_dllp_data,
+    input  wire         tx_tlp_valid,
+    output wire         tx_tlp_ready,
+    input  wire [127:0] tx_tlp_data,
+    input  wire [15:0]  tx_tlp_keep,
+    input  wire         tx_tlp_sop,
+    input  wire         tx_tlp_eop,
+    input  wire [3:0]   tx_tlp_error,
+    input  wire [1:0]   tx_tlp_type,
+    input  wire [11:0]  tx_tlp_data_credits,
+    output wire         rx_tlp_valid,
+    input  wire         rx_tlp_ready,
+    output wire [127:0] rx_tlp_data,
+    output wire [15:0]  rx_tlp_keep,
+    output wire         rx_tlp_sop,
+    output wire         rx_tlp_eop,
+    output wire [3:0]   rx_tlp_error,
+    output wire [1:0]   tx_fc_check_type,
+    output wire [11:0]  tx_fc_check_data_credits,
+    input  wire         tx_fc_credit_available,
+    output wire         tx_fc_consume_valid,
+    output wire [1:0]   tx_fc_consume_type,
+    output wire [11:0]  tx_fc_consume_data_credits,
+    output wire         rx_fc_consume_valid,
+    output wire [1:0]   rx_fc_consume_type,
+    output wire [11:0]  rx_fc_consume_data_credits,
+    output wire [11:0]  next_tx_seq,
+    output wire [11:0]  next_rx_seq,
+    output wire [11:0]  last_acked_seq,
+    output wire [4:0]   replay_occupancy,
+    output wire         replay_active,
+    output wire         replay_fatal,
+    output wire         recovery_req,
+    output wire [31:0]  tx_tlp_count,
+    output wire [31:0]  rx_tlp_count,
+    output wire [31:0]  ack_tx_count,
+    output wire [31:0]  nak_tx_count,
+    output wire [31:0]  replay_count,
+    output wire [31:0]  lcrc_error_count,
+    output wire [31:0]  duplicate_tlp_count,
+    output wire [31:0]  sequence_error_count,
+    output wire [31:0]  ack_error_count,
+    output wire [31:0]  buffer_error_count
+);
+    wire [3:0] replay_occupancy_i;
+    assign replay_occupancy = {1'b0, replay_occupancy_i};
+
+    pcie_dll_replay #(
+        .REPLAY_DEPTH(8),
+        .RX_FRAME_SLOTS(4),
+        .ACK_LATENCY_CYCLES(12),
+        .REPLAY_TIMEOUT_CYCLES(64),
+        .REPLAY_RETRY_LIMIT(2)
+    ) dut (.*,
+        .replay_occupancy(replay_occupancy_i)
+    );
+endmodule
+
+`default_nettype wire

@@ -9,7 +9,9 @@
 	k04-checker-selftest k04-lint k04-verilator k04-verilator-signoff \
 	k04-vivado k04 \
 	k05-checker-selftest k05-lint k05-verilator k05-verilator-signoff \
-	k05-vivado k05 clean
+	k05-vivado k05 \
+	k06-checker-selftest k06-lint k06-verilator k06-verilator-signoff \
+	k06-vivado k06 clean
 
 PYTHON ?= python3
 
@@ -248,6 +250,56 @@ k05-vivado:
 k05: k05-checker-selftest k05-lint k05-verilator \
 	k05-verilator-signoff k05-vivado
 
+k06-checker-selftest:
+	@$(MAKE) -C sim/verilator/k06 NEGATIVE_STUB=1 \
+		TESTCASE=tx_sequence_lcrc_and_credit SIM_BUILD=sim_build_negative
+	@cp sim/verilator/k06/results.xml sim/verilator/k06/results_negative.xml
+	@if grep -q '<failure' sim/verilator/k06/results.xml; then \
+		echo "K06_CHECKER_SELFTEST_PASS"; \
+	else \
+		echo "错误：不发送Sequence/LCRC的K06 Stub未被Checker检出"; \
+		exit 1; \
+	fi
+
+k06-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_dll_replay \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/dll/pcie_crc_stream.sv \
+		rtl/dll/pcie_crc32_lcrc.sv \
+		rtl/dll/pcie_dll_replay.sv
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_dll \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/dll/pcie_crc_stream.sv \
+		rtl/dll/pcie_crc16_dllp.sv \
+		rtl/dll/pcie_crc32_lcrc.sv \
+		rtl/dll/pcie_dllp_codec.sv \
+		rtl/dll/pcie_fc_local_credit_pool.sv \
+		rtl/dll/pcie_dllp_fc_manager.sv \
+		rtl/dll/pcie_dll_replay.sv \
+		rtl/dll/pcie_dllp_tx_arbiter.sv \
+		rtl/dll/pcie_dll_mac_tx_arbiter.sv \
+		rtl/dll/pcie_dll.sv
+
+k06-verilator:
+	./sim/verilator/k06/run_k06.sh
+	cp sim/verilator/k06/results.xml sim/verilator/k06/results_core.xml
+	$(MAKE) -C sim/verilator/k06 ARB_TEST=1 SIM_BUILD=sim_build_arb
+	@cp sim/verilator/k06/results.xml sim/verilator/k06/results_arbiter.xml
+	@if grep -q '<failure' sim/verilator/k06/results.xml; then \
+		echo "错误：K06仲裁器回归存在失败"; exit 1; \
+	fi
+
+k06-verilator-signoff:
+	./sim/verilator/k06_native/run_k06_native.sh
+
+k06-vivado:
+	./fpga/kcu105/run_k06_dll_ooc.sh
+
+k06: k06-checker-selftest k06-lint k06-verilator \
+	k06-verilator-signoff k06-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
@@ -258,6 +310,9 @@ clean:
 	./sim/verilator/k04/clean.sh
 	./sim/verilator/k04_native/clean.sh
 	./sim/verilator/k05/clean.sh
+	./sim/verilator/k06/clean.sh
+	./sim/verilator/k06_native/clean.sh
+	$(RM) -r fpga/kcu105/build_k06
 	./sim/verilator/k05_native/clean.sh
 	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh

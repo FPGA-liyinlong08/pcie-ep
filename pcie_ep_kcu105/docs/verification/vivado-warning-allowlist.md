@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1～K05-v1 已建立并冻结**
+状态：**K00-v1～K06-v1 已建立并冻结**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -95,3 +95,18 @@ K05 DLLP/FC 的 KU040 OOC 检查允许且只允许：
 `report_cdc` 固定只有 OOC `rst_n` 到四级同步链的一组 `CDC-9 Info`。Codec 内部
 CRC enable reset 来自同一 `phy_pclk` 域并经两级同步释放，不产生跨时钟路径。
 新增 Warning、CDC Warning/Critical、DRC Critical 或 Error 均失败。
+
+## K06 Allowlist
+
+K06完整`pcie_dll`的KU040 250 MHz OOC检查按ID和数量精确限定：
+
+| 来源 | ID / 数量 | 原因与处理 |
+|---|---|---|
+| 综合日志 | `Synth 8-6779` ×44 | OOC未布局条件下，LUTRAM wire-load没有专用延迟模型；已通过综合静态时序门禁，K11再做完整布局布线 |
+| 综合日志 | `Synth 8-7080` ×1 | OOC层次未达到并行综合条件，不影响网表 |
+| 时序日志 | `Timing 38-242` ×2 | OOC顶层没有K02 `phy_pclk` BUFG_GT最终位置，K11集成时消除 |
+| `report_drc` | `CFGBVS-1` ×1 | OOC无板级配置属性；K01/K03集成约束已固定`1.8 V/GND` |
+
+`report_cdc`固定只有OOC `rst_n`四级同步释放链的一组`CDC-9 Info`。构建脚本将
+普通Warning实际ID和数量与`k06_vivado_warning_allowlist.txt`逐行比较；任何新增、
+减少或数量改变均要求复核，所有Critical Warning和Error直接失败。
