@@ -1,6 +1,9 @@
 build/
 sim_build*/
 results*.xml
+sim/verilator/k*/negative_checker_observed.txt
+sim/verilator/k*/*_negative_marker.txt
+sim/verilator/k*/*_random_evidence.txt
 *.log
 *.vpd
 *.vcd

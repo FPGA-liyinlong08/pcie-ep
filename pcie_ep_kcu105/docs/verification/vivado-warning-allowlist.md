@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1～K07-v1 已建立并冻结**
+状态：**K00-v1～K09-v1 已建立并冻结**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -127,3 +127,41 @@ K07 TLP Codec的KU040 250 MHz OOC检查按ID和数量精确限定：
 只有1项`CDC-9 Info`，且目的端固定为`u_ooc_reset_sync/sync_reg_reg[0]/CLR`。
 `rx_mem`、`rx_payload_flat`和`tx_words`数据阵列不复位，不能出现`Synth 8-7137`；
 任何新增/减少的普通Warning、所有CDC Warning/Critical、DRC Critical或Error均失败。
+
+## K08 Allowlist
+
+K08 Type-0配置空间的KU040 250 MHz OOC检查按ID和数量精确限定：
+
+| 来源 | ID / 数量 | 原因与处理 |
+|---|---|---|
+| 综合日志 | `Synth 8-3917` ×3 | MPS固定为128 B，三个编码输出位均为常量0 |
+| 综合日志 | `Synth 8-7080` ×1 | OOC层次未达到并行综合条件，不影响网表 |
+| 综合日志 | `Synth 8-7129` ×48 | Requester ID与Tag按K07接口保留，但K08响应上下文由K07保存；生产层和OOC顶层各报告一次 |
+| 时序日志 | `Timing 38-242` ×2 | OOC顶层没有K02 `phy_coreclk` BUFG最终位置，K11集成时消除 |
+| `report_drc` | `CFGBVS-1` ×1 | OOC无板级配置属性；K01/K03集成约束已固定`1.8 V/GND` |
+
+K08全部同步边界端口必须有max/min input/output delay，`no_input_delay`、
+`no_output_delay`、`partial_input_delay`和`partial_output_delay`都必须为0。
+`report_cdc`必须明确给出`All paths are Safely Timed.`，且无CDC Warning/Critical；
+任何普通Warning数量变化、所有Critical Warning和Error均失败。
+
+## K09 Allowlist
+
+K09 BAR0-to-AXI4-Lite的KU040 250 MHz routed OOC检查按ID和数量精确限定：
+
+| 来源 | ID / 数量 | 原因与处理 |
+|---|---|---|
+| 综合网表 | `Netlist 29-101` ×1 | OOC层次包含较多Primitive，不适合作为独立Floorplan单元；本轮仍完成实际布局布线，K11在完整层次重新实现 |
+| 综合日志 | `Synth 8-6779` ×1 | OOC综合阶段的wire-load没有专用延迟模型；最终routed STA已通过 |
+| 综合日志 | `Synth 8-7080` ×1 | OOC层次未达到并行综合条件，不影响网表 |
+| `report_drc` | `CFGBVS-1` ×1 | OOC无板级配置电压属性；K11顶层设置后消除 |
+
+只有连接真实动态net的普通端口才施加局部`HD.PARTPIN_RANGE`；常量或未连接端口不施加，
+最终动态端口数固定为1062，routing error必须为0。输入接口`MinDelay=-1.000 ns`只透明
+补偿OOC模型缺失的父层共享BUFG source insertion，输出接口为`0.000 ns`；报告中两向
+必须显示`MinDelay Path`且不得出现`False Path`。该补偿不是硬件负hold预算，K11完整
+共享时钟树必须取消后重检。
+
+`check_timing`的no_clock、unconstrained internal、no/partial input/output delay必须全为
+0；`report_cdc`必须为`All paths are Safely Timed.`；DRC只允许一个`CFGBVS-1`。普通
+Warning任何增减、所有Critical Warning/Error、routing error或负setup/hold slack均失败。

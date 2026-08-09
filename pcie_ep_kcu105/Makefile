@@ -12,7 +12,10 @@
 	k05-vivado k05 \
 	k06-checker-selftest k06-lint k06-verilator k06-verilator-signoff \
 	k06-vivado k06 \
-	k07-checker-selftest k07-lint k07-verilator k07-vivado k07 clean
+	k07-checker-selftest k07-lint k07-verilator k07-vivado k07 \
+	k08-checker-selftest k08-lint k08-verilator k08-vivado k08 \
+	k09-checker-selftest k09-lint k09-verilator k09-integration \
+	k09-vivado k09 clean
 
 PYTHON ?= python3
 
@@ -335,6 +338,112 @@ k07:
 	$(MAKE) k07-verilator
 	$(MAKE) k07-vivado
 
+k08-checker-selftest:
+	@$(RM) sim/verilator/k08/negative_checker_observed.txt \
+		sim/verilator/k08/results_negative.xml
+	@$(MAKE) -C sim/verilator/k08 NEGATIVE_STUB=1 \
+		TESTCASE=identity_and_bar_probe_guard SIM_BUILD=sim_build_negative \
+		COCOTB_RESULTS_FILE=results_negative.xml
+	@if grep -q '<failure' sim/verilator/k08/results_negative.xml && \
+		grep -qx 'K08_NEGATIVE_CHECKER_OBSERVED identity bar be' \
+			sim/verilator/k08/negative_checker_observed.txt; then \
+		echo "K08_CHECKER_SELFTEST_PASS identity=1 bar=1 be=1"; \
+	else \
+		echo "错误：K08错误Stub未被三个值守卫完整检出"; exit 1; \
+	fi
+
+k08-lint:
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module pcie_cfg_space \
+		rtl/tl/pcie_cfg_space.sv
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module k08_cfg_space_ooc_top \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/tl/pcie_cfg_space.sv \
+		rtl/tl/k08_cfg_space_ooc_top.sv
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module k08_cfg_tlp_test_top \
+		rtl/tl/pcie_tlp_codec.sv \
+		rtl/tl/pcie_cfg_space.sv \
+		sim/verilator/k08/k08_cfg_tlp_test_top.sv
+
+k08-verilator:
+	./sim/verilator/k08/run_k08.sh
+
+k08-vivado:
+	./fpga/kcu105/run_k08_cfg_space_ooc.sh
+
+k08:
+	$(MAKE) k08-checker-selftest
+	$(MAKE) k08-lint
+	$(MAKE) k08-verilator
+	$(MAKE) k08-vivado
+
+k09-checker-selftest:
+	@$(RM) sim/verilator/k09/k09_negative_marker.txt \
+		sim/verilator/k09/results_negative.xml
+	@K09_NEGATIVE_STUB=1 \
+		K09_NEGATIVE_MARKER=$(CURDIR)/sim/verilator/k09/k09_negative_marker.txt \
+		COCOTB_RESULTS_FILE=results_negative.xml TESTCASE=checker_guard \
+		$(MAKE) -C sim/verilator/k09 K09_NEGATIVE_STUB=1
+	@if grep -q '<failure' sim/verilator/k09/results_negative.xml && \
+		grep -qx 'K09_NEGATIVE_CHECKER_OBSERVED address be posted' \
+			sim/verilator/k09/k09_negative_marker.txt; then \
+		echo "K09_CHECKER_SELFTEST_PASS address=1 be=1 posted=1"; \
+	else \
+		echo "错误：K09错误Stub未被address/be/posted三个守卫完整检出"; exit 1; \
+	fi
+
+k09-lint:
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module pcie_bar_axil_master \
+		rtl/tl/pcie_bar_axil_master.sv
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module k09_tlp_test_top \
+		rtl/tl/pcie_tlp_codec.sv \
+		rtl/tl/pcie_cfg_space.sv \
+		rtl/tl/pcie_bar_axil_master.sv \
+		sim/verilator/k09_integration/k09_tlp_test_top.sv
+	$(PYTHON) -m py_compile \
+		sim/verilator/k09/k09_model.py \
+		sim/verilator/k09/test_pcie_bar_axil_master.py \
+		sim/verilator/k09/check_counter_saturation.py \
+		sim/verilator/k09_integration/k09_simport_adapter.py \
+		sim/verilator/k09_integration/test_k09_tlp_integration.py
+	$(PYTHON) sim/verilator/k09/check_counter_saturation.py
+
+k09-verilator:
+	@$(RM) sim/verilator/k09/k09_negative_marker.txt \
+		sim/verilator/k09/k09_random_evidence.txt \
+		sim/verilator/k09/results.xml
+	@K09_NEGATIVE_STUB=0 K09_RANDOM_REQUESTS=100000 \
+		K09_RANDOM_EVIDENCE=$(CURDIR)/sim/verilator/k09/k09_random_evidence.txt \
+		COCOTB_RESULTS_FILE=results.xml TESTCASE= \
+		$(MAKE) -C sim/verilator/k09
+	@if test ! -s sim/verilator/k09/results.xml || \
+		grep -Eq '<failure|<error' sim/verilator/k09/results.xml || \
+		test "$$(grep -c '<testcase ' sim/verilator/k09/results.xml)" != 9 || \
+		! grep -q 'name="randomized_100k_reference"' \
+			sim/verilator/k09/results.xml || \
+		! grep -q '^K09_RANDOM_SIGNOFF seed=20260807 requests=100000 random_ready=1 max_delay=3 ' \
+			sim/verilator/k09/k09_random_evidence.txt; then \
+		echo "错误：K09单模块JUnit缺失、失败或测试集合不完整"; exit 1; \
+	fi
+	@echo "K09_VERILATOR_PASS requests=100000"
+
+k09-integration:
+	./sim/verilator/k09_integration/run_k09_integration.sh
+
+k09-vivado:
+	./fpga/kcu105/run_k09_bar_axil_ooc.sh
+
+k09:
+	$(MAKE) k09-checker-selftest
+	$(MAKE) k09-lint
+	$(MAKE) k09-verilator
+	$(MAKE) k09-integration
+	$(MAKE) k09-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
@@ -348,8 +457,13 @@ clean:
 	./sim/verilator/k06/clean.sh
 	./sim/verilator/k06_native/clean.sh
 	./sim/verilator/k07/clean.sh
+	./sim/verilator/k08/clean.sh
+	./sim/verilator/k09/clean.sh
+	./sim/verilator/k09_integration/clean.sh
 	$(RM) -r fpga/kcu105/build_k06
 	$(RM) -r fpga/kcu105/build_k07
+	$(RM) -r fpga/kcu105/build_k08
+	$(RM) -r fpga/kcu105/build_k09
 	./sim/verilator/k05_native/clean.sh
 	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh

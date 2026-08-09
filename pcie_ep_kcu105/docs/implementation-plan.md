@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**计划 v1 已冻结；K00、K01、K04～K07 PASS；K02、K03 条件冻结；K08 未开始**
+状态：**计划 v1 已冻结；K00、K01、K04～K09 PASS；K02、K03 条件冻结；K10 未开始**
 
 ## 1. 阶段门
 
@@ -28,8 +28,8 @@
 | K05 | DLLP、InitFC1/2、UpdateFC、VC0 P/NP/Cpl 信用 | PASS；9种FC DLLP、初始化/周期更新、100万信用事件、250 MHz OOC均通过 |
 | K06 | 12-bit Sequence、ACK/NAK、Replay Timer/Buffer | PASS；10,000随机Packet、1,048,576 Native事务、256次回绕、250 MHz OOC均通过 |
 | K07 | Cfg/Mem/Completion TLP Codec | PASS；12项回归、22,000随机Packet、多位置复位、11个计数器结构审计、错误/UR路径、严格lint和250 MHz OOC均通过 |
-| K08 | 4 KiB Type-0 配置空间和 PCIe Capability | `1234:e001`、4 KiB BAR0、逐 Bit 测试、RC 枚举 |
-| K09 | BAR0 命中、写拆分、读执行和 Completion | AXI 随机反压；10 万请求；MPS/RCB/4 KiB；错误转 CA |
+| K08 | 4 KiB Type-0 配置空间和 PCIe Capability | PASS；`1234:e001`、4 KiB BAR0、1024×32逐Bit、10万随机事务、真实TLP级RC枚举、250 MHz OOC |
+| K09 | BAR0 命中、写拆分、读执行和 Completion | PASS；9项单模块回归、10万请求随机反压、K07+K08+K09真实TLP级枚举/MMIO、128 B/4 KiB拆分、错误转CA及250 MHz OOC均通过 |
 | K10 | 4 KiB Demo AXI4-Lite Slave | 签名、版本、状态、计数、Scratch、RAM 和 Byte Strobe |
 | K11 | Gen1 全集成 | TLP/PHY/VCS 串行；Linux Gen1 枚举和 BAR；20 冷启动、100 重训 |
 | K12 | Recovery.Speed 与 EQ Phase 0～3 | 正常 EQ、拒绝、非法系数、超时、CDR 失锁和 Gen1 回退 |

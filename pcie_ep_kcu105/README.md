@@ -31,13 +31,21 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K07：**PASS / K07-TLP-CODEC-v1 已冻结**；Cfg/Mem/Cpl整包解码、严格格式检查、
   UR/错误路径、Completion编码和K06信用事件均已实现；错误Stub、12项cocotb、
   22,000个随机Packet、多位置复位、11个饱和计数器结构审计、严格lint及KU040
-  250 MHz OOC均通过；尚未开始K08。
+  250 MHz OOC均通过。
+- K08：**PASS / K08-CFG-SPACE-v1 已冻结**；4 KiB Type-0配置空间、PCIe
+  Capability、BDF捕获和4 KiB BAR0已实现；错误Stub、1024×32逐Bit、全部BE、
+  100,000随机事务、K07+K08真实TLP级Root Complex枚举和KU040 250 MHz OOC均通过；
+  已作为K09配置输入基线。
+- K09：**PASS / K09-BAR-AXIL-v1 已冻结**；BAR0命中、1～32 DW Posted Write、
+  1～1024 DW Read、128 B Completion拆分和AXI错误转CA均已实现；错误Stub、9项
+  单模块回归、10万请求随机反压、K07+K08+K09真实TLP级枚举/MMIO和KU040
+  250 MHz OOC均通过。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
 - K02 已生成 standalone PHY 封装和 bring-up bitstream；用户批准延期两项 K02
   动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04、K05 已独立完成并
-  冻结；K06、K07已完成并冻结，当前尚未开始K08。
+  冻结；K06～K09已完成并冻结，当前尚未开始K10。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 
@@ -54,7 +62,7 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 | `rtl/common` | 可复用同步器和异步 Packet FIFO |
 | `rtl/phy` | K01 时钟/复位、K02 PHY 封装、K03 Gen1 LTSSM/MAC |
 | `rtl/dll` | K04 CRC，以及后续 DLLP/FC/Replay 模块 |
-| `rtl/tl` | K07 TLP Codec，以及后续配置空间和 BAR 模块 |
+| `rtl/tl` | K07 TLP Codec、K08配置空间和K09 BAR-to-AXI4-Lite |
 | `sim/verilator` | cocotb/Verilator 与 Native C++ 回归 |
 | `sim/vcs` | VCS/Xilinx 库 Smoke 和 FIFO 回归 |
 | `fpga/kcu105` | KU040 约束、Tcl 和阶段构建入口 |
@@ -258,3 +266,51 @@ make k07-vivado
 15条增量路径。`k07-vivado`对KU040执行250 MHz OOC、TX状态可达性、CDC、DRC、
 资源和Warning精确白名单门禁；已有构建可用
 `K07_REUSE_BUILD=1 make k07-vivado`复核。
+
+## K08 命令
+
+完整回归：
+
+```bash
+make k08
+```
+
+可独立运行：
+
+```bash
+make k08-checker-selftest
+make k08-lint
+make k08-verilator
+make k08-vivado
+```
+
+`k08-checker-selftest`要求错误Stub的身份、BAR尺寸和Byte Enable三个守卫同时命中；
+`k08-verilator`执行6项单模块测试、1024×32逐Bit、全部16种BE、100,000个固定种子
+随机事务，以及生产K07+K08路径上的2项Root Complex测试。枚举识别`1234:e001`、
+PCIe Capability和4 KiB BAR0，但不包含K09 MMIO。`k08-vivado`对KU040执行250 MHz
+OOC、动态扇入、CDC、DRC、资源和Warning精确门禁；已有构建可用
+`K08_REUSE_BUILD=1 make k08-vivado`复核。
+
+## K09 命令
+
+完整回归：
+
+```bash
+make k09
+```
+
+可独立运行：
+
+```bash
+make k09-checker-selftest
+make k09-lint
+make k09-verilator
+make k09-integration
+make k09-vivado
+```
+
+`k09-checker-selftest`要求错误Stub的AXI地址、WSTRB和Posted Completion三个守卫
+同时命中；`k09-verilator`执行9项单模块测试及固定种子`20260807`的100,000请求
+随机反压回归；`k09-integration`让`cocotbext-pcie RootComplex`通过生产K07/K08/K09
+完成枚举、8/16/32-bit与多DWORD MMIO、128 B边界拆分、UR和CA；`k09-vivado`
+对KU040执行250 MHz OOC、I/O delay、时序、CDC、DRC、资源和Warning严格门禁。
