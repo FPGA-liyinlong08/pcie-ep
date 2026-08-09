@@ -1,6 +1,6 @@
 # Vivado Warning 固定 Allowlist
 
-状态：**K00-v1～K09-v1 已建立并冻结**
+状态：**K00-v1～K10-v1 已建立并冻结**
 
 K00 的 KU040 M02 OOC 检查只允许以下类型；构建脚本对实际集合做精确比较，出现
 任何新增类型即失败。
@@ -165,3 +165,18 @@ K09 BAR0-to-AXI4-Lite的KU040 250 MHz routed OOC检查按ID和数量精确限定
 `check_timing`的no_clock、unconstrained internal、no/partial input/output delay必须全为
 0；`report_cdc`必须为`All paths are Safely Timed.`；DRC只允许一个`CFGBVS-1`。普通
 Warning任何增减、所有Critical Warning/Error、routing error或负setup/hold slack均失败。
+
+## K10 Allowlist
+
+K10 Demo AXI4-Lite Slave的KU040 250 MHz routed OOC普通Warning固定为：
+
+| ID / 数量 | 原因 |
+|---|---|
+| `Netlist 29-101` ×1 | OOC层次包含BRAM及较多Primitive，不适合作为独立Floorplan单元；实际route已完成 |
+| `Synth 8-6779` ×8 | OOC综合wire-load缺少专用延迟模型；最终routed STA通过 |
+| `Synth 8-7080` ×1 | OOC规模未达到并行综合条件 |
+
+测试RAM必须实现为至少一个RAMB primitive且LUTRAM为0；本版固定一个RAMB36E2。
+`CFGBVS-1 ×1`仍是OOC唯一DRC Warning。`Vivado 12-4775`曾由非Tile对齐的RAMB18范围
+引起，已通过使用实际RAMB36 Tile范围消除，不在Allowlist中。所有Critical/Error、
+新增或减少普通Warning、routing error、未约束/partial接口或负setup/hold均失败。

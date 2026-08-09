@@ -15,7 +15,9 @@
 	k07-checker-selftest k07-lint k07-verilator k07-vivado k07 \
 	k08-checker-selftest k08-lint k08-verilator k08-vivado k08 \
 	k09-checker-selftest k09-lint k09-verilator k09-integration \
-	k09-vivado k09 clean
+	k09-vivado k09 \
+	k10-checker-selftest k10-lint k10-verilator k10-integration \
+	k10-vivado k10 clean
 
 PYTHON ?= python3
 
@@ -444,6 +446,64 @@ k09:
 	$(MAKE) k09-integration
 	$(MAKE) k09-vivado
 
+k10-checker-selftest:
+	@$(RM) sim/verilator/k10/k10_negative_marker.txt \
+		sim/verilator/k10/results_negative.xml
+	@K10_NEGATIVE_STUB=1 \
+		K10_NEGATIVE_MARKER=$(CURDIR)/sim/verilator/k10/k10_negative_marker.txt \
+		COCOTB_RESULTS_FILE=results_negative.xml TESTCASE=checker_guard \
+		$(MAKE) -C sim/verilator/k10 K10_NEGATIVE_STUB=1
+	@if grep -q '<failure' sim/verilator/k10/results_negative.xml && \
+		grep -qx 'K10_NEGATIVE_CHECKER_OBSERVED signature strobe decerr' \
+			sim/verilator/k10/k10_negative_marker.txt; then \
+		echo "K10_CHECKER_SELFTEST_PASS signature=1 strobe=1 decerr=1"; \
+	else \
+		echo "错误：K10错误Stub未被三个守卫完整检出"; exit 1; \
+	fi
+
+k10-lint:
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module demo_axil_slave rtl/tl/demo_axil_slave.sv
+	verilator --lint-only -Wall -Wno-TIMESCALEMOD \
+		--top-module k10_bar_demo_top \
+		rtl/tl/pcie_bar_axil_master.sv \
+		rtl/tl/demo_axil_slave.sv \
+		sim/verilator/k10_integration/k10_bar_demo_top.sv
+	$(PYTHON) -m py_compile sim/verilator/k10/test_demo_axil_slave.py \
+		sim/verilator/k10_integration/test_k10_bar_demo_integration.py
+
+k10-verilator:
+	@$(RM) sim/verilator/k10/k10_negative_marker.txt \
+		sim/verilator/k10/k10_random_evidence.txt \
+		sim/verilator/k10/results.xml
+	@K10_NEGATIVE_STUB=0 K10_RANDOM_REQUESTS=100000 \
+		K10_RANDOM_EVIDENCE=$(CURDIR)/sim/verilator/k10/k10_random_evidence.txt \
+		COCOTB_RESULTS_FILE=results.xml TESTCASE= \
+		$(MAKE) -C sim/verilator/k10
+	@if test ! -s sim/verilator/k10/results.xml || \
+		grep -Eq '<failure|<error' sim/verilator/k10/results.xml || \
+		test "$$(grep -c '<testcase ' sim/verilator/k10/results.xml)" != 7 || \
+		! grep -q 'name="randomized_100k_reference"' \
+			sim/verilator/k10/results.xml || \
+		! grep -q '^K10_RANDOM_SIGNOFF seed=20260810 requests=100000 ' \
+			sim/verilator/k10/k10_random_evidence.txt; then \
+		echo "错误：K10单模块JUnit或100k证据不完整"; exit 1; \
+	fi
+	@echo "K10_VERILATOR_PASS requests=100000"
+
+k10-integration:
+	$(MAKE) -C sim/verilator/k10_integration
+
+k10-vivado:
+	./fpga/kcu105/run_k10_demo_axil_ooc.sh
+
+k10:
+	$(MAKE) k10-checker-selftest
+	$(MAKE) k10-lint
+	$(MAKE) k10-verilator
+	$(MAKE) k10-integration
+	$(MAKE) k10-vivado
+
 clean:
 	$(MAKE) -C sim/verilator clean
 	$(RM) sim/verilator/results.xml
@@ -460,10 +520,13 @@ clean:
 	./sim/verilator/k08/clean.sh
 	./sim/verilator/k09/clean.sh
 	./sim/verilator/k09_integration/clean.sh
+	./sim/verilator/k10/clean.sh
+	./sim/verilator/k10_integration/clean.sh
 	$(RM) -r fpga/kcu105/build_k06
 	$(RM) -r fpga/kcu105/build_k07
 	$(RM) -r fpga/kcu105/build_k08
 	$(RM) -r fpga/kcu105/build_k09
+	$(RM) -r fpga/kcu105/build_k10
 	./sim/verilator/k05_native/clean.sh
 	$(RM) -r sim/verilator/m02_native/build
 	./sim/vcs/clean.sh

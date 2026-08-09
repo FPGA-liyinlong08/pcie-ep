@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**计划 v1 已冻结；K00、K01、K04～K09 PASS；K02、K03 条件冻结；K10 未开始**
+状态：**计划 v1 已冻结；K00、K01、K04～K10 PASS；K02、K03 条件冻结；K11 未开始**
 
 ## 1. 阶段门
 
@@ -30,7 +30,7 @@
 | K07 | Cfg/Mem/Completion TLP Codec | PASS；12项回归、22,000随机Packet、多位置复位、11个计数器结构审计、错误/UR路径、严格lint和250 MHz OOC均通过 |
 | K08 | 4 KiB Type-0 配置空间和 PCIe Capability | PASS；`1234:e001`、4 KiB BAR0、1024×32逐Bit、10万随机事务、真实TLP级RC枚举、250 MHz OOC |
 | K09 | BAR0 命中、写拆分、读执行和 Completion | PASS；9项单模块回归、10万请求随机反压、K07+K08+K09真实TLP级枚举/MMIO、128 B/4 KiB拆分、错误转CA及250 MHz OOC均通过 |
-| K10 | 4 KiB Demo AXI4-Lite Slave | 签名、版本、状态、计数、Scratch、RAM 和 Byte Strobe |
+| K10 | 4 KiB Demo AXI4-Lite Slave | PASS；7项回归、10万随机请求、全部1008可写DWORD、16种WSTRB、K09集成、1×RAMB36E2及250 MHz routed OOC |
 | K11 | Gen1 全集成 | TLP/PHY/VCS 串行；Linux Gen1 枚举和 BAR；20 冷启动、100 重训 |
 | K12 | Recovery.Speed 与 EQ Phase 0～3 | 正常 EQ、拒绝、非法系数、超时、CDR 失锁和 Gen1 回退 |
 | K13 | Gen3 全集成 | VCS Gen1→Gen3；KCU105 Gen3 x1；枚举和 10 万 BAR 随机操作 |

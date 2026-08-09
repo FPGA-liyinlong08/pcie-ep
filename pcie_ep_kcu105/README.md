@@ -40,12 +40,15 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
   1～1024 DW Read、128 B Completion拆分和AXI错误转CA均已实现；错误Stub、9项
   单模块回归、10万请求随机反压、K07+K08+K09真实TLP级枚举/MMIO和KU040
   250 MHz OOC均通过。
+- K10：**PASS / K10-DEMO-AXIL-v1 已冻结**；4 KiB AXI4-Lite Slave、只读诊断、
+  48 DWORD Scratch和960 DWORD RAM已实现；错误Stub、7项单元、10万随机请求、
+  全部16种WSTRB、生产K09集成和KU040 250 MHz routed OOC均通过，RAM为1×RAMB36E2。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
 - K02 已生成 standalone PHY 封装和 bring-up bitstream；用户批准延期两项 K02
   动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04、K05 已独立完成并
-  冻结；K06～K09已完成并冻结，当前尚未开始K10。
+  冻结；K06～K10已完成并冻结，当前尚未开始K11。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 
@@ -62,7 +65,7 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 | `rtl/common` | 可复用同步器和异步 Packet FIFO |
 | `rtl/phy` | K01 时钟/复位、K02 PHY 封装、K03 Gen1 LTSSM/MAC |
 | `rtl/dll` | K04 CRC，以及后续 DLLP/FC/Replay 模块 |
-| `rtl/tl` | K07 TLP Codec、K08配置空间和K09 BAR-to-AXI4-Lite |
+| `rtl/tl` | K07 TLP Codec、K08配置空间、K09 BAR Master和K10 Demo AXI Slave |
 | `sim/verilator` | cocotb/Verilator 与 Native C++ 回归 |
 | `sim/vcs` | VCS/Xilinx 库 Smoke 和 FIFO 回归 |
 | `fpga/kcu105` | KU040 约束、Tcl 和阶段构建入口 |
@@ -314,3 +317,15 @@ make k09-vivado
 随机反压回归；`k09-integration`让`cocotbext-pcie RootComplex`通过生产K07/K08/K09
 完成枚举、8/16/32-bit与多DWORD MMIO、128 B边界拆分、UR和CA；`k09-vivado`
 对KU040执行250 MHz OOC、I/O delay、时序、CDC、DRC、资源和Warning严格门禁。
+
+## K10 命令
+
+```bash
+make k10
+```
+
+可分别运行`make k10-checker-selftest`、`make k10-lint`、`make k10-verilator`、
+`make k10-integration`和`make k10-vivado`。随机门禁固定100,000请求并覆盖全部1008个
+可写DWORD和16种WSTRB；集成门禁连接生产K09与K10；Vivado门禁要求RAMB36E2非零、
+LUTRAM为0、250 MHz setup/hold通过。已有实现可用
+`K10_REUSE_BUILD=1 make k10-vivado`复核。
