@@ -38,7 +38,7 @@ module pcie_gen1_framer #(
     localparam [7:0] K_SDP = 8'h5c;
     localparam [7:0] K_END = 8'hfd;
     localparam [7:0] K_EDB = 8'hfe;
-    localparam [7:0] K_IDL = 8'h7c;
+    localparam [7:0] D_IDL = 8'h00;
     localparam integer COUNT_WIDTH = $clog2(TX_BUFFER_BYTES + 1);
 
     localparam [2:0] TX_COLLECT = 3'd0;
@@ -178,8 +178,8 @@ module pcie_gen1_framer #(
     end
 
     always @* begin
-        tx_phy_data  = {16'd0, K_IDL, K_IDL};
-        tx_phy_datak = 2'b11;
+        tx_phy_data  = {16'd0, D_IDL, D_IDL};
+        tx_phy_datak = 2'b00;
         tx_phy_valid = enable;
         if (!enable) begin
             tx_phy_data  = 32'd0;
@@ -204,8 +204,8 @@ module pcie_gen1_framer #(
                 end
                 TX_END: begin
                     tx_phy_data[7:0]  = tx_bad_latched ? K_EDB : K_END;
-                    tx_phy_data[15:8] = K_IDL;
-                    tx_phy_datak      = 2'b11;
+                    tx_phy_data[15:8] = D_IDL;
+                    tx_phy_datak      = 2'b01;
                 end
                 default: begin end
             endcase

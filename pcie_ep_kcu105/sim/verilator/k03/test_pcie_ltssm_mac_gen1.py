@@ -29,6 +29,39 @@ RECOVERY_RCVRLOCK = 11
 RECOVERY_RCVRCFG = 12
 RECOVERY_IDLE = 13
 HOT_RESET = 14
+partner_rx_lfsr = 0xFFFF
+
+
+def scrambler_advance_byte(value):
+    b = [(value >> i) & 1 for i in range(16)]
+    n = [0] * 16
+    n[0], n[1], n[2] = b[8], b[9], b[10]
+    n[3] = b[11] ^ b[8]
+    n[4] = b[12] ^ b[9] ^ b[8]
+    n[5] = b[13] ^ b[10] ^ b[9] ^ b[8]
+    n[6] = b[14] ^ b[11] ^ b[10] ^ b[9]
+    n[7] = b[15] ^ b[12] ^ b[11] ^ b[10]
+    n[8] = b[0] ^ b[13] ^ b[12] ^ b[11]
+    n[9] = b[1] ^ b[14] ^ b[13] ^ b[12]
+    n[10] = b[2] ^ b[15] ^ b[14] ^ b[13]
+    n[11] = b[3] ^ b[15] ^ b[14]
+    n[12] = b[4] ^ b[15]
+    n[13], n[14], n[15] = b[5], b[6], b[7]
+    return sum(bit << i for i, bit in enumerate(n))
+
+
+def scrambler_word(state, data, datak, disabled):
+    result = 0
+    for lane in range(2):
+        symbol = (data >> (8 * lane)) & 0xFF
+        is_k = (datak >> lane) & 1
+        mask = sum(((state >> (15 - i)) & 1) << i for i in range(8))
+        result |= (symbol if disabled or is_k else symbol ^ mask) << (8 * lane)
+        if is_k and symbol == COM:
+            state = 0xFFFF
+        elif not (is_k and symbol == SKP):
+            state = scrambler_advance_byte(state)
+    return state, result
 
 
 def drive_defaults(dut):
@@ -63,6 +96,8 @@ async def writable_phase():
 
 
 async def initialize(dut):
+    global partner_rx_lfsr
+    partner_rx_lfsr = 0xFFFF
     drive_defaults(dut)
     cocotb.start_soon(Clock(dut.phy_pclk, 8, units="ns").start())
     await tick(dut, 3)
@@ -95,7 +130,7 @@ async def pulse_phystatus(dut, status):
     dut.phy_phystatus.value = 0
 
 
-def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x0E, control=0):
+def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x02, control=0):
     ident = TS1 if kind == 1 else TS2
     link_k = 1 if link == PAD else 0
     lane_k = 1 if lane == PAD else 0
@@ -104,11 +139,16 @@ def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x0E, control=0):
     return symbols, isk
 
 
-async def drive_symbols(dut, symbols, isk, data_valid=1):
+async def drive_symbols(dut, symbols, isk, data_valid=1, scramble_disable=True):
+    global partner_rx_lfsr
     assert len(symbols) == len(isk) and len(symbols) % 2 == 0
     for pos in range(0, len(symbols), 2):
-        dut.phy_rxdata.value = symbols[pos] | (symbols[pos + 1] << 8)
-        dut.phy_rxdatak.value = isk[pos] | (isk[pos + 1] << 1)
+        plain = symbols[pos] | (symbols[pos + 1] << 8)
+        datak = isk[pos] | (isk[pos + 1] << 1)
+        partner_rx_lfsr, encoded = scrambler_word(
+            partner_rx_lfsr, plain, datak, scramble_disable)
+        dut.phy_rxdata.value = encoded
+        dut.phy_rxdatak.value = datak
         dut.phy_rxdata_valid.value = data_valid
         dut.phy_rxvalid.value = 1
         dut.phy_rxelecidle.value = 0
@@ -144,9 +184,14 @@ async def send_ts_high_symbol_aligned(dut, kind, count, link=PAD, lane=PAD):
 
 
 async def send_idle(dut, cycles=8, symbol=IDL, isk=0):
+    global partner_rx_lfsr
     for _ in range(cycles):
-        dut.phy_rxdata.value = symbol | (symbol << 8)
-        dut.phy_rxdatak.value = isk | (isk << 1)
+        plain = symbol | (symbol << 8)
+        datak = isk | (isk << 1)
+        partner_rx_lfsr, encoded = scrambler_word(
+            partner_rx_lfsr, plain, datak, False)
+        dut.phy_rxdata.value = encoded
+        dut.phy_rxdatak.value = datak
         dut.phy_rxdata_valid.value = 1
         dut.phy_rxvalid.value = 1
         dut.phy_rxelecidle.value = 0
@@ -285,11 +330,13 @@ async def train_to_l0(
 
 
 async def reset_for_next_training(dut):
+    global partner_rx_lfsr
     await writable_phase()
     dut.pipe_rst_n.value = 0
     await tick(dut, 2)
     await writable_phase()
     dut.pipe_rst_n.value = 1
+    partner_rx_lfsr = 0xFFFF
 
 
 @cocotb.test()
@@ -403,6 +450,8 @@ async def collect_wire_packet(dut, timeout=400):
         await ReadOnly()
         data = int(dut.phy_txdata.value)
         datak = int(dut.phy_txdatak.value)
+        tx_state = int(dut.u_tx_scrambler.lfsr_state.value)
+        _, data = scrambler_word(tx_state, data & 0xFFFF, datak, False)
         for lane in range(2):
             byte = (data >> (lane * 8)) & 0xFF
             is_k = (datak >> lane) & 1
@@ -424,6 +473,7 @@ async def collect_wire_packet(dut, timeout=400):
 
 
 async def drive_rx_wire_packet(dut, payload, is_dllp, bad, start_on_high=False):
+    global partner_rx_lfsr
     symbols = []
     if start_on_high:
         symbols.append((IDL, 1))
@@ -438,8 +488,12 @@ async def drive_rx_wire_packet(dut, payload, is_dllp, bad, start_on_high=False):
     saw_eop = False
     observed_bad = False
     for pos in range(0, len(symbols), 2):
-        dut.phy_rxdata.value = symbols[pos][0] | (symbols[pos + 1][0] << 8)
-        dut.phy_rxdatak.value = symbols[pos][1] | (symbols[pos + 1][1] << 1)
+        plain = symbols[pos][0] | (symbols[pos + 1][0] << 8)
+        datak = symbols[pos][1] | (symbols[pos + 1][1] << 1)
+        partner_rx_lfsr, encoded = scrambler_word(
+            partner_rx_lfsr, plain, datak, False)
+        dut.phy_rxdata.value = encoded
+        dut.phy_rxdatak.value = datak
         dut.phy_rxdata_valid.value = 1
         dut.phy_rxvalid.value = 1
         dut.phy_rxelecidle.value = 0
@@ -493,13 +547,15 @@ async def packet_protocol_errors(dut):
     await train_to_l0(dut, validate_tx=False)
     before = int(dut.frame_error_count.value)
 
-    await drive_symbols(dut, [STP, SDP], [1, 1])
+    await drive_symbols(dut, [STP, SDP], [1, 1], scramble_disable=False)
     await tick(dut, 2)
     await writable_phase()
     assert int(dut.frame_error_count.value) > before
     before = int(dut.frame_error_count.value)
 
-    await drive_symbols(dut, [STP, 0x12, SKP, IDL], [1, 0, 1, 1])
+    await drive_symbols(
+        dut, [STP, 0x12, SKP, IDL], [1, 0, 1, 1], scramble_disable=False
+    )
     await tick(dut, 2)
     await writable_phase()
     assert int(dut.frame_error_count.value) > before

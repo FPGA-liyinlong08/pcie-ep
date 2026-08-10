@@ -26,6 +26,14 @@
 线路先到的 Symbol 仍位于输入拍的低字节；PHY 若把 COM 放在高 Symbol，K03 会在
 内部跨拍重组，不改变 PHY32 端口字节序，也不把该对齐状态暴露给 DLL。
 
+### 内部Gen1/2扰码接口
+
+`pcie_gen12_scrambler`在`phy_pclk`域使用普通端口：`in_valid`、
+`scramble_disable`、`in_data[15:0]`、`in_datak[1:0]`，组合输出对应的
+`out_valid/out_data/out_datak`，并输出`lfsr_state[15:0]`供ILA。复位状态为
+`16'hFFFF`；无有效拍时状态保持。`scramble_disable=1`只旁路Data异或，仍按有效
+Symbol更新LFSR。TX/RX均使用同一模块，线路先到的低字节先推进LFSR。
+
 ### MAC → PHY 控制
 
 | 端口 | 位宽 | 复位值 | K03 规则 |

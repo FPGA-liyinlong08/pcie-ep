@@ -28,11 +28,6 @@ module board;
 
     reg [5:0] last_ep_state;
     integer stable_count;
-    integer ep_rx_sample_count;
-    integer os_event_count;
-    integer rp_rx_sample_count;
-    integer ep_idle_sample_count;
-    integer rp_idle_sample_count;
     reg seen_detect;
     reg seen_polling;
     reg seen_configuration;
@@ -95,11 +90,6 @@ module board;
     initial begin
         last_ep_state = 6'h3f;
         stable_count = 0;
-        ep_rx_sample_count = 0;
-        os_event_count = 0;
-        rp_rx_sample_count = 0;
-        ep_idle_sample_count = 0;
-        rp_idle_sample_count = 0;
         seen_detect = 1'b0;
         seen_polling = 1'b0;
         seen_configuration = 1'b0;
@@ -126,68 +116,11 @@ module board;
                      RP.cfg_negotiated_width);
     end
 
-    // 仅用于 K11-B bring-up：观察 Root Port PIPE Lane 0 实际收到的 TS2。
-    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
-        if (($time > 138700000) && (rp_rx_sample_count < 48) &&
-            RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_valid[0] &&
-            !RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0]) begin
-            $display("K11B_RP_RX time_ps=%0t state=%0h data=%08x datak=%02b",
-                     $time, RP.cfg_ltssm_state,
-                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0],
-                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_char_is_k[1:0]);
-            rp_rx_sample_count = rp_rx_sample_count + 1;
-        end
-        if (($time > 140900000) && (rp_idle_sample_count < 96) &&
-            RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_valid[0] &&
-            !RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0]) begin
-            $display("K11B_RP_IDLE_RX time_ps=%0t state=%0h ep_state=%0d ep_tx=%04x ep_k=%02b rx=%04x rx_k=%02b",
-                     $time, RP.cfg_ltssm_state, EP.DUT.ltssm_state,
-                     EP.DUT.phy_txdata[15:0], EP.DUT.phy_txdatak,
-                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[15:0],
-                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_char_is_k[1:0]);
-            rp_idle_sample_count = rp_idle_sample_count + 1;
-        end
-    end
-
     always @(posedge EP.DUT.phy_pclk) begin
         if (!EP.DUT.pipe_rst_n) begin
             last_ep_state <= 6'h3f;
             stable_count <= 0;
         end else begin
-            if ((EP.DUT.ltssm_state == 6'd9) &&
-                (ep_idle_sample_count < 64)) begin
-                $display("K11B_EP_IDLE_RX time_ps=%0t raw_valid=%0d raw_data=%04x raw_k=%02b aligned_valid=%0d aligned_data=%04x aligned_k=%02b idle_pulse=%0d",
-                         $time, EP.DUT.phy_rxvalid, EP.DUT.phy_rxdata[15:0],
-                         EP.DUT.phy_rxdatak,
-                         EP.DUT.u_ltssm_mac.rx_aligned_valid,
-                         EP.DUT.u_ltssm_mac.rx_aligned_data,
-                         EP.DUT.u_ltssm_mac.rx_aligned_datak,
-                         EP.DUT.u_ltssm_mac.os_idle_pair_valid);
-                ep_idle_sample_count <= ep_idle_sample_count + 1;
-            end
-            if ((EP.DUT.u_ltssm_mac.os_ts1_valid ||
-                 EP.DUT.u_ltssm_mac.os_ts2_valid) && ($time > 50000000) &&
-                (os_event_count < 96)) begin
-                $display("K11B_EP_OS time_ps=%0t state=%0d kind=%0d link=%02x link_pad=%0d lane=%02x lane_pad=%0d nfts=%02x rate=%02x ctl=%02x count=%0d",
-                         $time, EP.DUT.ltssm_state,
-                         EP.DUT.u_ltssm_mac.os_ts2_valid ? 2 : 1,
-                         EP.DUT.u_ltssm_mac.os_link_number,
-                         EP.DUT.u_ltssm_mac.os_link_is_pad,
-                         EP.DUT.u_ltssm_mac.os_lane_number,
-                         EP.DUT.u_ltssm_mac.os_lane_is_pad,
-                         EP.DUT.u_ltssm_mac.os_n_fts,
-                         EP.DUT.u_ltssm_mac.os_rate_id,
-                         EP.DUT.u_ltssm_mac.os_training_control,
-                         EP.DUT.rx_ts_count);
-                os_event_count <= os_event_count + 1;
-            end
-            if (EP.DUT.phy_rxvalid && !EP.DUT.phy_rxelecidle &&
-                (ep_rx_sample_count < 32)) begin
-                $display("K11B_EP_RX time_ps=%0t data=%08x datak=%02b elecidle=%0d status=%0d",
-                         $time, EP.DUT.phy_rxdata, EP.DUT.phy_rxdatak,
-                         EP.DUT.phy_rxelecidle, EP.DUT.phy_rxstatus);
-                ep_rx_sample_count <= ep_rx_sample_count + 1;
-            end
             if (EP.DUT.ltssm_state != last_ep_state) begin
                 $display("K11B_EP_STATE time_ps=%0t state=%0d rx_ts=%0d train_err=%0d timeout=%0d",
                          $time, EP.DUT.ltssm_state, EP.DUT.rx_ts_count,
@@ -202,7 +135,10 @@ module board;
             if ((EP.DUT.ltssm_state >= 6'd4) && (EP.DUT.ltssm_state <= 6'd9))
                 seen_configuration <= 1'b1;
 
-            if ((EP.DUT.link_up === 1'b1) && (RP.user_lnk_up === 1'b1))
+            // B1只验证物理层/LTSSM。Root user_lnk_up还包含Data Link用户接口
+            // 就绪语义，必须等B2接入InitFC/DLL后才作为门禁。
+            if ((EP.DUT.link_up === 1'b1) &&
+                (RP.cfg_ltssm_state === 6'h10))
                 stable_count <= stable_count + 1;
             else
                 stable_count <= 0;
@@ -219,8 +155,9 @@ module board;
                              EP.DUT.negotiated_width, EP.DUT.negotiated_speed);
                     $fatal(1);
                 end
-                $display("K11B_VCS_GEN1_L0_PASS stable_pclk=%0d ep_state=%0d rp_link=%0d",
-                         STABLE_PCLK_CYCLES, EP.DUT.ltssm_state, RP.user_lnk_up);
+                $display("K11B_VCS_GEN1_L0_PASS stable_pclk=%0d ep_state=%0d rp_state=%0h rp_user_link=%0d",
+                         STABLE_PCLK_CYCLES, EP.DUT.ltssm_state,
+                         RP.cfg_ltssm_state, RP.user_lnk_up);
                 $finish;
             end
         end
@@ -230,9 +167,10 @@ module board;
         wait (sys_rst_n === 1'b1);
         if (disconnect_lane0) begin
             #500000000;
-            if ((EP.DUT.link_up === 1'b1) || (RP.user_lnk_up === 1'b1)) begin
-                $display("K11B_VCS_CHECKER_SELFTEST_FAIL reason=disconnected_link_up ep=%0d rp=%0d",
-                         EP.DUT.link_up, RP.user_lnk_up);
+            if ((EP.DUT.link_up === 1'b1) ||
+                (RP.cfg_ltssm_state === 6'h10)) begin
+                $display("K11B_VCS_CHECKER_SELFTEST_FAIL reason=disconnected_l0 ep=%0d rp_state=%0h",
+                         EP.DUT.link_up, RP.cfg_ltssm_state);
                 $fatal(1);
             end
             $display("K11B_VCS_CHECKER_SELFTEST_PASS ep_state=%0d rp_link=%0d timeout=%0d",

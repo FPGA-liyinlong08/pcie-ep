@@ -67,6 +67,7 @@ export SYNOPSYS_SIM_SETUP="${setup_file}"
     "${project_dir}/rtl/phy/kcu105_reset_ctrl.sv" \
     "${project_dir}/rtl/phy/kcu105_refclk_reset.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_phy_wrapper.sv" \
+    "${project_dir}/rtl/phy/pcie_gen12_scrambler.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_rx_symbol_aligner.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_os_rx.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_os_tx.sv" \

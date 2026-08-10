@@ -1,6 +1,6 @@
 # K03 Gen1 x1 LTSSM/MAC 架构说明
 
-状态：**K03-v1 已实现并条件冻结**
+状态：**K03-v1.1 已实现；VCS真实串行门禁PASS，实板门禁延期**
 
 目标器件：`xcku040-ffva1156-2-e`
 依赖接口：`K02-PHY32-v1.1`
@@ -32,6 +32,7 @@ flowchart LR
     PHY["K02 standalone pcie_phy<br/>Gen1: 16 bit @ 125 MHz"]
 
     subgraph K03["pcie_ltssm_mac_gen1"]
+        SCR["pcie_gen12_scrambler<br/>Gen1加扰/解扰"]
         RXOS["pcie_gen1_os_rx<br/>TS1/TS2/Idle 识别"]
         FSM["LTSSM<br/>Detect→Polling→Configuration→L0"]
         TXOS["pcie_gen1_os_tx<br/>TS1/TS2/Idle 生成"]
@@ -44,7 +45,7 @@ flowchart LR
     DLL["K05/K06 Data Link<br/>K03 尚未实现"]
 
     PARTNER <--> PHY
-    PHY --> RXOS
+    PHY --> SCR --> RXOS
     PHY <--> ARB
     FR <--> DLL
 ```
@@ -69,14 +70,22 @@ flowchart LR
 
 - 每个 TS 连续发送 8 拍，中间不可插入空拍；
 - `phy_txdata[31:16]=0`，`phy_txdatak[1:0]` 只标记低 16 bit 两个 Symbol；
-- `N_FTS=8'hFF`，Rate ID=`8'h0E`（与 Gen3-capable standalone PHY/Root Port
-  训练接口一致，但 K03 当前仍固定在 Gen1）；
+- `N_FTS=8'hFF`，Rate ID=`8'h02`，K03/K11-B1只宣告2.5 GT/s；K12加入
+  Recovery.Speed/EQ后才开放Gen2/Gen3能力位；
 - Training Control 默认为 0；Hot Reset 状态不伪造上游热复位 TS；
 - Configuration.Idle/Recovery.Idle 每拍发送两个 `D0.0` 数据字符；`K28.3`
   属于 Electrical Idle Ordered Set，不得冒充 Logical Idle；
 - L0 无待发 Packet 时也发送 Logical Idle。
 
-### 2.3 LTSSM
+### 2.3 Gen1/2扰码
+
+- 16-bit LFSR初值为`16'hFFFF`，每拍按低Symbol、高Symbol顺序处理；
+- COM把后继状态重置为`FFFF`，SKP不推进，其余有效Symbol推进8 bit；
+- K字符不参与异或；训练期间Data也旁路异或，但LFSR仍按线路Symbol推进；
+- TS解析使用原始PHY字符，Configuration.Idle、L0和Packet Framer使用解扰数据；
+- TX在Configuration.Idle、L0和Recovery.Idle启用异或，其余训练状态仅旁路异或。
+
+### 2.4 LTSSM
 
 冻结状态顺序如下：
 
@@ -106,7 +115,7 @@ L0 --HotResetReq--> HotReset → Detect.Quiet
 - 所有硬件默认超时以 125 MHz 周期参数给出，仿真可参数覆盖缩短，但协议状态顺序
   不得因仿真参数改变。
 
-### 2.4 TLP/DLLP 成帧
+### 2.5 TLP/DLLP 成帧
 
 TX 使用一个完整 Packet 缓冲，默认 160 Byte，可容纳第一阶段最大 128 Byte Payload、
 4DW Header、Sequence 和 LCRC。只有收到 EOP 后才开始上线，因此 DLL 输入可有

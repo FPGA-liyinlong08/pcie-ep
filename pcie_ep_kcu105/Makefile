@@ -5,7 +5,8 @@
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
 	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado \
 	k02-hw-probe k02-hw-program k02 \
-	k03-checker-selftest k03-lint k03-verilator k03-vivado k03 \
+	k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
+	k03-lint k03-verilator k03-vivado k03 \
 	k04-checker-selftest k04-lint k04-verilator k04-verilator-signoff \
 	k04-vivado k04 \
 	k05-checker-selftest k05-lint k05-verilator k05-verilator-signoff \
@@ -164,9 +165,22 @@ k03-checker-selftest:
 		exit 1; \
 	fi
 
+k03-scrambler-checker-selftest:
+	@$(MAKE) -C sim/verilator/k03_scrambler NEGATIVE_STUB=1 \
+		TESTCASE=known_vectors_com_skp_and_bypass SIM_BUILD=sim_build_negative
+	@if grep -q '<failure' sim/verilator/k03_scrambler/results.xml; then \
+		echo "K03_SCRAMBLER_CHECKER_SELFTEST_PASS"; \
+	else \
+		echo "错误：旁路扰码的K03 Stub未被已知向量检出"; exit 1; \
+	fi
+
+k03-scrambler:
+	$(MAKE) -C sim/verilator/k03_scrambler
+
 k03-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		--top-module pcie_ltssm_mac_gen1 \
+		rtl/phy/pcie_gen12_scrambler.sv \
 		rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv \
 		rtl/phy/pcie_gen1_os_tx.sv \
@@ -180,6 +194,7 @@ k03-lint:
 		rtl/phy/kcu105_reset_ctrl.sv \
 		rtl/phy/kcu105_refclk_reset.sv \
 		rtl/phy/kcu105_pcie_phy_wrapper.sv \
+		rtl/phy/pcie_gen12_scrambler.sv \
 		rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv \
 		rtl/phy/pcie_gen1_os_tx.sv \
@@ -193,7 +208,8 @@ k03-verilator:
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
 
-k03: k03-checker-selftest k03-lint k03-verilator k03-vivado
+k03: k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
+	k03-lint k03-verilator k03-vivado
 
 k11b-vcs-serial:
 	./sim/vcs/run_k11b_serial.sh

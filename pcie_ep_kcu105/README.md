@@ -16,9 +16,9 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K02：**K02-v1.2 条件冻结**；架构/接口、错误Stub、Verilator、XCI指纹、
   Vivado完整实现及VCS真实IP动态仿真均已通过；KCU105 Receiver Detect因当前
   未插板延期，必须在K11-B前补齐。
-- K03：**K03-v1 条件冻结**；架构/接口、错误 Stub、Verilator 随机回归、
-  KU040 OOC 及 K02 PHY 联合布局布线均通过；VCS 真 PHY 串行仿真和 KCU105
-  Gen1 x1 L0 因许可证/板卡不可用延期，最迟在 K11 前补齐。
+- K03：**K03-v1.1 条件冻结**；架构/接口、错误 Stub、Verilator随机回归、
+  KU040 OOC、K02 PHY联合布局布线及VCS真PHY串行Gen1 x1 L0均通过；KCU105
+  实板门禁因当前未插板延期。
 - K04：**PASS / K04-v1 已冻结**；DLLP CRC16、TLP LCRC32、错误 Stub、
   cocotb Directed/随机、100 万算法向量和 KU040 250 MHz OOC 均通过；VCS
   编译兼容性沿用许可证延期记录，最迟在 K11 前补齐。
@@ -46,13 +46,13 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K11-A：**PASS / K11A-OFFLINE-INTEGRATION-v1 已冻结**；已在K03 MAC Packet
   边界以上连接生产DLL、异步Packet/事件FIFO、TLP/CFG/BAR和Demo，完成DLL Active、
   `1234:e001`配置读取、BAR0分配/MSE、签名MMIO及Hot Reset；KU040离线实现
-  `WNS=+0.001 ns`、`WHS=+0.022 ns`。K11-B真PHY串行和实板验收仍待执行。
+  `WNS=+0.001 ns`、`WHS=+0.022 ns`。K11-B1真PHY串行L0已PASS，B2及实板待执行。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
 - K02 已生成 standalone PHY 封装和 bring-up bitstream；用户批准延期两项 K02
   动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04、K05 已独立完成并
-  冻结；K06～K10已完成并冻结，K11-A已完成，当前停在K11-B之前。
+  冻结；K06～K10已完成并冻结，K11-A与K11-B1已完成，当前进入K11-B2。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 

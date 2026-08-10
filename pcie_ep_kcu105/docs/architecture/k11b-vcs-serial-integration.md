@@ -54,10 +54,11 @@ flowchart LR
 ## 4. 可观测性和失败归因
 
 测试平台记录 Endpoint `ltssm_state/link_up/timeout_count/training_error_count`，并通过
-Root Port `user_lnk_up` 交叉确认。通过条件必须同时满足：
+Root Port `cfg_ltssm_state` 交叉确认。B1 尚未接入 InitFC/DLL，故 Xilinx
+`user_lnk_up` 只记录、不作为纯 LTSSM 门禁；该信号从 B2 开始纳入验收。通过条件为：
 
 1. Endpoint 进入状态 10（L0）；
-2. Root Port `user_lnk_up=1`；
+2. Root Port `cfg_ltssm_state=6'h10`（L0）；
 3. Endpoint 协商结果为 Gen1 x1；
 4. 连续观察窗口内两端均未掉链。
 

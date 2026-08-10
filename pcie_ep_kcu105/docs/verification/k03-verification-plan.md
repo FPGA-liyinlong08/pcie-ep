@@ -48,6 +48,8 @@ failure；外层脚本只有观察到该失败后才输出 `K03_CHECKER_SELFTEST
 | K03-D014 | COM 位于高 Symbol | 跨拍重组后完整识别 TS，线路字节顺序不改变 |
 | K03-D015 | Configuration 最小发送量 | Accept/Complete 满足接收条件后仍发送满16个对应TS；对端提前前进不清除条件 |
 | K03-D016 | Logical Idle编码 | Idle必须为两个D0.0数据字符，K28.3不得被接受为Logical Idle |
+| K03-D017 | Gen1扰码 | 已知向量、COM重置、SKP保持、训练旁路和2万拍随机往返一致 |
+| K03-D018 | 真实串行L0 | Xilinx PHY/GT与Root Port双方Gen1 x1 L0稳定1024个pclk |
 
 ## 4. 约束随机和错误注入
 

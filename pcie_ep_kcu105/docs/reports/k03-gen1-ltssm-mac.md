@@ -2,7 +2,7 @@
 
 日期：2026-08-06
 
-状态：**K03-v1 条件冻结；软件与静态验收 PASS，VCS 真 PHY 串行和实板验收延期**
+状态：**K03-v1.1 条件冻结；软件、静态和VCS真PHY串行验收PASS，实板验收延期**
 
 接口版本：`K03-MAC16-v1`
 
@@ -15,14 +15,14 @@ Hot Reset 入口以及 TLP/DLLP Symbol 成帧/解帧。测试平台按计划先�
 故意错误 Stub 能被 Checker 检出；正式 RTL 的 Directed、错误注入、随机训练、
 随机 Packet、Lint、KU040 OOC 综合以及 K02 PHY 联合布局布线均已通过。
 
-用户于 2026-08-06 明确批准：当前只记录 VCS 许可证问题，板卡插入后再做上板
-验证，并先继续 K03。因此以下两项不伪造 PASS，登记为延期：
+用户于2026-08-06批准先记录许可证和板卡问题并继续。VCS许可证随后恢复，真实
+串行平台已在K11-B1完成并通过；当前只剩实板门禁延期：
 
-- VCS使用Xilinx `pcie_phy`/GTHE3真模型完成完整LTSSM串行训练；原许可证问题已于
-  2026-08-09解决，但K03真PHY Partner/Root Port集成平台尚未建立；
+- VCS使用Xilinx `pcie_phy`/GTHE3真模型完成完整LTSSM串行训练：2026-08-10 PASS，
+  双方Gen1 x1 L0稳定1024个`phy_pclk`；
 - KCU105 与 Root Port 实际训练到 Gen1 x1 L0，因当前未插板无法执行。
 
-两项必须在K11-B冻结前补测。K03以“条件冻结”
+实板项必须在K11最终冻结前补测。K03以“条件冻结”
 结束，本次没有开始 K04。
 
 ## 2. 冻结实现
@@ -93,11 +93,11 @@ Verilator 对 K03 单模块以及 K01+K02 行为 PHY Stub+K03 集成顶层均为
 | 项目 | 结果 |
 |---|---:|
 | Part | `xcku040-ffva1156-2-e` |
-| CLB LUT | 940 |
+| CLB LUT | 1198 |
 | LUT as Memory | 40 |
-| CLB Register | 882 |
+| CLB Register | 932 |
 | BRAM | 0 |
-| WNS | 5.214 ns |
+| WNS | 4.709 ns |
 | DRC Error/Critical | 0/0 |
 
 OOC 看不到 K01 的四级复位同步释放链，因此只允许 `pipe_rst_n` 输入引起的
@@ -112,10 +112,10 @@ CDC-7；来源和数量由脚本逐项检查。该项在完整集成中不再是
 | GTHE3 Common | 1，`GTHE3_COMMON_X0Y1` |
 | PCIe Hard Block | 0 |
 | K03 MAC 层次 | 1 |
-| Route 后 CLB LUT/Register | 349 / 405 |
-| WNS/TNS | 0.893 ns / 0.000 ns |
+| Route 后 CLB LUT/Register | 566 / 456 |
+| WNS/TNS | 0.212 ns / 0.000 ns |
 | DRC Error/Critical | 0/0 |
-| Critical CDC | 0 |
+| CDC Warning/Critical | 0/0（仅 9 条 Info） |
 | Bitstream | `fpga/kcu105/build_k03/impl/k03_gen1_ltssm_mac.bit` |
 
 集成顶层尚未连接 DLL TX，因此综合会移除不可达的部分 TX Framer；完整 Framer 已由
@@ -135,8 +135,8 @@ Gen3 升速和枚举。K03 的 PHY Partner 是数字接口模型，不能替代�
 3. 下载 K03 bitstream，观察 LTSSM 状态和错误计数；
 4. 验证稳定进入 Gen1 x1 L0，并连续执行 100 次 PERST#/重训；
 5. 保存 Hardware Manager、ILA、Root Port 日志和结果；
-6. 使用已恢复的VCS许可证建立真PHY/GTHE3 Partner并补做串行训练；
-7. 两项通过后把 K02、K03 报告从“条件冻结”更新为 PASS。
+6. VCS真PHY/GTHE3串行训练已经补测PASS，无需重复归为板卡待办；
+7. 实板项通过后把 K02、K03 报告从“条件冻结”更新为 PASS。
 
 ## 8. 冻结决定
 

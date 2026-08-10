@@ -5,6 +5,7 @@ set part_name   xcku040-ffva1156-2-e
 file mkdir $build_dir
 
 set_part $part_name
+read_verilog -sv [file join $project_dir rtl/phy/pcie_gen12_scrambler.sv]
 read_verilog -sv [file join $project_dir rtl/phy/pcie_gen1_rx_symbol_aligner.sv]
 read_verilog -sv [file join $project_dir rtl/phy/pcie_gen1_os_rx.sv]
 read_verilog -sv [file join $project_dir rtl/phy/pcie_gen1_os_tx.sv]

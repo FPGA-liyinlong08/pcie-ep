@@ -105,7 +105,7 @@ module pcie_ltssm_mac_gen1 #(
     wire       os_ts1_valid;
     wire       os_ts2_valid;
     wire       os_malformed;
-    wire       os_idle_pair_valid;
+    wire       os_raw_idle_pair_valid;
     wire [7:0] os_link_number;
     wire       os_link_is_pad;
     wire [7:0] os_lane_number;
@@ -133,9 +133,31 @@ module pcie_ltssm_mac_gen1 #(
     // Gen1/2 的 8b/10b Symbol 有效性由 RxValid 指示。K03 固定 Gen1，因此不能
     // 用 phy_rxdata_valid 门控 Ordered Set，否则真实 PHY 会丢弃全部 TS1/TS2。
     wire        rx_phy_word_valid = phy_rxvalid;
+    wire        rx_raw_aligned_valid;
+    wire [15:0] rx_raw_aligned_data;
+    wire [1:0]  rx_raw_aligned_datak;
+    wire        rx_descrambled_valid;
+    wire [15:0] rx_descrambled_data;
+    wire [1:0]  rx_descrambled_datak;
     wire        rx_aligned_valid;
     wire [15:0] rx_aligned_data;
     wire [1:0]  rx_aligned_datak;
+    wire        os_idle_pair_valid = rx_aligned_valid &&
+                                     (rx_aligned_datak == 2'b00) &&
+                                     (rx_aligned_data == 16'h0000);
+
+    wire [15:0] tx_plain_data = framer_enable ? frame_tx_data[15:0] :
+                                                os_tx_data[15:0];
+    wire [1:0]  tx_plain_datak = framer_enable ? frame_tx_datak : os_tx_datak;
+    wire        tx_plain_valid = framer_enable ? frame_tx_valid : os_tx_valid;
+    wire        tx_scramble_disable = !((ltssm_state == CFG_IDLE) ||
+                                        (ltssm_state == STATE_L0) ||
+                                        (ltssm_state == RECOVERY_IDLE));
+    wire        tx_scrambled_valid;
+    wire [15:0] tx_scrambled_data;
+    wire [1:0]  tx_scrambled_datak;
+    wire [15:0] tx_scrambler_state;
+    wire [15:0] rx_scrambler_state;
 
     function automatic [31:0] sat_inc32(input [31:0] value);
         begin
@@ -149,6 +171,30 @@ module pcie_ltssm_mac_gen1 #(
         .in_valid  (rx_phy_word_valid),
         .in_data   (phy_rxdata[15:0]),
         .in_datak  (phy_rxdatak),
+        .out_valid (rx_raw_aligned_valid),
+        .out_data  (rx_raw_aligned_data),
+        .out_datak (rx_raw_aligned_datak)
+    );
+
+    pcie_gen12_scrambler u_rx_descrambler (
+        .clk              (phy_pclk),
+        .rst_n            (pipe_rst_n),
+        .in_valid         (rx_phy_word_valid),
+        .scramble_disable (tx_scramble_disable),
+        .in_data          (phy_rxdata[15:0]),
+        .in_datak         (phy_rxdatak),
+        .out_valid        (rx_descrambled_valid),
+        .out_data         (rx_descrambled_data),
+        .out_datak        (rx_descrambled_datak),
+        .lfsr_state       (rx_scrambler_state)
+    );
+
+    pcie_gen1_rx_symbol_aligner u_rx_descrambled_symbol_aligner (
+        .clk       (phy_pclk),
+        .rst_n     (pipe_rst_n),
+        .in_valid  (rx_descrambled_valid),
+        .in_data   (rx_descrambled_data),
+        .in_datak  (rx_descrambled_datak),
         .out_valid (rx_aligned_valid),
         .out_data  (rx_aligned_data),
         .out_datak (rx_aligned_datak)
@@ -158,13 +204,13 @@ module pcie_ltssm_mac_gen1 #(
         .clk              (phy_pclk),
         .rst_n            (pipe_rst_n),
         .enable           (1'b1),
-        .in_valid         (rx_aligned_valid),
-        .in_data          (rx_aligned_data),
-        .in_datak         (rx_aligned_datak),
+        .in_valid         (rx_raw_aligned_valid),
+        .in_data          (rx_raw_aligned_data),
+        .in_datak         (rx_raw_aligned_datak),
         .ts1_valid        (os_ts1_valid),
         .ts2_valid        (os_ts2_valid),
         .malformed        (os_malformed),
-        .idle_pair_valid  (os_idle_pair_valid),
+        .idle_pair_valid  (os_raw_idle_pair_valid),
         .link_number      (os_link_number),
         .link_is_pad      (os_link_is_pad),
         .lane_number      (os_lane_number),
@@ -184,11 +230,26 @@ module pcie_ltssm_mac_gen1 #(
         .lane_number      (tx_os_lane),
         .lane_is_pad      (tx_os_lane_pad),
         .n_fts            (8'hff),
-        .rate_id          (8'h0e),
+        // K03/K11-B固定Gen1，只宣告2.5 GT/s支持（Rate ID bit1）。
+        // Gen2/Gen3能力在K12升速阶段再打开，避免Root进入Recovery.Speed。
+        .rate_id          (8'h02),
         .training_control (8'h00),
         .out_data         (os_tx_data),
         .out_datak        (os_tx_datak),
         .out_valid        (os_tx_valid)
+    );
+
+    pcie_gen12_scrambler u_tx_scrambler (
+        .clk              (phy_pclk),
+        .rst_n            (pipe_rst_n),
+        .in_valid         (tx_plain_valid),
+        .scramble_disable (tx_scramble_disable),
+        .in_data          (tx_plain_data),
+        .in_datak         (tx_plain_datak),
+        .out_valid        (tx_scrambled_valid),
+        .out_data         (tx_scrambled_data),
+        .out_datak        (tx_scrambled_datak),
+        .lfsr_state       (tx_scrambler_state)
     );
 
     pcie_gen1_framer #(
@@ -255,9 +316,9 @@ module pcie_ltssm_mac_gen1 #(
         endcase
     end
 
-    assign phy_txdata         = framer_enable ? frame_tx_data  : os_tx_data;
-    assign phy_txdatak        = framer_enable ? frame_tx_datak : os_tx_datak;
-    assign phy_txdata_valid   = framer_enable ? frame_tx_valid : os_tx_valid;
+    assign phy_txdata         = {16'd0, tx_scrambled_data};
+    assign phy_txdatak        = tx_scrambled_datak;
+    assign phy_txdata_valid   = tx_scrambled_valid;
     assign phy_txstart_block  = 1'b0;
     assign phy_txsync_header  = 2'b00;
     assign phy_txdetectrx     = (ltssm_state == DETECT_ACTIVE);
@@ -362,9 +423,13 @@ module pcie_ltssm_mac_gen1 #(
                                 state_timer <= 32'd0;
                                 rx_ts_count <= 5'd0;
                             end else rx_ts_count <= rx_ts_count + 1'b1;
-                        end else if (os_ts1_valid || os_ts2_valid) begin
+                        end else if (os_ts2_valid) begin
                             rx_ts_count <= 5'd0;
                             training_error_count <= sat_inc32(training_error_count);
+                        end else if (os_ts1_valid) begin
+                            // 对端允许在状态交接期间继续发送上一状态的合法TS1。
+                            // 它只打断连续TS2计数，不属于训练错误。
+                            rx_ts_count <= 5'd0;
                         end
                         if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
@@ -496,7 +561,9 @@ module pcie_ltssm_mac_gen1 #(
                     STATE_L0: begin
                         state_timer <= 32'd0;
                         rx_ts_count <= 5'd0;
-                        if (hot_reset_req || os_training_control[0]) begin
+                        if (hot_reset_req ||
+                            ((os_ts1_valid || os_ts2_valid) &&
+                             os_training_control[0])) begin
                             ltssm_state <= HOT_RESET;
                             hot_reset_seen <= 1'b1;
                         end else if (force_recovery || phy_rxelecidle) begin
@@ -576,7 +643,10 @@ module pcie_ltssm_mac_gen1 #(
     end
 
     wire _unused_rx_fields = &{1'b0, phy_rxdata[31:16], phy_rxdata_valid,
-                               os_n_fts, os_rate_id, os_training_control[7:1]};
+                               os_n_fts, os_rate_id, os_training_control[7:1],
+                               os_raw_idle_pair_valid, tx_scrambler_state,
+                               rx_scrambler_state, os_tx_data[31:16],
+                               frame_tx_data[31:16]};
 endmodule
 
 `default_nettype wire
