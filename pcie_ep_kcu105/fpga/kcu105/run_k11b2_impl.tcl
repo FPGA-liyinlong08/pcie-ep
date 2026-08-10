@@ -1,12 +1,23 @@
 set script_dir  [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
-set build_dir   [file join $script_dir build_k11b2 impl]
+set ila_debug   [expr {[info exists ::env(K11B2_ILA_DEBUG)] &&
+                       $::env(K11B2_ILA_DEBUG) eq "1"}]
+set ila_resume  [expr {$ila_debug && [info exists ::env(K11B2_ILA_RESUME)] &&
+                       $::env(K11B2_ILA_RESUME) eq "1"}]
+set build_dir   [file join $script_dir \
+                  [expr {$ila_debug ? "build_k11b2_ila" : "build_k11b2"}] impl]
 set xci_path    [file join $script_dir ip pcie_phy_x1_gen3 pcie_phy_x1_gen3.xci]
 set afifo_path  /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
 set part_name   xcku040-ffva1156-2-e
 set top_name    kcu105_pcie_ep_gen1_board_top
 file mkdir $build_dir
 
+if {$ila_resume} {
+  set resume_dcp [file join $build_dir k11b3_pre_ila_synth.dcp]
+  if {![file exists $resume_dcp]} { error "K11-B3续跑DCP不存在：$resume_dcp" }
+  open_checkpoint $resume_dcp
+  puts "K11B3_ILA_RESUME_FROM_DCP=$resume_dcp"
+} else {
 if {![file exists $xci_path]} { error "K11-B2 XCI不存在，请先执行make k02-ip：$xci_path" }
 if {![file exists $afifo_path]} { error "缺少冻结afifo依赖：$afifo_path" }
 
@@ -41,7 +52,72 @@ set sv_files [list \
 foreach f $sv_files { read_verilog -sv [file join $project_dir $f] }
 read_xdc [file join $script_dir k03_gen1_ltssm_mac.xdc]
 
-synth_design -top $top_name -part $part_name
+if {$ila_debug} {
+  synth_design -top $top_name -part $part_name -generic K11B2_ILA_DEBUG=1
+  write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
+} else {
+  synth_design -top $top_name -part $part_name
+}
+}
+
+if {$ila_debug} {
+  proc debug_bus_nets {regexp_pattern expected_width} {
+    set result [lsort -dictionary [get_nets -hierarchical -quiet -regexp \
+                                   $regexp_pattern -filter {MARK_DEBUG == 1}]]
+    if {[llength $result] != $expected_width} {
+      error "K11-B3调试总线宽度错误：$regexp_pattern，实际[llength $result]，期望$expected_width"
+    }
+    return $result
+  }
+  proc debug_scalar_net {net_name} {
+    set result [get_nets -hierarchical -quiet $net_name -filter {MARK_DEBUG == 1}]
+    if {[llength $result] == 0} {
+      set leaf_name [file tail $net_name]
+      set result [get_nets -hierarchical -quiet -regexp ".*${leaf_name}.*" \
+                  -filter {MARK_DEBUG == 1}]
+    }
+    if {[llength $result] != 1} {
+      error "K11-B3调试标量不存在或不唯一：$net_name，实际[llength $result]"
+    }
+    return $result
+  }
+  proc add_ila_probe {core_name probe_index nets} {
+    if {$probe_index != 0} { create_debug_port $core_name probe }
+    set port [get_debug_ports ${core_name}/probe${probe_index}]
+    set_property port_width [llength $nets] $port
+    connect_debug_port $port $nets
+  }
+
+  create_debug_core u_ila_pipe ila
+  set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_pipe]
+  set_property C_TRIGIN_EN false [get_debug_cores u_ila_pipe]
+  set_property C_TRIGOUT_EN false [get_debug_cores u_ila_pipe]
+  set_property C_INPUT_PIPE_STAGES 1 [get_debug_cores u_ila_pipe]
+  connect_debug_port u_ila_pipe/clk \
+    [debug_scalar_net u_endpoint/g_ila_debug/dbg_pipe_clk]
+  add_ila_probe u_ila_pipe 0 \
+    [debug_scalar_net u_endpoint/g_ila_debug/dbg_pipe_tlp_trigger]
+  add_ila_probe u_ila_pipe 1 \
+    [debug_bus_nets {.*dbg_pipe_top.*\[[0-9]+\]$} 64]
+  add_ila_probe u_ila_pipe 2 \
+    [debug_bus_nets {.*dbg_pipe_dll.*\[[0-9]+\]$} 128]
+
+  create_debug_core u_ila_core ila
+  set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
+  set_property C_TRIGIN_EN false [get_debug_cores u_ila_core]
+  set_property C_TRIGOUT_EN false [get_debug_cores u_ila_core]
+  set_property C_INPUT_PIPE_STAGES 1 [get_debug_cores u_ila_core]
+  connect_debug_port u_ila_core/clk \
+    [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_clk]
+  add_ila_probe u_ila_core 0 \
+    [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_tlp_trigger]
+  add_ila_probe u_ila_core 1 \
+    [debug_bus_nets {.*dbg_core_stream.*\[[0-9]+\]$} 128]
+  add_ila_probe u_ila_core 2 \
+    [debug_bus_nets {.*dbg_core_detail.*\[[0-9]+\]$} 192]
+
+  puts "K11B3_ILA_INSERT_PASS pipe_width=193 core_width=321 depth=4096"
+}
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]
 if {[llength $afifo_gray_sync_cells] == 0} { error "K11-B2未找到afifo Gray同步寄存器" }
@@ -55,6 +131,10 @@ opt_design
 place_design
 phys_opt_design
 route_design
+if {$ila_debug} {
+  # 调试构建允许负时序，但仍尽量降低ILA对训练路径的扰动。
+  phys_opt_design -directive AggressiveExplore
+}
 write_checkpoint -force [file join $build_dir k11b2_routed.dcp]
 report_utilization -file [file join $build_dir utilization_routed.rpt]
 report_timing_summary -delay_type min_max -report_unconstrained \
@@ -107,8 +187,11 @@ set demo_count [require_hierarchy demo_axil_slave]
 
 set setup_paths [get_timing_paths -delay_type max -slack_lesser_than 0 -max_paths 1]
 set hold_paths [get_timing_paths -delay_type min -slack_lesser_than 0 -max_paths 1]
-if {[llength $setup_paths] != 0} { error "K11-B2存在setup负时序" }
-if {[llength $hold_paths] != 0} { error "K11-B2存在hold负时序" }
+if {!$ila_debug && [llength $setup_paths] != 0} { error "K11-B2存在setup负时序" }
+if {!$ila_debug && [llength $hold_paths] != 0} { error "K11-B2存在hold负时序" }
+if {$ila_debug && ([llength $setup_paths] != 0 || [llength $hold_paths] != 0)} {
+  puts "K11B3_ILA_DIAGNOSTIC_TIMING_ONLY setup_negative=[llength $setup_paths] hold_negative=[llength $hold_paths]"
+}
 set worst_path [get_timing_paths -delay_type max -max_paths 1]
 if {[llength $worst_path] != 1} { error "K11-B2找不到可分析的最大延迟路径" }
 set wns [get_property SLACK $worst_path]
@@ -125,9 +208,15 @@ if {[regexp -line {^CDC-[0-9]+[ \t]+Critical[ \t]+[1-9][0-9]*} $cdc_text]} {
   error "K11-B2 CDC存在Critical路径"
 }
 
-write_bitstream -force [file join $build_dir k11b2_gen1_endpoint.bit]
+set bit_name [expr {$ila_debug ? "k11b2_gen1_endpoint_ila.bit" :
+                                  "k11b2_gen1_endpoint.bit"}]
+write_bitstream -force [file join $build_dir $bit_name]
+if {$ila_debug} {
+  write_debug_probes -force [file join $build_dir k11b2_gen1_endpoint_ila.ltx]
+}
 set summary_file [open [file join $build_dir summary.txt] w]
-puts $summary_file "K11B2_IMPL_PASS"
+puts $summary_file [expr {$ila_debug ? "K11B3_ILA_IMPL_PASS" :
+                                      "K11B2_IMPL_PASS"}]
 puts $summary_file "part=$part_name"
 puts $summary_file "top=$top_name"
 puts $summary_file "GTHE3_CHANNEL_LOC=$channel_loc"
@@ -139,6 +228,8 @@ puts $summary_file "CFG_HIERARCHY_COUNT=$cfg_count"
 puts $summary_file "BAR_HIERARCHY_COUNT=$bar_count"
 puts $summary_file "DEMO_HIERARCHY_COUNT=$demo_count"
 puts $summary_file "WNS=$wns"
-puts $summary_file "bitstream=[file join $build_dir k11b2_gen1_endpoint.bit]"
+puts $summary_file "ILA_DEBUG=$ila_debug"
+puts $summary_file "TIMING_POLICY=[expr {$ila_debug ? "DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED" : "WNS_GE_0_REQUIRED"}]"
+puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
-puts "K11B2_IMPL_PASS channel=$channel_loc common=$common_loc WNS=$wns"
+puts "[expr {$ila_debug ? "K11B3_ILA_IMPL_PASS" : "K11B2_IMPL_PASS"}] channel=$channel_loc common=$common_loc WNS=$wns"

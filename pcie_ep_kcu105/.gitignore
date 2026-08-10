@@ -29,3 +29,5 @@ fpga/kcu105/ip/pcie_phy_x1_gen3/*
 sim/verilator/k04_native/summary.txt
 sim/verilator/k05_native/summary.txt
 sim/verilator/k06_native/summary.txt
+# KCU105 XDMA x1硬件对照工程生成物
+fpga/kcu105/xdma_x1_demo/build/

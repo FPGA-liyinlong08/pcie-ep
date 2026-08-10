@@ -6,7 +6,9 @@
 // 128-bit Packet Stream 替代尚未集成的 DLL；配置和 Memory TLP 均经过
 // 生产 pcie_tlp_codec。配置请求进入生产 pcie_cfg_space，Memory 请求进入
 // 生产 pcie_bar_axil_master，读 Completion 再由生产 pcie_tlp_codec 编码。
-module k09_tlp_test_top (
+module k09_tlp_test_top #(
+    parameter integer K11B2_ILA_DEBUG = 0
+) (
     input  wire         clk,
     input  wire         rst_n,
     input  wire         hot_reset,
@@ -98,6 +100,21 @@ module k09_tlp_test_top (
     wire [2:0]  cfg_rsp_status;
     wire [31:0] cfg_rsp_rdata;
     wire [15:0] cfg_rsp_completer_id;
+
+    generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug
+        // K11-B3三级诊断：在固定192-bit宽度内保留TX Completion首拍原文，
+        // 同时采集codec分类和配置请求/响应握手。
+        (* mark_debug = "true", keep = "true" *)
+        wire [191:0] dbg_core_detail = {
+            8'd0,
+            codec_malformed_count[7:0], codec_unsupported_count[7:0],
+            codec_cfg_request_count[7:0],
+            cfg_rsp_valid, cfg_rsp_ready, cfg_rsp_status,
+            cfg_req_valid, cfg_req_ready, cfg_req_write,
+            tx_tlp_valid, tx_tlp_ready, tx_tlp_sop, tx_tlp_eop,
+            tx_tlp_error, tx_tlp_keep, tx_tlp_data
+        };
+    end endgenerate
 
     wire         mem_req_valid;
     wire         mem_req_ready;

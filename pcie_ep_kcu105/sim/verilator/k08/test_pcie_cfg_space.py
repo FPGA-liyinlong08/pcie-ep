@@ -482,6 +482,23 @@ async def bdf_bar_and_control_directed(dut):
     )
     assert model.captured_bdf == TEST_BDF
 
+    # 固件可能先用临时Bus Number探测，再由OS重分配Bus Number；Device/Function不变。
+    reassigned_bdf = 0x0AA0
+    rsp = await model_access(
+        driver, model, write=False, addr=0, target_bdf=reassigned_bdf
+    )
+    assert rsp["status"] == SC
+    assert rsp["completer_id"] == reassigned_bdf
+    assert model.captured_bdf == reassigned_bdf
+
+    # 同一Device允许再次改变Bus Number，便于固件临时编号切换到OS最终编号。
+    rsp = await model_access(
+        driver, model, write=False, addr=0, target_bdf=TEST_BDF
+    )
+    assert rsp["status"] == SC
+    assert rsp["completer_id"] == TEST_BDF
+    assert model.captured_bdf == TEST_BDF
+
     command_before = model.command
     for bad_bdf in (0x0200, 0x0108, 0x0101):
         rsp = await model_access(

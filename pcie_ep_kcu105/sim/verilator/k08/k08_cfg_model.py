@@ -198,6 +198,7 @@ class CfgSpaceModel:
         """执行一次已握手请求，并返回应产生的响应。"""
         target_bdf &= 0xFFFF
         function_number = target_bdf & 0x7
+        device_number = (target_bdf >> 3) & 0x1F
         # 脉冲在每个新事务开始前自动撤销；UR也不能延长上一次脉冲。
         self.retrain_link_pulse = False
 
@@ -205,10 +206,14 @@ class CfgSpaceModel:
             cid = self.captured_bdf if self.bdf_valid else 0
             return CfgResponse(UR, 0, cid)
 
-        if self.bdf_valid and target_bdf != self.captured_bdf:
+        if (
+            self.bdf_valid
+            and device_number != ((self.captured_bdf >> 3) & 0x1F)
+        ):
             return CfgResponse(UR, 0, self.captured_bdf)
 
-        if not self.bdf_valid:
+        # 固件临时Bus Number切换到OS最终Bus Number时，更新完整BDF。
+        if not self.bdf_valid or target_bdf != self.captured_bdf:
             self.captured_bdf = target_bdf
             self.bdf_valid = True
 

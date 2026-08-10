@@ -21,9 +21,16 @@
 	k10-vivado k10 \
 	k11a-checker-selftest k11a-lint k11a-bridge k11a-offline \
 	k11a-regression k11a-vivado k11a \
-	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vcs-stress k11b2-vivado clean
+	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vcs-stress k11b2-vivado \
+	k11b2-hw-probe k11b2-hw-program k11b2-hw-program-debug \
+	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
+	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
+	k11b2-ila-hw-capture-cfg-wait k11b2-ila-hw-capture-tx-wait \
+	k11b2-ila-hw-capture-now k11b2-ila-hw-upload \
+	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
+VIVADO ?= /home/Xilinx/Vivado/2021.2/bin/vivado
 
 k00: k00-baseline k00-m02
 
@@ -215,7 +222,7 @@ k11b-vcs-serial:
 	./sim/vcs/run_k11b_serial.sh
 
 k11b2-lint:
-	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+	verilator $(K11B2_LINT_DEFINES) --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		-Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
 		--top-module kcu105_pcie_ep_gen1_top \
 		/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v \
@@ -247,6 +254,67 @@ k11b2-vcs-stress:
 
 k11b2-vivado:
 	./fpga/kcu105/run_k11b2_impl.sh
+
+k11b2-debug-finalize:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/finalize_k11b2_debug.tcl
+
+k11b2-ila-lint:
+	$(MAKE) k11b2-lint K11B2_LINT_DEFINES=-GK11B2_ILA_DEBUG=1
+
+k11b2-ila-vivado:
+	./fpga/kcu105/run_k11b2_ila_impl.sh
+
+k11b2-ila-hw-program-arm:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 program-arm
+
+k11b2-ila-hw-capture-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 capture-wait
+
+k11b2-ila-hw-capture-cfg-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 capture-cfg-wait
+
+k11b2-ila-hw-capture-tx-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 capture-tx-wait
+
+k11b2-ila-hw-capture-now:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 capture-now
+
+k11b2-ila-hw-upload:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 upload
+
+k11b2-hw-probe:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_hw.tcl -tclargs localhost:3122 probe
+
+k11b2-hw-program:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_hw.tcl -tclargs localhost:3122 program
+
+k11b2-hw-program-debug:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_hw.tcl \
+		-tclargs localhost:3122 program-debug
+
+xdma-x1-demo:
+	./fpga/kcu105/xdma_x1_demo/run_xdma_x1_demo.sh
+
+xdma-x1-hw-program:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/xdma_x1_demo/program_xdma_x1_demo.tcl \
+		-tclargs localhost:3122
 
 k04-checker-selftest:
 	@$(MAKE) -C sim/verilator/k04 NEGATIVE_STUB=1 \

@@ -101,6 +101,10 @@ module pcie_ltssm_mac_gen1 #(
     localparam [7:0]  K_PAD                = 8'hf7;
 
     reg [31:0] state_timer;
+    // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
+    // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
+    reg [2:0] rxelecidle_count;
+    wire rxelecidle_qualified = &rxelecidle_count;
 
     wire       os_ts1_valid;
     wire       os_ts2_valid;
@@ -120,6 +124,7 @@ module pcie_ltssm_mac_gen1 #(
     reg  [7:0] tx_os_lane;
     reg        tx_os_lane_pad;
     reg        tx_os_enable;
+    reg  [7:0] tx_os_training_control;
     wire [31:0] os_tx_data;
     wire [1:0]  os_tx_datak;
     wire        os_tx_valid;
@@ -233,7 +238,7 @@ module pcie_ltssm_mac_gen1 #(
         // K03/K11-B固定Gen1，只宣告2.5 GT/s支持（Rate ID bit1）。
         // Gen2/Gen3能力在K12升速阶段再打开，避免Root进入Recovery.Speed。
         .rate_id          (8'h02),
-        .training_control (8'h00),
+        .training_control (tx_os_training_control),
         .out_data         (os_tx_data),
         .out_datak        (os_tx_datak),
         .out_valid        (os_tx_valid)
@@ -289,11 +294,17 @@ module pcie_ltssm_mac_gen1 #(
         tx_os_lane     = 8'd0;
         tx_os_lane_pad = 1'b0;
         tx_os_enable   = 1'b1;
+        tx_os_training_control = 8'h00;
         case (ltssm_state)
-            DETECT_QUIET, DETECT_ACTIVE, HOT_RESET: begin
+            DETECT_QUIET, DETECT_ACTIVE: begin
                 tx_os_enable   = 1'b0;
                 tx_os_link_pad = 1'b1;
                 tx_os_lane_pad = 1'b1;
+            end
+            HOT_RESET: begin
+                // Upstream Component在Hot Reset保持期回送带Hot Reset位的TS1。
+                tx_os_mode             = 2'd1;
+                tx_os_training_control = 8'h01;
             end
             POLLING_ACTIVE, CFG_LINKWIDTH_START: begin
                 tx_os_mode     = 2'd1;
@@ -323,8 +334,7 @@ module pcie_ltssm_mac_gen1 #(
     assign phy_txsync_header  = 2'b00;
     assign phy_txdetectrx     = (ltssm_state == DETECT_ACTIVE);
     assign phy_txelecidle     = (ltssm_state == DETECT_QUIET) ||
-                                (ltssm_state == DETECT_ACTIVE) ||
-                                (ltssm_state == HOT_RESET);
+                                (ltssm_state == DETECT_ACTIVE);
     assign phy_txcompliance   = 1'b0;
     assign phy_rxpolarity     = 1'b0;
     assign phy_powerdown      = phy_txelecidle ? 2'b10 : 2'b00;
@@ -355,8 +365,13 @@ module pcie_ltssm_mac_gen1 #(
             timeout_count       <= 32'd0;
             frame_error_count   <= 32'd0;
             hot_reset_seen      <= 1'b0;
+            rxelecidle_count    <= 3'd0;
         end else begin
             hot_reset_seen <= 1'b0;
+            if ((ltssm_state != STATE_L0) || !phy_rxelecidle)
+                rxelecidle_count <= 3'd0;
+            else if (!rxelecidle_qualified)
+                rxelecidle_count <= rxelecidle_count + 1'b1;
             if (framer_error)
                 frame_error_count <= sat_inc32(frame_error_count);
             if (os_malformed)
@@ -566,7 +581,9 @@ module pcie_ltssm_mac_gen1 #(
                              os_training_control[0])) begin
                             ltssm_state <= HOT_RESET;
                             hot_reset_seen <= 1'b1;
-                        end else if (force_recovery || phy_rxelecidle) begin
+                        end else if (force_recovery || os_ts1_valid ||
+                                     os_ts2_valid ||
+                                     rxelecidle_qualified) begin
                             ltssm_state <= RECOVERY_RCVRLOCK;
                         end
                     end

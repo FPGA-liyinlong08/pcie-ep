@@ -369,6 +369,26 @@ async def gen1_accepts_com_in_high_symbol(dut):
 
 
 @cocotb.test()
+async def l0_filters_rxelecidle_glitch_and_accepts_partner_recovery(dut):
+    """L0过滤单周期Electrical Idle毛刺，并响应对端正常Recovery TS1。"""
+    await initialize(dut)
+    await train_to_l0(dut, validate_tx=False)
+
+    await writable_phase()
+    dut.phy_rxelecidle.value = 1
+    await tick(dut)
+    await writable_phase()
+    dut.phy_rxelecidle.value = 0
+    await tick(dut)
+    assert int(dut.ltssm_state.value) == L0
+
+    # 对端可以不依赖本地DLL请求，直接以带既有Link/Lane号的TS1发起Recovery。
+    await writable_phase()
+    await send_ts(dut, 1, 1, link=0, lane=0)
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+
+
+@cocotb.test()
 async def detect_errors_recovery_and_hot_reset(dut):
     await initialize(dut)
     await wait_state(dut, DETECT_ACTIVE)
@@ -408,6 +428,16 @@ async def detect_errors_recovery_and_hot_reset(dut):
     await tick(dut)
     assert int(dut.ltssm_state.value) == HOT_RESET
     assert int(dut.hot_reset_seen.value) == 1
+    # Hot Reset保持期必须回送training_control.HotReset=1的TS1，不能立即静默。
+    hot_reset_control_seen = False
+    for _ in range(8):
+        data = int(dut.phy_txdata.value)
+        datak = int(dut.phy_txdatak.value)
+        if (data & 0xFFFF) == 0x0102 and datak == 0:
+            hot_reset_control_seen = True
+        await writable_phase()
+        await tick(dut)
+    assert hot_reset_control_seen
     await writable_phase()
     dut.hot_reset_req.value = 0
     await wait_state(dut, DETECT_QUIET)

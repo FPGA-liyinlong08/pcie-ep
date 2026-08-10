@@ -141,13 +141,15 @@ module pcie_cfg_space (
     end
 
     // 单Function Endpoint只要求Function Number为0；Device Number由Root Port分配，
-    // 不能假定为0。首次命中时捕获完整Bus/Device/Function。
-    wire target_device_function_zero =
+    // 不能假定为0。固件和OS可能先后为同一Device分配不同Bus Number，因此首次
+    // 命中后只锁定Device Number，接受的每次请求都更新完整BDF。
+    wire target_function_zero =
         (cfg_req_target_bdf[2:0] == 3'd0);
-    wire target_bdf_matches =
-        !bdf_valid || (cfg_req_target_bdf == captured_bdf);
+    wire target_device_matches =
+        !bdf_valid ||
+        (cfg_req_target_bdf[7:3] == captured_bdf[7:3]);
     wire request_hits_function =
-        target_device_function_zero && target_bdf_matches;
+        target_function_zero && target_device_matches;
     wire cfg_req_fire = cfg_req_valid && cfg_req_ready;
 
     assign cfg_req_ready = rst_n && !hot_reset && !cfg_rsp_valid;
@@ -203,11 +205,12 @@ module pcie_cfg_space (
                                                 captured_bdf : 16'd0;
                 end else begin
                     cfg_rsp_status <= CFG_STATUS_SC;
-                    cfg_rsp_completer_id <= bdf_valid ?
-                                                captured_bdf :
-                                                cfg_req_target_bdf;
+                    // Completion必须回显当前请求所使用的Bus Number；不能使用
+                    // 上一次固件枚举阶段捕获的临时Bus Number。
+                    cfg_rsp_completer_id <= cfg_req_target_bdf;
 
-                    if (!bdf_valid) begin
+                    if (!bdf_valid ||
+                        (cfg_req_target_bdf != captured_bdf)) begin
                         captured_bdf <= cfg_req_target_bdf;
                         bdf_valid <= 1'b1;
                     end

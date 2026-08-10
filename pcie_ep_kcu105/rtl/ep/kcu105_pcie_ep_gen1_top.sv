@@ -6,7 +6,8 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer DETECT_QUIET_CYCLES   = 1_500_000,
     parameter integer DETECT_TIMEOUT_CYCLES = 3_000_000,
     parameter integer TRAIN_TIMEOUT_CYCLES  = 6_000_000,
-    parameter integer HOT_RESET_CYCLES      = 250_000
+    parameter integer HOT_RESET_CYCLES      = 250_000,
+    parameter integer K11B2_ILA_DEBUG        = 0
 ) (
     input  wire        pcie_refclk_p,
     input  wire        pcie_refclk_n,
@@ -65,6 +66,31 @@ module kcu105_pcie_ep_gen1_top #(
     wire [4:0] rx_ts_count;
     wire [31:0] training_error_count, timeout_count, frame_error_count;
     reg [24:0] heartbeat_count;
+
+    generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug
+        // K11-B3事件级诊断总线。默认参数为0，正式构建完全裁掉。
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_pipe_clk = phy_pclk;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_pipe_tlp_trigger = mac_rx_valid && mac_rx_sop &&
+                                    !mac_rx_is_dllp;
+        (* mark_debug = "true", keep = "true" *)
+        wire [63:0] dbg_pipe_top = {
+            16'd0,
+            heartbeat_count[24],
+            phy_rxdata_valid, phy_rxvalid, phy_rxelecidle, phy_rxstatus,
+            phy_phystatus, phy_phystatus_rst,
+            pipe_rst_n, core_rst_n,
+            link_up, dll_active, dll_fc_state, ltssm_state,
+            negotiated_speed, negotiated_width,
+            recovery_req, hot_reset_seen,
+            |training_error_count, |timeout_count, |frame_error_count,
+            mac_rx_valid, mac_rx_sop, mac_rx_eop, mac_rx_is_dllp, mac_rx_error,
+            mac_tx_valid, mac_tx_ready, mac_tx_sop, mac_tx_eop,
+            mac_tx_is_dllp, mac_tx_bad,
+            |cdc_errors, bdf_valid, memory_space_enable
+        };
+    end endgenerate
 
     kcu105_pcie_phy_wrapper u_phy_wrapper (
         .pcie_refclk_p(pcie_refclk_p), .pcie_refclk_n(pcie_refclk_n),
@@ -132,7 +158,7 @@ module kcu105_pcie_ep_gen1_top #(
         .frame_error_count(frame_error_count), .hot_reset_seen(hot_reset_seen)
     );
 
-    k11a_offline_top u_protocol_core (
+    k11a_offline_top #(.K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)) u_protocol_core (
         .pipe_clk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .core_clk(phy_coreclk), .core_rst_n(core_rst_n),
         .link_up(link_up), .ltssm_state(ltssm_state),

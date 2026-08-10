@@ -3,7 +3,9 @@
 
 // K11-A/K11-B生产协议核心；保留冻结模块名k11a_offline_top。
 // 边界位于K03 MAC Packet接口，不包含Xilinx PHY模型。
-module k11a_offline_top (
+module k11a_offline_top #(
+    parameter integer K11B2_ILA_DEBUG = 0
+) (
     input  wire         pipe_clk,
     input  wire         pipe_rst_n,
     input  wire         core_clk,
@@ -61,6 +63,29 @@ module k11a_offline_top (
     wire [31:0] nak_tx_count, replay_count, lcrc_error_count;
     wire [31:0] duplicate_tlp_count, sequence_error_count;
     wire [31:0] ack_error_count, buffer_error_count;
+
+    generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug_pipe
+        // phy_pclk域事件级DLL诊断。计数器保留低4位并另给出非零标志。
+        (* mark_debug = "true", keep = "true" *)
+        wire [127:0] dbg_pipe_dll = {
+            15'd0,
+            |malformed_dllp_count, |bad_dllp_crc_count,
+            |fc_protocol_error_count, |lcrc_error_count,
+            |sequence_error_count, |duplicate_tlp_count,
+            |buffer_error_count, |ack_error_count,
+            dll_rx_tlp_count[3:0], dll_tx_tlp_count[3:0],
+            lcrc_error_count[3:0], sequence_error_count[3:0],
+            duplicate_tlp_count[3:0], buffer_error_count[3:0],
+            ack_tx_count[3:0], nak_tx_count[3:0],
+            next_tx_seq, next_rx_seq, last_acked_seq, replay_occupancy,
+            dll_fc_state, dll_active, recovery_req, replay_active, replay_fatal,
+            mac_rx_valid, mac_rx_sop, mac_rx_eop, mac_rx_is_dllp, mac_rx_error,
+            dll_rx_valid, dll_rx_ready, dll_rx_sop, dll_rx_eop, dll_rx_error,
+            dll_tx_valid, dll_tx_ready, dll_tx_sop, dll_tx_eop,
+            mac_tx_valid, mac_tx_ready, mac_tx_sop, mac_tx_eop,
+            mac_tx_is_dllp, mac_tx_bad
+        };
+    end endgenerate
 
     localparam integer DIAG_WIDTH = 143;
     wire [DIAG_WIDTH-1:0] pipe_diag = {
@@ -199,7 +224,28 @@ module k11a_offline_top (
     wire [31:0] bar_sc_completion_count, bar_ur_completion_count;
     wire [31:0] bar_ca_completion_count;
 
-    k09_tlp_test_top u_tl (
+    generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug_core
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_core_clk = core_clk;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_core_tlp_trigger = core_rx_valid && core_rx_ready && core_rx_sop;
+        (* mark_debug = "true", keep = "true" *)
+        wire [127:0] dbg_core_stream = {
+            10'd0,
+            core_rst_n, core_diag_valid, core_link_up, core_dll_active,
+            core_rx_valid, core_rx_ready, core_rx_sop, core_rx_eop, core_rx_error,
+            core_tx_valid, core_tx_ready, core_tx_sop, core_tx_eop,
+            core_tx_error, core_tx_type,
+            core_release_valid, core_release_ready,
+            captured_bdf, bdf_valid, bar0_base[31:12], memory_space_enable,
+            codec_cfg_request_count[7:0], codec_mem_request_count[7:0],
+            codec_tx_completion_count[7:0], codec_ur_completion_count[7:0],
+            codec_malformed_count[7:0], codec_unsupported_count[7:0],
+            cdc_errors
+        };
+    end endgenerate
+
+    k09_tlp_test_top #(.K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)) u_tl (
         .clk(core_clk), .rst_n(core_rst_n), .hot_reset(core_hot_reset),
         .link_up(core_link_up), .link_training(!core_link_up),
         .dll_active(core_dll_active), .link_speed(core_link_speed),
