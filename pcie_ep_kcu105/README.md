@@ -15,13 +15,13 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K01：**PASS / K01-v1 已冻结**。
 - K02：**K02-v1.2 条件冻结**；架构/接口、错误Stub、Verilator、XCI指纹、
   Vivado完整实现及VCS真实IP动态仿真均已通过；KCU105 Receiver Detect因当前
-  未插板延期，必须在K11-B前补齐。
+  未插板延期。K11-B真实PHY串行回归已补齐非实板动态门禁。
 - K03：**K03-v1.1 条件冻结**；架构/接口、错误 Stub、Verilator随机回归、
   KU040 OOC、K02 PHY联合布局布线及VCS真PHY串行Gen1 x1 L0均通过；KCU105
   实板门禁因当前未插板延期。
 - K04：**PASS / K04-v1 已冻结**；DLLP CRC16、TLP LCRC32、错误 Stub、
-  cocotb Directed/随机、100 万算法向量和 KU040 250 MHz OOC 均通过；VCS
-  编译兼容性沿用许可证延期记录，最迟在 K11 前补齐。
+  cocotb Directed/随机、100 万算法向量和 KU040 250 MHz OOC 均通过；K11-B
+  真实PHY VCS已编译并运行包含K04～K10的完整生产链路，兼容性延期闭环。
 - K05：**PASS / K05-v1 已冻结**；6 Byte DLLP Codec、InitFC1/2、UpdateFC、
   VC0 P/NP/Cpl 信用、错误 Stub、10,000 个 cocotb 随机事件、100 万 Native
   信用事件和 KU040 250 MHz OOC 均通过。
@@ -56,8 +56,9 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
-- K02 已生成 standalone PHY 封装和 bring-up bitstream；用户批准延期两项 K02
-  动态门禁后继续实施 K03。K03 已完成软件与静态门禁，K04、K05 已独立完成并
+- K02 已生成 standalone PHY 封装和 bring-up bitstream；原延期的VCS动态门禁已
+  补齐，只剩实板Receiver Detect。K03 已完成软件、静态与VCS串行门禁，K04、K05已
+  独立完成并
   冻结；K06～K10已完成并冻结，K11-A与K11-B1已完成，K11-B2非实板验证已冻结。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
