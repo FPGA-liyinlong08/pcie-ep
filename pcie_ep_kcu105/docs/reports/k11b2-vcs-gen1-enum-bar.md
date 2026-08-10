@@ -2,7 +2,7 @@
 
 日期：2026-08-10
 
-状态：**基础Directed、修改后VCS与Vivado PASS；串行加固/实板待完成**
+状态：**全部非实板验证 PASS；KCU105实板验收延期**
 
 ## 1. 已完成内容
 
@@ -80,8 +80,44 @@ K11B2_VCS_REAL_PHY_PASS
 
 仿真结束时间约153.764 us，CPU约13.72 s。修改前的旧日志不再用于当前RTL签核。
 
-## 5. 未完成项
+## 5. 真实PHY串行加固结果
 
-尚未完成：100组串行随机BAR/BE、坏LCRC、ACK丢失、PERST#恢复，以及KCU105实板
-Gen1枚举、20次冷启动和100次重训。按阶段门规则，以上项目完成前K11-B2与K11整体
-不标记最终冻结，也不进入K12 RTL。
+执行入口：
+
+```bash
+LM_LICENSE_FILE=27000@wx-linux make k11b2-vcs-stress
+```
+
+该模式在基础枚举和BAR用例之后继续完成：
+
+- 固定种子`1aceb00c`的100组Scratch随机地址、32-bit数据和非零Byte Enable，
+  Scoreboard逐Byte维护期望值并逐事务读回；
+- 在Endpoint LCRC判定状态注入一包坏LCRC，计数器增加为1、发送一次NAK，Root Port
+  重放后原Memory Read仍返回正确签名；
+- 屏蔽一条Completion ACK直至2048-cycle Replay Timer到期，确认Replay计数增加；
+  由于Xilinx RP示例模型不会对重复Completion再次ACK，Partner补发先前丢失的合法累计
+  ACK，确认Replay occupancy恢复为0且未进入fatal；
+- 断言一次PERST#，双方重新训练到Gen1 x1、重新完成InitFC；随后重新读取Vendor/Device、
+  配置BAR0和MSE并读取Demo签名。
+
+固定通过标记如下：
+
+```text
+K11B2_RANDOM_MMIO_PASS transactions=100 seed=1aceb00c
+K11B2_BAD_LCRC_PASS lcrc=1 nak=1
+K11B2_ACK_LOSS_PASS replay=1 occupancy=0
+K11B2_PERST_RECOVERY_PASS vendor=e0011234 signature=50434945
+K11B2_STRESS_PASS
+K11B2_VCS_PASS
+K11B2_VCS_REAL_PHY_PASS
+```
+
+仿真结束时间约532.852 us，CPU约52.54 s；全过程`cdc_errors=0`，没有Replay fatal。
+`make k11b2-lint`同步通过。本轮只修改测试平台、执行脚本和文档，没有改变生产RTL，
+因此沿用第3节已经通过的Vivado实现结果。
+
+## 6. 未完成项
+
+非实板范围已经完成。尚未完成的只剩KCU105实板Gen1枚举、BAR访问、20次冷启动和
+100次PERST#/重训，这些项目按用户要求继续延期。K11-B2可标记为“非实板冻结”，但
+K11整体仍保留实板验收门，不能宣称最终完成。

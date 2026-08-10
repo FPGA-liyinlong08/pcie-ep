@@ -1,6 +1,6 @@
 # K11-B 真实 PHY/VCS 串行集成架构
 
-状态：**K11-B1 已冻结并 PASS；K11-B2基础Directed/VCS/Vivado PASS，正在串行加固**
+状态：**K11-B1 已冻结并 PASS；K11-B2全部非实板验证 PASS并冻结，实板延期**
 
 依赖接口：`K02-PHY32-v1.1`、`K03-MAC16-v1`、`K11A-OFFLINE-v1`
 

@@ -17,6 +17,20 @@ module board;
     reg  disconnect_lane0;
     reg  b2_negative_stub;
     reg  b2_active;
+    reg  b2_stress;
+
+    integer b2_iter;
+    integer b2_byte;
+    integer b2_wait_cycles;
+    reg [31:0] b2_lfsr;
+    reg [31:0] b2_expected [0:47];
+    reg [31:0] b2_random_data;
+    reg [31:0] b2_random_addr;
+    reg [31:0] b2_old_lcrc_count;
+    reg [31:0] b2_old_nak_count;
+    reg [31:0] b2_old_replay_count;
+    reg [11:0] b2_delayed_ack_seq;
+    reg [3:0]  b2_random_be;
 
     wire       ep_txp;
     wire       ep_txn;
@@ -47,6 +61,7 @@ module board;
         disconnect_lane0 = $test$plusargs("K11B_DISCONNECT_LANE0");
         b2_negative_stub = $test$plusargs("K11B2_NEGATIVE_STUB");
         b2_active = $test$plusargs("K11B2_RUN");
+        b2_stress = $test$plusargs("K11B2_STRESS");
         repeat (500) @(posedge refclk_p);
         sys_rst_n = 1'b1;
         $display("K11B_RESET_RELEASE time_ps=%0t disconnect=%0d", $time,
@@ -202,7 +217,7 @@ module board;
             wait (sys_rst_n === 1'b1);
             fork : b2_timeout_guard
                 begin
-                    #800000000;
+            #2000000000;
                     $display("K11B2_VCS_FAIL reason=global_timeout ep_state=%0d ep_link=%0d ep_dll=%0d rp_state=%0h rp_user_link=%0d fc=%0d cdc=%02x",
                              EP.DUT.ltssm_state, EP.DUT.link_up,
                              EP.DUT.dll_active, RP.cfg_ltssm_state,
@@ -303,6 +318,176 @@ module board;
                     end
                     $display("K11B2_BAR_PASS signature=50434945 scratch=%08x",
                              RP.tx_usrapp.P_READ_DATA);
+
+                    if (b2_stress) begin
+                        // 固定种子的100组Scratch随机地址/数据/Byte Enable回归。
+                        // 先建立与当前Demo寄存器状态一致的逐DW参考模型。
+                        for (b2_iter = 0; b2_iter < 48; b2_iter = b2_iter + 1)
+                            b2_expected[b2_iter] = 32'h0000_0000;
+                        b2_expected[0] = 32'hA5C3_7E19;
+                        b2_lfsr = 32'h1ACE_B00C;
+                        for (b2_iter = 0; b2_iter < 100; b2_iter = b2_iter + 1) begin
+                            b2_lfsr = {b2_lfsr[30:0],
+                                       b2_lfsr[31] ^ b2_lfsr[21] ^
+                                       b2_lfsr[1] ^ b2_lfsr[0]};
+                            b2_random_addr = 32'h8000_0040 + ((b2_lfsr % 48) << 2);
+                            b2_random_data = b2_lfsr ^ (32'h9E37_79B9 * (b2_iter + 1));
+                            b2_random_be = b2_lfsr[7:4];
+                            if (b2_random_be == 4'h0)
+                                b2_random_be = 4'hf;
+
+                            RP.tx_usrapp.DATA_STORE[0] = b2_random_data[7:0];
+                            RP.tx_usrapp.DATA_STORE[1] = b2_random_data[15:8];
+                            RP.tx_usrapp.DATA_STORE[2] = b2_random_data[23:16];
+                            RP.tx_usrapp.DATA_STORE[3] = b2_random_data[31:24];
+                            RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                            RP.tx_usrapp.TSK_TX_MEMORY_WRITE_32(
+                                RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                                b2_random_addr, 4'h0, b2_random_be, 1'b0);
+                            RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+
+                            for (b2_byte = 0; b2_byte < 4; b2_byte = b2_byte + 1)
+                                if (b2_random_be[b2_byte])
+                                    b2_expected[(b2_random_addr - 32'h8000_0040) >> 2]
+                                        [b2_byte*8 +: 8] = b2_random_data[b2_byte*8 +: 8];
+
+                            RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                            RP.tx_usrapp.TSK_TX_MEMORY_READ_32(
+                                RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                                b2_random_addr, 4'h0, 4'hf);
+                            RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                            if (RP.tx_usrapp.P_READ_DATA !==
+                                b2_expected[(b2_random_addr - 32'h8000_0040) >> 2]) begin
+                                $display("K11B2_VCS_FAIL reason=random_mmio iter=%0d addr=%08x be=%x expected=%08x actual=%08x",
+                                         b2_iter, b2_random_addr, b2_random_be,
+                                         b2_expected[(b2_random_addr - 32'h8000_0040) >> 2],
+                                         RP.tx_usrapp.P_READ_DATA);
+                                $fatal(1);
+                            end
+                        end
+                        $display("K11B2_RANDOM_MMIO_PASS transactions=100 seed=1aceb00c");
+
+                        // 将下一包RP->EP TLP的LCRC结果改坏。EP必须NAK，RP重放后
+                        // 同一个MRd仍然得到正确Completion。
+                        b2_old_lcrc_count = EP.DUT.u_protocol_core.lcrc_error_count;
+                        b2_old_nak_count = EP.DUT.u_protocol_core.nak_tx_count;
+                        fork
+                            begin : b2_bad_lcrc_injector
+                                wait (EP.DUT.u_protocol_core.u_dll.u_replay.rx_proc_state == 3'd2);
+                                force EP.DUT.u_protocol_core.u_dll.u_replay.rx_crc_good_latched = 1'b0;
+                                wait (EP.DUT.u_protocol_core.u_dll.u_replay.rx_proc_state == 3'd3);
+                                @(posedge EP.DUT.phy_pclk);
+                                release EP.DUT.u_protocol_core.u_dll.u_replay.rx_crc_good_latched;
+                            end
+                            begin : b2_bad_lcrc_request
+                                RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                                RP.tx_usrapp.TSK_TX_MEMORY_READ_32(
+                                    RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                                    32'h8000_0000, 4'h0, 4'hf);
+                                RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                            end
+                        join
+                        if ((RP.tx_usrapp.P_READ_DATA !== 32'h5043_4945) ||
+                            (EP.DUT.u_protocol_core.lcrc_error_count <= b2_old_lcrc_count) ||
+                            (EP.DUT.u_protocol_core.nak_tx_count <= b2_old_nak_count)) begin
+                            $display("K11B2_VCS_FAIL reason=bad_lcrc data=%08x lcrc=%0d/%0d nak=%0d/%0d",
+                                     RP.tx_usrapp.P_READ_DATA,
+                                     EP.DUT.u_protocol_core.lcrc_error_count,
+                                     b2_old_lcrc_count,
+                                     EP.DUT.u_protocol_core.nak_tx_count,
+                                     b2_old_nak_count);
+                            $fatal(1);
+                        end
+                        $display("K11B2_BAD_LCRC_PASS lcrc=%0d nak=%0d",
+                                 EP.DUT.u_protocol_core.lcrc_error_count,
+                                 EP.DUT.u_protocol_core.nak_tx_count);
+
+                        // 屏蔽首个Completion的ACK，等待Endpoint replay timer到期。
+                        // 释放后，重放Completion的ACK必须清空Replay Buffer。
+                        b2_old_replay_count = EP.DUT.u_protocol_core.replay_count;
+                        force EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_valid = 1'b0;
+                        RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                        RP.tx_usrapp.TSK_TX_MEMORY_READ_32(
+                            RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                            32'h8000_0000, 4'h0, 4'hf);
+                        RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                        b2_delayed_ack_seq = EP.DUT.u_protocol_core.next_tx_seq - 1'b1;
+                        repeat (2055) @(posedge EP.DUT.phy_pclk);
+                        release EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_valid;
+                        b2_wait_cycles = 0;
+                        while ((EP.DUT.u_protocol_core.replay_count <= b2_old_replay_count) &&
+                               (b2_wait_cycles < 4096)) begin
+                            @(posedge EP.DUT.phy_pclk);
+                            b2_wait_cycles = b2_wait_cycles + 1;
+                        end
+                        // Xilinx RP示例模型不会为被判为重复的Completion再次产生
+                        // ACK；partner在此补发先前丢失的合法累计ACK。
+                        force EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_valid = 1'b1;
+                        force EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_crc_good = 1'b1;
+                        force EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_error = 4'h0;
+                        force EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_data =
+                            {b2_delayed_ack_seq[7:0], 4'h0,
+                             b2_delayed_ack_seq[11:8], 8'h00, 8'h00};
+                        repeat (2) @(posedge EP.DUT.phy_pclk);
+                        @(negedge EP.DUT.phy_pclk);
+                        release EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_valid;
+                        release EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_crc_good;
+                        release EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_error;
+                        release EP.DUT.u_protocol_core.u_dll.u_replay.rx_dllp_data;
+                        repeat (16) @(posedge EP.DUT.phy_pclk);
+                        if ((EP.DUT.u_protocol_core.replay_count <= b2_old_replay_count) ||
+                            (EP.DUT.u_protocol_core.replay_occupancy != 0) ||
+                            EP.DUT.u_protocol_core.replay_fatal) begin
+                            $display("K11B2_VCS_FAIL reason=ack_loss replay=%0d/%0d occupancy=%0d fatal=%0d",
+                                     EP.DUT.u_protocol_core.replay_count,
+                                     b2_old_replay_count,
+                                     EP.DUT.u_protocol_core.replay_occupancy,
+                                     EP.DUT.u_protocol_core.replay_fatal);
+                            $fatal(1);
+                        end
+                        $display("K11B2_ACK_LOSS_PASS replay=%0d occupancy=%0d",
+                                 EP.DUT.u_protocol_core.replay_count,
+                                 EP.DUT.u_protocol_core.replay_occupancy);
+
+                        // 一次PERST#后配置空间和BAR会恢复缺省值，因此重新执行
+                        // Vendor检查、BAR分配和MSE，再验证MMIO仍可用。
+                        RP.tx_usrapp.TSK_RESET(1'b0);
+                        repeat (500) @(posedge refclk_p);
+                        RP.tx_usrapp.TSK_RESET(1'b1);
+                        wait ((EP.DUT.link_up === 1'b1) &&
+                              (EP.DUT.dll_active === 1'b1) &&
+                              (RP.user_lnk_up === 1'b1));
+                        RP.tx_usrapp.DEFAULT_TAG = 8'h80;
+                        RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_READ(
+                            RP.tx_usrapp.DEFAULT_TAG, 12'h000, 4'hf);
+                        RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                        if (RP.tx_usrapp.P_READ_DATA !== 32'hE0011234) begin
+                            $display("K11B2_VCS_FAIL reason=perst_vendor actual=%08x",
+                                     RP.tx_usrapp.P_READ_DATA);
+                            $fatal(1);
+                        end
+                        RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                        RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                            RP.tx_usrapp.DEFAULT_TAG, 12'h010, 32'h8000_0000, 4'hf);
+                        RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                        RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                        RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                            RP.tx_usrapp.DEFAULT_TAG, 12'h004, 32'h0000_0002, 4'h3);
+                        RP.tx_usrapp.TSK_TX_CLK_EAT(500);
+                        RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                        RP.tx_usrapp.TSK_TX_MEMORY_READ_32(
+                            RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                            32'h8000_0000, 4'h0, 4'hf);
+                        RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                        if ((RP.tx_usrapp.P_READ_DATA !== 32'h5043_4945) ||
+                            (EP.DUT.cdc_errors !== 8'h00)) begin
+                            $display("K11B2_VCS_FAIL reason=perst_recovery data=%08x cdc=%02x",
+                                     RP.tx_usrapp.P_READ_DATA, EP.DUT.cdc_errors);
+                            $fatal(1);
+                        end
+                        $display("K11B2_PERST_RECOVERY_PASS vendor=e0011234 signature=50434945");
+                        $display("K11B2_STRESS_PASS");
+                    end
                     $display("K11B2_VCS_PASS");
                     $finish;
                 end

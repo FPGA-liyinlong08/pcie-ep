@@ -11,6 +11,7 @@ ip_dir="${project_dir}/fpga/kcu105/ip/pcie_phy_x1_gen3"
 license_timeout="${VCS_LICENSE_TIMEOUT:-300}"
 simulation_timeout="${K11B_SIM_TIMEOUT:-900}"
 b2_mode="${K11B2_MODE:-0}"
+b2_stress_mode="${K11B2_STRESS_MODE:-0}"
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 if [[ "${b2_mode}" == "1" ]]; then
@@ -132,9 +133,13 @@ elif [[ ${elaborate_status} -ne 0 ]]; then
 fi
 
 if [[ "${b2_mode}" == "1" ]]; then
+    b2_plusargs=(+K11B2_RUN)
+    if [[ "${b2_stress_mode}" == "1" ]]; then
+        b2_plusargs+=(+K11B2_STRESS)
+    fi
     set +e
     timeout --foreground "${simulation_timeout}" \
-        "${run_dir}/k11b_simv" +K11B2_RUN -licqueue \
+        "${run_dir}/k11b_simv" "${b2_plusargs[@]}" -licqueue \
         -l build/k11b2_simulate.log
     b2_status=$?
     set -e
@@ -147,6 +152,13 @@ if [[ "${b2_mode}" == "1" ]]; then
     grep -q 'K11B2_DLL_ACTIVE_PASS' build/k11b2_simulate.log
     grep -q 'K11B2_ENUM_PASS' build/k11b2_simulate.log
     grep -q 'K11B2_BAR_PASS' build/k11b2_simulate.log
+    if [[ "${b2_stress_mode}" == "1" ]]; then
+        grep -q 'K11B2_RANDOM_MMIO_PASS' build/k11b2_simulate.log
+        grep -q 'K11B2_BAD_LCRC_PASS' build/k11b2_simulate.log
+        grep -q 'K11B2_ACK_LOSS_PASS' build/k11b2_simulate.log
+        grep -q 'K11B2_PERST_RECOVERY_PASS' build/k11b2_simulate.log
+        grep -q 'K11B2_STRESS_PASS' build/k11b2_simulate.log
+    fi
     grep -q 'K11B2_VCS_PASS' build/k11b2_simulate.log
     echo "K11B2_VCS_REAL_PHY_PASS run_dir=${run_dir}"
     exit 0

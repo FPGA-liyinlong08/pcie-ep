@@ -63,4 +63,9 @@ VCS 日志使用固定机器可读标记：
 - `K11B2_DLL_ACTIVE_PASS`：双方用户/Data Link链路已就绪；
 - `K11B2_ENUM_PASS`：Vendor/Device、BAR探测/分配和MSE正确；
 - `K11B2_BAR_PASS`：Demo签名及Scratch写读正确；
+- `K11B2_RANDOM_MMIO_PASS`：100组随机Scratch地址、数据和Byte Enable通过；
+- `K11B2_BAD_LCRC_PASS`：坏LCRC触发NAK且重放后事务完成；
+- `K11B2_ACK_LOSS_PASS`：ACK丢失触发Replay且延迟ACK清空窗口；
+- `K11B2_PERST_RECOVERY_PASS`：PERST#后重训、重新配置与MMIO通过；
+- `K11B2_STRESS_PASS`：全部非实板串行加固门禁通过；
 - `K11B2_VCS_PASS`：B2全部门禁通过。

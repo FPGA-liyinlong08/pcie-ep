@@ -21,7 +21,7 @@
 	k10-vivado k10 \
 	k11a-checker-selftest k11a-lint k11a-bridge k11a-offline \
 	k11a-regression k11a-vivado k11a \
-	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vivado clean
+	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vcs-stress k11b2-vivado clean
 
 PYTHON ?= python3
 
@@ -241,6 +241,9 @@ k11b2-lint:
 
 k11b2-vcs-serial:
 	./sim/vcs/run_k11b2_serial.sh
+
+k11b2-vcs-stress:
+	./sim/vcs/run_k11b2_stress.sh
 
 k11b2-vivado:
 	./fpga/kcu105/run_k11b2_impl.sh

@@ -1,6 +1,6 @@
 # K11-B 真实 PHY/VCS RTL 前验证计划
 
-状态：**K11-B1 PASS；K11-B2 D001～D008、修改后VCS及KU040实现PASS**
+状态：**K11-B1 PASS；K11-B2全部非实板用例、修改后VCS及KU040实现PASS，实板延期**
 
 ## 1. 参考对象和 Checker
 
@@ -85,4 +85,8 @@ K03、K06、K08～K11-A离线回归、VCS串行回归和KU040完整实现。实�
   `WNS=+0.020 ns`、`WHS=+0.014 ns`，DRC/CDC通过并成功生成bitstream；
 - 弹性级修改后的Verilator双向随机桥回归通过；真实PHY VCS在可访问本机许可证服务
   的非隔离环境重跑通过，输出全部K11-B2固定PASS标记；
-- 100组串行随机BAR、坏LCRC、ACK丢失和PERST#注入尚未执行，实板继续延期。
+- 固定种子100组串行随机BAR地址/数据/BE全部通过；
+- 坏LCRC注入触发`lcrc=1`和`nak=1`，重放请求后读数据正确；
+- ACK丢失触发`replay=1`，Partner补发延迟ACK后occupancy清零且无fatal；
+- PERST#后重新训练、InitFC、配置访问和BAR签名读取通过；
+- K11-B2非实板验证已经冻结，KCU105实板验收继续延期。
