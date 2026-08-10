@@ -2,7 +2,12 @@
 `default_nettype none
 
 // K03 集成/上板顶层。DLL 尚未实现，Packet TX 输入固定为空，RX 仅观测。
-module kcu105_pcie_gen1_top (
+module kcu105_pcie_gen1_top #(
+    parameter integer DETECT_QUIET_CYCLES   = 1_500_000,
+    parameter integer DETECT_TIMEOUT_CYCLES = 3_000_000,
+    parameter integer TRAIN_TIMEOUT_CYCLES  = 6_000_000,
+    parameter integer HOT_RESET_CYCLES      = 250_000
+) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
     input  wire       pcie_perst_n,
@@ -150,7 +155,12 @@ module kcu105_pcie_gen1_top (
         .phy_rxeq_done          (phy_rxeq_done)
     );
 
-    pcie_ltssm_mac_gen1 u_ltssm_mac (
+    pcie_ltssm_mac_gen1 #(
+        .DETECT_QUIET_CYCLES   (DETECT_QUIET_CYCLES),
+        .DETECT_TIMEOUT_CYCLES (DETECT_TIMEOUT_CYCLES),
+        .TRAIN_TIMEOUT_CYCLES  (TRAIN_TIMEOUT_CYCLES),
+        .HOT_RESET_CYCLES      (HOT_RESET_CYCLES)
+    ) u_ltssm_mac (
         .phy_pclk               (phy_pclk),
         .pipe_rst_n             (pipe_rst_n),
         .phy_rxdata             (phy_rxdata),

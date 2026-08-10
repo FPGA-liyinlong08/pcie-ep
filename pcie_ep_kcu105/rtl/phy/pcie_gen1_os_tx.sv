@@ -20,7 +20,7 @@ module pcie_gen1_os_tx (
 );
     localparam [7:0] K_COM = 8'hbc;
     localparam [7:0] K_PAD = 8'hf7;
-    localparam [7:0] K_IDL = 8'h7c;
+    localparam [7:0] D_IDLE = 8'h00;
     localparam [7:0] D_TS1 = 8'h4a;
     localparam [7:0] D_TS2 = 8'h45;
 
@@ -53,8 +53,9 @@ module pcie_gen1_os_tx (
         if (!enable) begin
             out_valid = 1'b0;
         end else if (mode == 2'd0) begin
-            out_data[15:0] = {K_IDL, K_IDL};
-            out_datak      = 2'b11;
+            // PCIe Logical Idle 是两个 D0.0 数据字符；K28.3 仅用于 EIOS。
+            out_data[15:0] = {D_IDLE, D_IDLE};
+            out_datak      = 2'b00;
         end else begin
             case (active_index)
                 3'd0: begin

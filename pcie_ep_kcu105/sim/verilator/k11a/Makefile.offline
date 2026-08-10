@@ -1,0 +1,33 @@
+TOPLEVEL_LANG = verilog
+SIM = verilator
+TOPLEVEL = k11a_offline_top
+MODULE = test_k11a_offline
+COMPILE_ARGS += --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD
+
+VERILOG_SOURCES = \
+  /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v \
+  $(PWD)/../../../rtl/common/pcie_reset_sync.sv \
+  $(PWD)/../../../rtl/common/pcie_gray_sync.sv \
+  $(PWD)/../../../rtl/common/pcie_async_pkt_fifo.sv \
+  $(PWD)/../../../rtl/common/pcie_async_event_fifo.sv \
+  $(PWD)/../../../rtl/common/pcie_tlp_async_bridge.sv \
+  $(PWD)/../../../rtl/common/pcie_cdc_snapshot.sv \
+  $(PWD)/../../../rtl/common/pcie_cdc_pulse.sv \
+  $(PWD)/../../../rtl/dll/pcie_crc_stream.sv \
+  $(PWD)/../../../rtl/dll/pcie_crc16_dllp.sv \
+  $(PWD)/../../../rtl/dll/pcie_crc32_lcrc.sv \
+  $(PWD)/../../../rtl/dll/pcie_fc_local_credit_pool.sv \
+  $(PWD)/../../../rtl/dll/pcie_dllp_codec.sv \
+  $(PWD)/../../../rtl/dll/pcie_dllp_fc_manager.sv \
+  $(PWD)/../../../rtl/dll/pcie_dllp_tx_arbiter.sv \
+  $(PWD)/../../../rtl/dll/pcie_dll_mac_tx_arbiter.sv \
+  $(PWD)/../../../rtl/dll/pcie_dll_replay.sv \
+  $(PWD)/../../../rtl/dll/pcie_dll.sv \
+  $(PWD)/../../../rtl/tl/pcie_tlp_codec.sv \
+  $(PWD)/../../../rtl/tl/pcie_cfg_space.sv \
+  $(PWD)/../../../rtl/tl/pcie_bar_axil_master.sv \
+  $(PWD)/../../../rtl/tl/demo_axil_slave.sv \
+  $(PWD)/../k09_integration/k09_tlp_test_top.sv \
+  $(PWD)/k11a_offline_top.sv
+
+include $(shell cocotb-config --makefiles)/Makefile.sim

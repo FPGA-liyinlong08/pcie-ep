@@ -10,7 +10,7 @@ SEED = int(os.getenv("K03_RANDOM_SEED", "20260806"))
 RANDOM_TRAININGS = int(os.getenv("K03_RANDOM_TRAININGS", "100"))
 RANDOM_PACKETS = int(os.getenv("K03_RANDOM_PACKETS", "2000"))
 
-COM, PAD, TS1, TS2, IDL = 0xBC, 0xF7, 0x4A, 0x45, 0x7C
+COM, PAD, TS1, TS2, IDL = 0xBC, 0xF7, 0x4A, 0x45, 0x00
 STP, SDP, END, EDB = 0xFB, 0x5C, 0xFD, 0xFE
 SKP = 0x1C
 
@@ -95,7 +95,7 @@ async def pulse_phystatus(dut, status):
     dut.phy_phystatus.value = 0
 
 
-def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x07, control=0):
+def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x0E, control=0):
     ident = TS1 if kind == 1 else TS2
     link_k = 1 if link == PAD else 0
     lane_k = 1 if lane == PAD else 0
@@ -104,12 +104,12 @@ def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x07, control=0):
     return symbols, isk
 
 
-async def drive_symbols(dut, symbols, isk):
+async def drive_symbols(dut, symbols, isk, data_valid=1):
     assert len(symbols) == len(isk) and len(symbols) % 2 == 0
     for pos in range(0, len(symbols), 2):
         dut.phy_rxdata.value = symbols[pos] | (symbols[pos + 1] << 8)
         dut.phy_rxdatak.value = isk[pos] | (isk[pos + 1] << 1)
-        dut.phy_rxdata_valid.value = 1
+        dut.phy_rxdata_valid.value = data_valid
         dut.phy_rxvalid.value = 1
         dut.phy_rxelecidle.value = 0
         await tick(dut)
@@ -120,18 +120,33 @@ async def drive_symbols(dut, symbols, isk):
     dut.phy_rxdatak.value = 0
 
 
-async def send_ts(dut, kind, count, link=PAD, lane=PAD, corrupt_index=None):
+async def send_ts(
+    dut, kind, count, link=PAD, lane=PAD, corrupt_index=None, data_valid=1
+):
     for packet_index in range(count):
         symbols, isk = ts_symbols(kind, link=link, lane=lane)
         if corrupt_index is not None and packet_index == 0:
             symbols[corrupt_index] ^= 1
-        await drive_symbols(dut, symbols, isk)
+        await drive_symbols(dut, symbols, isk, data_valid=data_valid)
 
 
-async def send_idle(dut, cycles=8):
+async def send_ts_high_symbol_aligned(dut, kind, count, link=PAD, lane=PAD):
+    """构造 COM 位于高 Symbol、其余 TS 跨拍连续的真实 PHY 布局。"""
+    symbols = [IDL]
+    isk = [0]
+    for _ in range(count):
+        one_symbols, one_isk = ts_symbols(kind, link=link, lane=lane)
+        symbols += one_symbols
+        isk += one_isk
+    symbols.append(IDL)
+    isk.append(0)
+    await drive_symbols(dut, symbols, isk, data_valid=0)
+
+
+async def send_idle(dut, cycles=8, symbol=IDL, isk=0):
     for _ in range(cycles):
-        dut.phy_rxdata.value = IDL | (IDL << 8)
-        dut.phy_rxdatak.value = 0b11
+        dut.phy_rxdata.value = symbol | (symbol << 8)
+        dut.phy_rxdatak.value = isk | (isk << 1)
         dut.phy_rxdata_valid.value = 1
         dut.phy_rxvalid.value = 1
         dut.phy_rxelecidle.value = 0
@@ -213,6 +228,15 @@ async def train_to_l0(
         await writable_phase()
         assert int(dut.ltssm_state.value) == CFG_LINKWIDTH_ACCEPT
     await send_ts(dut, 1, 2, link=0, lane=PAD)
+    await tick(dut, 2)
+    await writable_phase()
+    assert int(dut.ltssm_state.value) == CFG_LINKWIDTH_ACCEPT, (
+        "Linkwidth.Accept 不得仅因收到2个TS1而提前退出，必须先发送16个TS1"
+    )
+    await send_ts(dut, 1, 1, link=0, lane=0)
+    assert int(dut.rx_ts_count.value) == 2, (
+        "对端提前发送下一阶段 Link/Lane TS1 时不得清除已满足的接收条件"
+    )
     await wait_state(dut, CFG_LANENUM_WAIT)
     if inject_bad_fields:
         await send_ts(dut, 1, 1, link=0, lane=1)
@@ -224,6 +248,15 @@ async def train_to_l0(
     if validate_tx:
         await capture_tx_ts(dut, 1, link=0, lane=0)
     await send_ts(dut, 1, 2, link=0, lane=0)
+    await tick(dut, 2)
+    await writable_phase()
+    assert int(dut.ltssm_state.value) == CFG_LANENUM_ACCEPT, (
+        "Lanenum.Accept 不得仅因收到2个TS1而提前退出，必须先发送16个TS1"
+    )
+    await send_ts(dut, 2, 1, link=0, lane=0)
+    assert int(dut.rx_ts_count.value) == 2, (
+        "对端提前发送TS2时不得清除 Lanenum.Accept 已满足的接收条件"
+    )
     await wait_state(dut, CFG_COMPLETE)
     if validate_tx:
         await capture_tx_ts(dut, 2, link=0, lane=0)
@@ -233,7 +266,17 @@ async def train_to_l0(
         await writable_phase()
         assert int(dut.ltssm_state.value) == CFG_COMPLETE
     await send_ts(dut, 2, 8, link=0, lane=0)
+    await tick(dut, 2)
+    await writable_phase()
+    assert int(dut.ltssm_state.value) == CFG_COMPLETE, (
+        "Configuration.Complete 必须发送至少16个TS2后才能进入Idle"
+    )
     await wait_state(dut, CFG_IDLE)
+    if validate_tx:
+        await send_idle(dut, 8, symbol=0x7C, isk=1)
+        assert int(dut.ltssm_state.value) == CFG_IDLE, (
+            "K28.3 不得被误识别为 PCIe Logical Idle"
+        )
     await send_idle(dut, 8)
     await wait_state(dut, L0)
     assert int(dut.link_up.value) == 1
@@ -254,6 +297,28 @@ async def normal_training(dut):
     """错误 Stub 必须因跳过 Polling/Configuration 而被本用例检出。"""
     await initialize(dut)
     await train_to_l0(dut, validate_tx=True)
+
+
+@cocotb.test()
+async def gen1_ignores_gen3_rxdata_valid(dut):
+    """Gen1 以 RxValid 采样 8b/10b Symbol，RxDataValid 允许保持 0。"""
+    await initialize(dut)
+    await wait_state(dut, DETECT_ACTIVE)
+    await pulse_phystatus(dut, 0b011)
+    await wait_state(dut, POLLING_ACTIVE)
+    await send_ts(dut, 1, 8, data_valid=0)
+    await wait_state(dut, POLLING_CONFIG)
+
+
+@cocotb.test()
+async def gen1_accepts_com_in_high_symbol(dut):
+    """真实 GT 可能把 COM 放在高 Symbol，跨拍重组后仍应识别完整 TS。"""
+    await initialize(dut)
+    await wait_state(dut, DETECT_ACTIVE)
+    await pulse_phystatus(dut, 0b011)
+    await wait_state(dut, POLLING_ACTIVE)
+    await send_ts_high_symbol_aligned(dut, 1, 8)
+    await wait_state(dut, POLLING_CONFIG)
 
 
 @cocotb.test()

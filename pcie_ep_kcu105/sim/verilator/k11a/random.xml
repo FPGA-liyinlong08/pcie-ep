@@ -1,0 +1,8 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1786257457" />
+    <testcase name="bidirectional_random_and_release" classname="test_k11a_bridge" file="/home/wx/Documents/PCIe/pcie_ep_kcu105/sim/verilator/k11a/test_k11a_bridge.py" lineno="116" time="0.285963773727417" sim_time_ns="16064.002" ratio_time="56174.95457768136">
+      <failure message="Test failed with RANDOM_SEED=1786257457" />
+    </testcase>
+  </testsuite>
+</testsuites>

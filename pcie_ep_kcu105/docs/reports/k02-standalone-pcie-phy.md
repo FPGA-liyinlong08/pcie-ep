@@ -2,7 +2,7 @@
 
 日期：2026-08-06
 
-状态：**K02-v1.2 条件冻结；VCS 动态与实板验收经用户批准延期，允许开始 K03**
+状态：**K02-v1.2 条件冻结；VCS动态PASS，实板Receiver Detect延期**
 
 接口版本：`K02-PHY32-v1.1`
 
@@ -21,13 +21,12 @@ bring-up 顶层、行为验证和 KU040 完整实现。当前自动化结果为�
 | XCI/模型生成检查 | PASS | 连续两次 XCI 指纹一致，模型关键参数一致 |
 | Vivado OOC/完整实现 | PASS | Route、DRC、CDC、时序、bitstream 全部通过 |
 | VCS 真 IP 源码编译 | PASS | PHY、GT Wizard、K01/K02 与 testbench 均通过 `vlogan` |
-| VCS 真 IP 动态仿真 | **DEFERRED** | common elaboration 等待 `VCSCompiler_Net` 300 秒未获许可证 |
+| VCS 真 IP 动态仿真 | **PASS** | 2026-08-09完成真实IP/secureip仿真、Receiver Detect模型与G1→G2→G3→G1切速 |
 | KCU105 Receiver Detect | **DEFERRED** | 当前不方便插入板卡，Hardware Manager 尚未检测到 FPGA |
 
 2026-08-06 用户明确要求记录许可证问题、待板卡可用后再做上板验证，并继续 K03。
-因此本阶段采用一次受控的门禁例外：已通过的接口、RTL、Verilator 和 Vivado 静态
-结果冻结；两项动态验收不记为 PASS，只记为延期，K03 可以开始。K11 Gen1 集成
-冻结前必须补齐这两项，不能把本例外解释为硬件或真 IP 动态验证已经通过。
+因此本阶段采用一次受控的门禁例外继续K03。2026-08-09许可证服务恢复可访问后，
+VCS动态门禁已经补齐并转为PASS；当前只剩KCU105实板Receiver Detect延期。
 
 ## 2. 已实现内容
 
@@ -112,11 +111,11 @@ VCS **可以**完成 Xilinx standalone PCIe PHY 的数字仿真，但必须同�
 2. 同版本预编译 `gtwizard_ultrascale_v1_7_12`、`secureip`、`unisims_ver`、`xpm`；
 3. VCS 编译和运行许可证。
 
-本机 `vlogan` 已编译上述真实源文件，common elaboration 也识别到
-`k02_pcie_phy_tb`、`glbl` 和真实 IP 层次。Xilinx 生成 RTL只出现固定的 `TFIPC`
-和 `PCWM-W` 普通提示；随后因 `VCSCompiler_Net` 不存在或席位耗尽而排队，等待
-300 秒仍未获得许可证，故没有生成可运行的 `simv`，动态复位/Detect/Rate 用例
-仍为 PENDING。
+本机 `vlogan` 已编译上述真实源文件，common elaboration识别到
+`k02_pcie_phy_tb`、`glbl`和真实IP层次。2026-08-09确认本机`snpslmd`正常，
+`VCSCompiler_Net`、`VCSRuntime_Net`和`VCSMXRunTime_Net`各有99席且0占用；在可访问
+本机27000端口的环境中补跑成功，生成并执行`simv`，输出
+`K02_VCS_REAL_IP_PASS`。Xilinx生成RTL只出现冻结的`TFIPC`和`PCWM-W`普通提示。
 
 VCS 中的 Receiver Detect 结果由 `SIM_RECEIVER_DETECT_PASS="TRUE"` 强制返回，
 只能验证数字控制、状态编码和时序，不能验证实际接收终端阻抗、信号完整性、CDR
@@ -171,5 +170,5 @@ VCS_LICENSE_TIMEOUT=300 make k02-vcs
 make k02-vivado
 ```
 
-待 VCS 许可证和 KCU105 硬件可用后，只重跑未完成门禁；已经通过的接口和 RTL
-范围不得在未重新执行完整 K02 回归的情况下修改。两项结果最迟在 K11 冻结前补齐。
+待KCU105硬件可用后只需补跑实板Receiver Detect；已经通过的接口和RTL范围不得在
+未重新执行完整K02回归的情况下修改。实板结果必须在K11-B冻结前补齐。

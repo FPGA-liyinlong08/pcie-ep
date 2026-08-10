@@ -12,8 +12,8 @@
 | `pipe_rst_n` | 输入 | 1 | 低有效，异步置位、同步释放 |
 | `phy_rxdata` | 输入 | 32 | Gen1 只采样低 16 bit |
 | `phy_rxdatak` | 输入 | 2 | 对应低、次低两个字节 |
-| `phy_rxdata_valid` | 输入 | 1 | 为 1 时 RX data/datk 有效 |
-| `phy_rxvalid` | 输入 | 1 | CDR 数据有效；接收条件为两者同时为 1 |
+| `phy_rxdata_valid` | 输入 | 1 | Gen3 block 有效指示；K03 Gen1 不用它门控 Symbol |
+| `phy_rxvalid` | 输入 | 1 | Gen1 CDR/Symbol 有效；K03 以此作为接收条件 |
 | `phy_phystatus` | 输入 | 1 | Detect/Power 操作完成脉冲 |
 | `phy_rxelecidle` | 输入 | 1 | RX Electrical Idle |
 | `phy_rxstatus` | 输入 | 3 | Detect 成功编码 `3'b011` |
@@ -22,6 +22,9 @@
 | `phy_txdata_valid` | 输出 | 1 | 有效 Symbol 期间为 1 |
 | `phy_txstart_block` | 输出 | 1 | Gen1 固定 0 |
 | `phy_txsync_header` | 输出 | 2 | Gen1 固定 0 |
+
+线路先到的 Symbol 仍位于输入拍的低字节；PHY 若把 COM 放在高 Symbol，K03 会在
+内部跨拍重组，不改变 PHY32 端口字节序，也不把该对齐状态暴露给 DLL。
 
 ### MAC → PHY 控制
 

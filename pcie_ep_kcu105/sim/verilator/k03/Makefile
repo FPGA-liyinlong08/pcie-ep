@@ -10,6 +10,7 @@ ifeq ($(NEGATIVE_STUB),1)
 VERILOG_SOURCES := $(CURDIR)/pcie_ltssm_mac_gen1_bad_stub.sv
 else
 VERILOG_SOURCES := \
+	$(PROJECT_DIR)/rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_os_rx.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_os_tx.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_framer.sv \

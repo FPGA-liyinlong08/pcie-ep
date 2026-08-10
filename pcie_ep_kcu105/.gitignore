@@ -16,7 +16,12 @@ __pycache__/
 *.str
 sim/vcs/csrc/
 sim/vcs/ucli.key
+sim/vcs/error.dat
+sim/vcs/rx.dat
+sim/vcs/tx.dat
 fpga/kcu105/build*/
+iter_*_CongestedCLBsAndNets.txt
+tight_setup_hold_pins.txt
 # K02 只版本管理可重建的 XCI；IP 输出产品由 Vivado 按需生成。
 fpga/kcu105/ip/pcie_phy_x1_gen3/*
 !fpga/kcu105/ip/pcie_phy_x1_gen3/pcie_phy_x1_gen3.xci

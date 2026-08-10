@@ -23,7 +23,7 @@ module pcie_gen1_os_rx (
 );
     localparam [7:0] K_COM = 8'hbc;
     localparam [7:0] K_PAD = 8'hf7;
-    localparam [7:0] K_IDL = 8'h7c;
+    localparam [7:0] D_IDLE = 8'h00;
     localparam [7:0] D_TS1 = 8'h4a;
     localparam [7:0] D_TS2 = 8'h45;
 
@@ -85,8 +85,8 @@ module pcie_gen1_os_rx (
                 end else if (symbol1_k && (symbol1 == K_COM)) begin
                     // Comma 应由 PHY 对齐到 Symbol 0；这里只报告 PCS/MAC 契约错误。
                     malformed <= 1'b1;
-                end else if (symbol0_k && symbol1_k &&
-                             (symbol0 == K_IDL) && (symbol1 == K_IDL)) begin
+                end else if (!symbol0_k && !symbol1_k &&
+                             (symbol0 == D_IDLE) && (symbol1 == D_IDLE)) begin
                     idle_pair_valid <= 1'b1;
                 end
             end else begin

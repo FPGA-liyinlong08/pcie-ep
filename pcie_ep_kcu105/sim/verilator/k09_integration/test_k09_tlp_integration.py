@@ -123,6 +123,7 @@ async def reset_dut(dut):
     dut.rx_tlp_eop.value = 0
     dut.rx_tlp_error.value = 0
     dut.tx_tlp_ready.value = 0
+    dut.rx_release_ready.value = 1
     dut.m_axil_awready.value = 0
     dut.m_axil_wready.value = 0
     dut.m_axil_bresp.value = 0

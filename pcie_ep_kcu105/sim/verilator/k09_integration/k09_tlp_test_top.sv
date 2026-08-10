@@ -32,6 +32,13 @@ module k09_tlp_test_top (
     output wire         tx_tlp_sop,
     output wire         tx_tlp_eop,
     output wire [3:0]   tx_tlp_error,
+    output wire [1:0]   tx_tlp_type,
+    output wire [11:0]  tx_tlp_data_credits,
+
+    output wire         rx_release_valid,
+    input  wire         rx_release_ready,
+    output wire [1:0]   rx_release_type,
+    output wire [11:0]  rx_release_data_credits,
 
     output wire [31:0]  m_axil_awaddr,
     output wire         m_axil_awvalid,
@@ -132,12 +139,6 @@ module k09_tlp_test_top (
     wire         cpl_data_last;
 
     /* verilator lint_off UNUSEDSIGNAL */
-    wire [1:0]  tx_tlp_type_unused;
-    wire [11:0] tx_tlp_data_credits_unused;
-    wire        rx_release_valid_unused;
-    wire [1:0]  rx_release_type_unused;
-    wire [11:0] rx_release_data_credits_unused;
-
     wire         rx_cpl_valid_unused;
     wire         rx_cpl_has_data_unused;
     wire         rx_cpl_poisoned_unused;
@@ -185,12 +186,12 @@ module k09_tlp_test_top (
         .tx_tlp_sop                  (tx_tlp_sop),
         .tx_tlp_eop                  (tx_tlp_eop),
         .tx_tlp_error                (tx_tlp_error),
-        .tx_tlp_type                 (tx_tlp_type_unused),
-        .tx_tlp_data_credits         (tx_tlp_data_credits_unused),
-        .rx_release_valid            (rx_release_valid_unused),
-        .rx_release_ready            (1'b1),
-        .rx_release_type             (rx_release_type_unused),
-        .rx_release_data_credits     (rx_release_data_credits_unused),
+        .tx_tlp_type                 (tx_tlp_type),
+        .tx_tlp_data_credits         (tx_tlp_data_credits),
+        .rx_release_valid            (rx_release_valid),
+        .rx_release_ready            (rx_release_ready),
+        .rx_release_type             (rx_release_type),
+        .rx_release_data_credits     (rx_release_data_credits),
         .local_completer_id          (local_completer_id),
 
         .cfg_req_valid               (cfg_req_valid),

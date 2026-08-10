@@ -94,6 +94,10 @@ module pcie_ltssm_mac_gen1 #(
     localparam [31:0] HOT_RESET_LIMIT      = HOT_RESET_CYCLES - 1;
     localparam [4:0]  TS_REQUIRED          = 5'd8;
     localparam [4:0]  TS_ACCEPT_REQUIRED   = 5'd2;
+    // Gen1 16-bit PHY 每个 TS 占 8 个 pclk。Configuration 的 Accept/Complete
+    // 子状态即使已满足接收条件，也必须先发送至少 16 个对应 TS。
+    localparam [31:0] MIN_CONFIG_TX_CYCLES = 32'd128;
+    localparam [31:0] MIN_CONFIG_TX_LIMIT  = MIN_CONFIG_TX_CYCLES - 1'b1;
     localparam [7:0]  K_PAD                = 8'hf7;
 
     reg [31:0] state_timer;
@@ -125,7 +129,13 @@ module pcie_ltssm_mac_gen1 #(
     wire        frame_tx_valid;
     wire        framer_error;
     wire        framer_enable = (ltssm_state == STATE_L0);
-    wire        rx_phy_word_valid = phy_rxdata_valid && phy_rxvalid;
+    // PIPE/standalone PHY 的 RxDataValid 只用于 Gen3 128b/130b 数据块；
+    // Gen1/2 的 8b/10b Symbol 有效性由 RxValid 指示。K03 固定 Gen1，因此不能
+    // 用 phy_rxdata_valid 门控 Ordered Set，否则真实 PHY 会丢弃全部 TS1/TS2。
+    wire        rx_phy_word_valid = phy_rxvalid;
+    wire        rx_aligned_valid;
+    wire [15:0] rx_aligned_data;
+    wire [1:0]  rx_aligned_datak;
 
     function automatic [31:0] sat_inc32(input [31:0] value);
         begin
@@ -133,13 +143,24 @@ module pcie_ltssm_mac_gen1 #(
         end
     endfunction
 
+    pcie_gen1_rx_symbol_aligner u_rx_symbol_aligner (
+        .clk       (phy_pclk),
+        .rst_n     (pipe_rst_n),
+        .in_valid  (rx_phy_word_valid),
+        .in_data   (phy_rxdata[15:0]),
+        .in_datak  (phy_rxdatak),
+        .out_valid (rx_aligned_valid),
+        .out_data  (rx_aligned_data),
+        .out_datak (rx_aligned_datak)
+    );
+
     pcie_gen1_os_rx u_os_rx (
         .clk              (phy_pclk),
         .rst_n            (pipe_rst_n),
         .enable           (1'b1),
-        .in_valid         (rx_phy_word_valid),
-        .in_data          (phy_rxdata[15:0]),
-        .in_datak         (phy_rxdatak),
+        .in_valid         (rx_aligned_valid),
+        .in_data          (rx_aligned_data),
+        .in_datak         (rx_aligned_datak),
         .ts1_valid        (os_ts1_valid),
         .ts2_valid        (os_ts2_valid),
         .malformed        (os_malformed),
@@ -163,7 +184,7 @@ module pcie_ltssm_mac_gen1 #(
         .lane_number      (tx_os_lane),
         .lane_is_pad      (tx_os_lane_pad),
         .n_fts            (8'hff),
-        .rate_id          (8'h07),
+        .rate_id          (8'h0e),
         .training_control (8'h00),
         .out_data         (os_tx_data),
         .out_datak        (os_tx_datak),
@@ -184,9 +205,9 @@ module pcie_ltssm_mac_gen1 #(
         .tx_pkt_eop       (tx_pkt_eop),
         .tx_pkt_is_dllp   (tx_pkt_is_dllp),
         .tx_pkt_bad       (tx_pkt_bad),
-        .rx_phy_valid     (rx_phy_word_valid && framer_enable),
-        .rx_phy_data      (phy_rxdata[15:0]),
-        .rx_phy_datak     (phy_rxdatak),
+        .rx_phy_valid     (rx_aligned_valid && framer_enable),
+        .rx_phy_data      (rx_aligned_data),
+        .rx_phy_datak     (rx_aligned_datak),
         .tx_phy_data      (frame_tx_data),
         .tx_phy_datak     (frame_tx_datak),
         .tx_phy_valid     (frame_tx_valid),
@@ -372,16 +393,21 @@ module pcie_ltssm_mac_gen1 #(
                         state_timer <= state_timer + 1'b1;
                         if (os_ts1_valid && !os_link_is_pad && os_lane_is_pad &&
                             (os_link_number == link_number)) begin
-                            if (rx_ts_count == TS_ACCEPT_REQUIRED-1'b1) begin
-                                ltssm_state <= CFG_LANENUM_WAIT;
-                                state_timer <= 32'd0;
-                                rx_ts_count <= 5'd0;
-                            end else rx_ts_count <= rx_ts_count + 1'b1;
-                        end else if (os_ts1_valid || os_ts2_valid) begin
+                            if (rx_ts_count < TS_ACCEPT_REQUIRED)
+                                rx_ts_count <= rx_ts_count + 1'b1;
+                        end else if ((os_ts1_valid || os_ts2_valid) &&
+                                     (rx_ts_count < TS_ACCEPT_REQUIRED)) begin
+                            // 接收门槛满足后锁存结果。对端可能先进入下一子状态，
+                            // 此时仍需把本端规定的16个TS1发送完，不能清零条件。
                             rx_ts_count <= 5'd0;
                             training_error_count <= sat_inc32(training_error_count);
                         end
-                        if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
+                        if ((rx_ts_count >= TS_ACCEPT_REQUIRED) &&
+                            (state_timer >= MIN_CONFIG_TX_LIMIT)) begin
+                            ltssm_state <= CFG_LANENUM_WAIT;
+                            state_timer <= 32'd0;
+                            rx_ts_count <= 5'd0;
+                        end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
@@ -408,16 +434,21 @@ module pcie_ltssm_mac_gen1 #(
                         state_timer <= state_timer + 1'b1;
                         if (os_ts1_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
-                            if (rx_ts_count == TS_ACCEPT_REQUIRED-1'b1) begin
-                                ltssm_state <= CFG_COMPLETE;
-                                state_timer <= 32'd0;
-                                rx_ts_count <= 5'd0;
-                            end else rx_ts_count <= rx_ts_count + 1'b1;
-                        end else if (os_ts1_valid || os_ts2_valid) begin
+                            if (rx_ts_count < TS_ACCEPT_REQUIRED)
+                                rx_ts_count <= rx_ts_count + 1'b1;
+                        end else if ((os_ts1_valid || os_ts2_valid) &&
+                                     (rx_ts_count < TS_ACCEPT_REQUIRED)) begin
+                            // 与 Linkwidth.Accept 相同：接收条件满足后保持，直到
+                            // 本端16个TS1发送门槛同时满足。
                             rx_ts_count <= 5'd0;
                             training_error_count <= sat_inc32(training_error_count);
                         end
-                        if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
+                        if ((rx_ts_count >= TS_ACCEPT_REQUIRED) &&
+                            (state_timer >= MIN_CONFIG_TX_LIMIT)) begin
+                            ltssm_state <= CFG_COMPLETE;
+                            state_timer <= 32'd0;
+                            rx_ts_count <= 5'd0;
+                        end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
@@ -428,16 +459,18 @@ module pcie_ltssm_mac_gen1 #(
                         state_timer <= state_timer + 1'b1;
                         if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
-                            if (rx_ts_count == TS_REQUIRED-1'b1) begin
-                                ltssm_state <= CFG_IDLE;
-                                state_timer <= 32'd0;
-                                rx_ts_count <= 5'd0;
-                            end else rx_ts_count <= rx_ts_count + 1'b1;
+                            if (rx_ts_count < TS_REQUIRED)
+                                rx_ts_count <= rx_ts_count + 1'b1;
                         end else if (os_ts1_valid || os_ts2_valid) begin
                             rx_ts_count <= 5'd0;
                             training_error_count <= sat_inc32(training_error_count);
                         end
-                        if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
+                        if ((rx_ts_count >= TS_REQUIRED) &&
+                            (state_timer >= MIN_CONFIG_TX_LIMIT)) begin
+                            ltssm_state <= CFG_IDLE;
+                            state_timer <= 32'd0;
+                            rx_ts_count <= 5'd0;
+                        end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
@@ -542,8 +575,8 @@ module pcie_ltssm_mac_gen1 #(
         end
     end
 
-    wire _unused_rx_fields = &{1'b0, phy_rxdata[31:16], os_n_fts, os_rate_id,
-                               os_training_control[7:1]};
+    wire _unused_rx_fields = &{1'b0, phy_rxdata[31:16], phy_rxdata_valid,
+                               os_n_fts, os_rate_id, os_training_control[7:1]};
 endmodule
 
 `default_nettype wire

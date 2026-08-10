@@ -44,6 +44,10 @@ failure；外层脚本只有观察到该失败后才输出 `K03_CHECKER_SELFTEST
 | K03-D010 | RX TLP/DLLP framing | Start/End 两种 Symbol 位置、keep、sop/eop、字节序 |
 | K03-D011 | Framing 错误 | 嵌套 Start、非法 K、无 Start End、超长 TX 全被观察 |
 | K03-D012 | L0 前禁止 Packet | `tx_pkt_ready=0`，PHY 只发训练/Idle |
+| K03-D013 | Gen1 RxDataValid=0 | `rxvalid=1` 时仍正确接收 TS1/TS2，避免误用 Gen3 指示 |
+| K03-D014 | COM 位于高 Symbol | 跨拍重组后完整识别 TS，线路字节顺序不改变 |
+| K03-D015 | Configuration 最小发送量 | Accept/Complete 满足接收条件后仍发送满16个对应TS；对端提前前进不清除条件 |
+| K03-D016 | Logical Idle编码 | Idle必须为两个D0.0数据字符，K28.3不得被接受为Logical Idle |
 
 ## 4. 约束随机和错误注入
 
@@ -61,8 +65,11 @@ failure；外层脚本只有观察到该失败后才输出 `K03_CHECKER_SELFTEST
 
 - 复位或 Detect 时 `txelecidle=1`，K03 永不请求非 Gen1 rate；
 - 状态只能沿冻结有向边跳转；L0 前 `link_up=0`、`tx_pkt_ready=0`；
-- TS 的 COM/PAD K-code 与十个 identifier 的 Data-code 属性正确；
+- TS 的 COM/PAD K-code 与十个 identifier 的 Data-code 属性正确；COM 低/高
+  Symbol 两种布局均被覆盖；
 - 一个 TS 正好 8 拍；完整 Packet 上线后 Symbol 之间无空洞；
+- Linkwidth.Accept、Lanenum.Accept 和 Configuration.Complete 在本端发送满
+  16 个对应 Training Sequence 前不得退出；
 - 高 16 bit 永远为 0，Gen3 block/header 永远为 0；
 - RX `sop/eop` 只在 valid 时出现，`keep=00` 仅和 eop 同时出现；
 - Packet 字节不丢失、不重复、不乱序；计数器不回绕。

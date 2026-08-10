@@ -53,8 +53,11 @@ flowchart LR
 
 - 每拍只采样 `phy_rxdata[15:0]` 和 `phy_rxdatak[1:0]`；线路上先到的 Symbol 位于
   `[7:0]`；
-- 由 PHY 的 Comma Alignment 保证 TS 起始 COM 位于 Symbol 0；K03 检查该条件，
-  错位记为 malformed，不在 MAC 内重新做 PCS byte alignment；
+- Gen1/2 的有效拍只由 `phy_rxvalid` 指示；`phy_rxdata_valid` 属于 Gen3 block
+  信息，K03 不得用它门控 TS1/TS2；
+- PHY 可能把 TS 起始 COM 放在低或高 Symbol；`pcie_gen1_rx_symbol_aligner` 使用
+  一字节寄存器把高 Symbol COM 与下一拍低 Symbol 跨拍重组，向 Ordered Set 和
+  Packet Framer 统一提供低 Symbol 起始格式；
 - 一个 TS 固定 16 Symbol、8 拍：COM、Link、Lane、N_FTS、Rate、Control、十个
   TS identifier；
 - TS1 identifier 为 `D10.2=8'h4A`，TS2 为 `D5.2=8'h45`；PAD 为
@@ -66,9 +69,11 @@ flowchart LR
 
 - 每个 TS 连续发送 8 拍，中间不可插入空拍；
 - `phy_txdata[31:16]=0`，`phy_txdatak[1:0]` 只标记低 16 bit 两个 Symbol；
-- `N_FTS=8'hFF`，Rate ID=`8'h07`（宣告 Gen1/2/3 能力但 K03 只运行 Gen1）；
+- `N_FTS=8'hFF`，Rate ID=`8'h0E`（与 Gen3-capable standalone PHY/Root Port
+  训练接口一致，但 K03 当前仍固定在 Gen1）；
 - Training Control 默认为 0；Hot Reset 状态不伪造上游热复位 TS；
-- Configuration.Idle/Recovery.Idle 发送两个 `K28.3` 每拍；
+- Configuration.Idle/Recovery.Idle 每拍发送两个 `D0.0` 数据字符；`K28.3`
+  属于 Electrical Idle Ordered Set，不得冒充 Logical Idle；
 - L0 无待发 Packet 时也发送 Logical Idle。
 
 ### 2.3 LTSSM
@@ -91,8 +96,11 @@ L0 --HotResetReq--> HotReset → Detect.Quiet
 - Polling.Active 连续接收 8 个 PAD/PAD TS1 后进入 Polling.Configuration；
 - Polling.Configuration 连续接收 8 个 PAD/PAD TS2 后进入 Configuration；
 - Linkwidth.Start 捕获非 PAD Link Number；本 Endpoint 只接受 Lane 0；
-- Linkwidth.Accept/Lanenum.Accept 分别要求 2 个匹配 TS1；Complete 要求 8 个匹配
-  TS2；Idle 要求 8 拍双 Logical Idle；
+- Linkwidth.Accept/Lanenum.Accept 分别要求接收 2 个匹配 TS1，并且本端在对应
+  子状态至少发送 16 个 TS1；Complete 要求接收 8 个匹配 TS2且本端至少发送
+  16 个 TS2；Idle 要求 8 拍双 Logical Idle；
+- Accept 子状态的接收条件达到门槛后锁存；如果对端更早进入下一子状态并发送
+  Link/Lane TS1或TS2，不得清除已满足条件，本端继续发送到16个后再前进；
 - Recovery 对匹配 Link/Lane 的 TS1、TS2 和 Idle 分别执行 8/8/8 次确认；
 - 每次状态变化清零连续计数和超时计数；错误 TS 打断连续计数并累加训练错误；
 - 所有硬件默认超时以 125 MHz 周期参数给出，仿真可参数覆盖缩短，但协议状态顺序
