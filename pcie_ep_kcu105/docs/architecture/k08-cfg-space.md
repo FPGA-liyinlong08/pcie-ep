@@ -47,8 +47,9 @@ flowchart LR
 ## 3. BDF捕获和路由
 
 - PERST#或Hot Reset后`bdf_valid=0`、`captured_bdf=0`；普通Recovery/速率切换不清除；
-- `cfg_req_target_bdf[7:0] != 0`表示未实现Device或Function，返回UR且不得捕获BDF；
-- `bdf_valid=0`且Device/Function均为0时，第一次请求捕获完整Bus/Device/Function；
+- `cfg_req_target_bdf[2:0] != 0`表示未实现Function，返回UR且不得捕获BDF；
+- `bdf_valid=0`且Function为0时，第一次请求捕获完整Bus/Device/Function；Device Number
+  由Root Port分配，允许为任意5-bit值；
   该请求正常执行；
 - `bdf_valid=1`后只有目标BDF完全相等的请求正常执行，其他请求返回UR；
 - 首次请求的SC Completion使用该请求目标BDF作为Completer ID；后续响应使用捕获BDF；

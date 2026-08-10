@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// K11-A离线全协议顶层：边界位于K03 MAC Packet接口，不包含真实Xilinx PHY模型。
+// K11-A/K11-B生产协议核心；保留冻结模块名k11a_offline_top。
+// 边界位于K03 MAC Packet接口，不包含Xilinx PHY模型。
 module k11a_offline_top (
     input  wire         pipe_clk,
     input  wire         pipe_rst_n,

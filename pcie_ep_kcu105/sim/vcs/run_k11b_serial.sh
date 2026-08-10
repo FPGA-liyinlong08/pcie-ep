@@ -10,6 +10,12 @@ rp_dir="${K11B_RP_IMPORTS:-/home/wx/Documents/XDMA/xdma_dec_250922/imports}"
 ip_dir="${project_dir}/fpga/kcu105/ip/pcie_phy_x1_gen3"
 license_timeout="${VCS_LICENSE_TIMEOUT:-300}"
 simulation_timeout="${K11B_SIM_TIMEOUT:-900}"
+b2_mode="${K11B2_MODE:-0}"
+afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
+tb_defines=()
+if [[ "${b2_mode}" == "1" ]]; then
+    tb_defines+=(+define+K11B2_DUT)
+fi
 
 export VCS_HOME="${vcs_home}"
 export VCS_ARCH_OVERRIDE=linux
@@ -20,6 +26,7 @@ test -s "${ip_dir}/pcie_phy_x1_gen3.xci"
 test -s "${ip_dir}/sim/pcie_phy_x1_gen3.v"
 test -s "${rp_dir}/pcie3_uscale_rp_core_top.v"
 test -s "${rp_dir}/pcie3_uscale_rp_top.v"
+test -s "${afifo}"
 
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/pcie_k11b_vcs.XXXXXX")"
 setup_file="${run_dir}/synopsys_sim.setup"
@@ -62,8 +69,18 @@ export SYNOPSYS_SIM_SETUP="${setup_file}"
     "${rp_dir}/xilinx_pcie_uscale_rp.v" \
     -l build/k11b_rp_vlogan.log
 
+"${vcs_home}/bin/vlogan" -full64 +v2k -work xil_defaultlib \
+    "${afifo}" -l build/k11b_afifo_vlogan.log
+
 "${vcs_home}/bin/vlogan" -full64 -sverilog -work xil_defaultlib \
+    "${tb_defines[@]}" \
     "${project_dir}/rtl/common/pcie_reset_sync.sv" \
+    "${project_dir}/rtl/common/pcie_gray_sync.sv" \
+    "${project_dir}/rtl/common/pcie_async_pkt_fifo.sv" \
+    "${project_dir}/rtl/common/pcie_async_event_fifo.sv" \
+    "${project_dir}/rtl/common/pcie_tlp_async_bridge.sv" \
+    "${project_dir}/rtl/common/pcie_cdc_snapshot.sv" \
+    "${project_dir}/rtl/common/pcie_cdc_pulse.sv" \
     "${project_dir}/rtl/phy/kcu105_reset_ctrl.sv" \
     "${project_dir}/rtl/phy/kcu105_refclk_reset.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_phy_wrapper.sv" \
@@ -74,6 +91,23 @@ export SYNOPSYS_SIM_SETUP="${setup_file}"
     "${project_dir}/rtl/phy/pcie_gen1_framer.sv" \
     "${project_dir}/rtl/phy/pcie_ltssm_mac_gen1.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_gen1_top.sv" \
+    "${project_dir}/rtl/dll/pcie_crc_stream.sv" \
+    "${project_dir}/rtl/dll/pcie_crc16_dllp.sv" \
+    "${project_dir}/rtl/dll/pcie_crc32_lcrc.sv" \
+    "${project_dir}/rtl/dll/pcie_fc_local_credit_pool.sv" \
+    "${project_dir}/rtl/dll/pcie_dllp_codec.sv" \
+    "${project_dir}/rtl/dll/pcie_dllp_fc_manager.sv" \
+    "${project_dir}/rtl/dll/pcie_dllp_tx_arbiter.sv" \
+    "${project_dir}/rtl/dll/pcie_dll_mac_tx_arbiter.sv" \
+    "${project_dir}/rtl/dll/pcie_dll_replay.sv" \
+    "${project_dir}/rtl/dll/pcie_dll.sv" \
+    "${project_dir}/rtl/tl/pcie_tlp_codec.sv" \
+    "${project_dir}/rtl/tl/pcie_cfg_space.sv" \
+    "${project_dir}/rtl/tl/pcie_bar_axil_master.sv" \
+    "${project_dir}/rtl/tl/demo_axil_slave.sv" \
+    "${project_dir}/sim/verilator/k09_integration/k09_tlp_test_top.sv" \
+    "${project_dir}/rtl/ep/k11a_offline_top.sv" \
+    "${project_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" \
     "${vivado_home}/data/verilog/src/glbl.v" \
     "${script_dir}/k11b_serial_board.sv" \
     -l build/k11b_tb_vlogan.log
@@ -97,6 +131,27 @@ elif [[ ${elaborate_status} -ne 0 ]]; then
     exit "${elaborate_status}"
 fi
 
+if [[ "${b2_mode}" == "1" ]]; then
+    set +e
+    timeout --foreground "${simulation_timeout}" \
+        "${run_dir}/k11b_simv" +K11B2_RUN -licqueue \
+        -l build/k11b2_simulate.log
+    b2_status=$?
+    set -e
+    if [[ ${b2_status} -eq 124 ]]; then
+        echo "错误：K11-B2真实串行仿真超过 ${simulation_timeout} 秒" >&2
+        exit 124
+    elif [[ ${b2_status} -ne 0 ]]; then
+        exit "${b2_status}"
+    fi
+    grep -q 'K11B2_DLL_ACTIVE_PASS' build/k11b2_simulate.log
+    grep -q 'K11B2_ENUM_PASS' build/k11b2_simulate.log
+    grep -q 'K11B2_BAR_PASS' build/k11b2_simulate.log
+    grep -q 'K11B2_VCS_PASS' build/k11b2_simulate.log
+    echo "K11B2_VCS_REAL_PHY_PASS run_dir=${run_dir}"
+    exit 0
+fi
+
 if [[ "${K11B_SKIP_SELFTEST:-0}" != "1" ]]; then
     set +e
     timeout --foreground "${simulation_timeout}" \
@@ -111,6 +166,20 @@ if [[ "${K11B_SKIP_SELFTEST:-0}" != "1" ]]; then
         exit "${selftest_status}"
     fi
     grep -q 'K11B_VCS_CHECKER_SELFTEST_PASS' build/k11b_checker_selftest.log
+
+    set +e
+    timeout --foreground "${simulation_timeout}" \
+        "${run_dir}/k11b_simv" +K11B2_NEGATIVE_STUB -licqueue \
+        -l build/k11b2_checker_selftest.log
+    b2_selftest_status=$?
+    set -e
+    if [[ ${b2_selftest_status} -eq 124 ]]; then
+        echo "错误：K11-B2 K03-only负向Stub仿真超过 ${simulation_timeout} 秒" >&2
+        exit 124
+    elif [[ ${b2_selftest_status} -ne 0 ]]; then
+        exit "${b2_selftest_status}"
+    fi
+    grep -q 'K11B2_CHECKER_SELFTEST_PASS' build/k11b2_checker_selftest.log
 else
     echo "K11B_VCS_CHECKER_SELFTEST_SKIPPED_FOR_DEBUG"
 fi

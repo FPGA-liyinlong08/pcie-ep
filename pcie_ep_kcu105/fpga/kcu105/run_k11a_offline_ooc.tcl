@@ -21,7 +21,7 @@ set sv_files [list \
   rtl/tl/pcie_tlp_codec.sv rtl/tl/pcie_cfg_space.sv \
   rtl/tl/pcie_bar_axil_master.sv rtl/tl/demo_axil_slave.sv \
   sim/verilator/k09_integration/k09_tlp_test_top.sv \
-  sim/verilator/k11a/k11a_offline_top.sv]
+  rtl/ep/k11a_offline_top.sv]
 foreach f $sv_files { read_verilog -sv [file join $root_dir $f] }
 read_xdc [file join $script_dir k11a_offline_ooc.xdc]
 

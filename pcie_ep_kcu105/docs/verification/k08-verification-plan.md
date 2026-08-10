@@ -80,9 +80,10 @@ SimPort。禁止创建Python`Device/Function`替代RTL配置空间。
 
 ### 4.3 BDF和Completion路由
 
-- 首个Device 0/Function 0请求捕获完整BDF并返回SC；Requester ID变化不得改变本地BDF；
+- 首个Function 0请求捕获完整BDF并返回SC，Device Number必须覆盖非零值；Requester ID
+  变化不得改变本地BDF；
 - 捕获后分别改变Bus、Device和Function，均返回UR且写请求无副作用；
-- 首次Device或Function非0请求返回UR且不捕获，随后Device 0/Function 0仍可捕获；
+- 首次Function非0请求返回UR且不捕获，随后任意Device的Function 0仍可捕获；
 - 每类响应检查`cfg_rsp_completer_id`和`local_completer_id`；
 - PERST#、Hot Reset后可重新捕获，普通Retrain/Recovery不得改变BDF。
 

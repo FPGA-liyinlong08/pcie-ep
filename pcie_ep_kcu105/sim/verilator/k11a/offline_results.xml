@@ -1,6 +1,6 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1786329074" />
-    <testcase name="gen1_dll_cfg_bar_demo_path" classname="test_k11a_offline" file="/home/wx/Documents/PCIe/pcie_ep_kcu105/sim/verilator/k11a/test_k11a_offline.py" lineno="173" time="0.02891254425048828" sim_time_ns="1976.001" ratio_time="68344.071793911" />
+    <property name="random_seed" value="1786337689" />
+    <testcase name="gen1_dll_cfg_bar_demo_path" classname="test_k11a_offline" file="/home/wx/Documents/PCIe/pcie_ep_kcu105/sim/verilator/k11a/test_k11a_offline.py" lineno="173" time="0.039116621017456055" sim_time_ns="2072.001" ratio_time="52969.8359956847" />
   </testsuite>
 </testsuites>

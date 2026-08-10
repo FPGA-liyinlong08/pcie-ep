@@ -15,6 +15,8 @@ module board;
     wire refclk_n = ~refclk_p;
     reg  sys_rst_n;
     reg  disconnect_lane0;
+    reg  b2_negative_stub;
+    reg  b2_active;
 
     wire       ep_txp;
     wire       ep_txn;
@@ -43,6 +45,8 @@ module board;
     initial begin
         sys_rst_n = 1'b0;
         disconnect_lane0 = $test$plusargs("K11B_DISCONNECT_LANE0");
+        b2_negative_stub = $test$plusargs("K11B2_NEGATIVE_STUB");
+        b2_active = $test$plusargs("K11B2_RUN");
         repeat (500) @(posedge refclk_p);
         sys_rst_n = 1'b1;
         $display("K11B_RESET_RELEASE time_ps=%0t disconnect=%0d", $time,
@@ -143,7 +147,8 @@ module board;
             else
                 stable_count <= 0;
 
-            if (!disconnect_lane0 && (stable_count == STABLE_PCLK_CYCLES-1)) begin
+            if (!disconnect_lane0 && !b2_active &&
+                (stable_count == STABLE_PCLK_CYCLES-1)) begin
                 if (!seen_detect || !seen_polling || !seen_configuration) begin
                     $display("K11B_VCS_GEN1_L0_FAIL reason=missing_state_coverage detect=%0d polling=%0d config=%0d",
                              seen_detect, seen_polling, seen_configuration);
@@ -155,13 +160,156 @@ module board;
                              EP.DUT.negotiated_width, EP.DUT.negotiated_speed);
                     $fatal(1);
                 end
-                $display("K11B_VCS_GEN1_L0_PASS stable_pclk=%0d ep_state=%0d rp_state=%0h rp_user_link=%0d",
-                         STABLE_PCLK_CYCLES, EP.DUT.ltssm_state,
-                         RP.cfg_ltssm_state, RP.user_lnk_up);
+                if (b2_negative_stub) begin
+                    if (RP.user_lnk_up !== 1'b0) begin
+                        $display("K11B2_CHECKER_SELFTEST_FAIL reason=k03_only_user_link_up");
+                        $fatal(1);
+                    end
+                    $display("K11B2_CHECKER_SELFTEST_PASS reason=k03_only_has_no_dll ep_l0=1 rp_l0=1 rp_user_link=0");
+                end else begin
+                    $display("K11B_VCS_GEN1_L0_PASS stable_pclk=%0d ep_state=%0d rp_state=%0h rp_user_link=%0d",
+                             STABLE_PCLK_CYCLES, EP.DUT.ltssm_state,
+                             RP.cfg_ltssm_state, RP.user_lnk_up);
+                end
                 $finish;
             end
         end
     end
+
+`ifdef K11B2_DUT
+    initial begin : k11b2_timeout_diagnostics
+        if ($test$plusargs("K11B2_RUN")) begin
+            #190000000;
+            $display("K11B2_DIAG mac_rx=%0d/%0d dll_rx_tlp=%0d dll_tx_tlp=%0d lcrc=%0d seq=%0d dup=%0d ack_tx=%0d cfg_req=%0d cpl_tx=%0d core_rx=%0d core_tx=%0d bdf_valid=%0d cdc=%02x",
+                     EP.DUT.mac_rx_valid, EP.DUT.mac_rx_is_dllp,
+                     EP.DUT.u_protocol_core.dll_rx_tlp_count,
+                     EP.DUT.u_protocol_core.dll_tx_tlp_count,
+                     EP.DUT.u_protocol_core.lcrc_error_count,
+                     EP.DUT.u_protocol_core.sequence_error_count,
+                     EP.DUT.u_protocol_core.duplicate_tlp_count,
+                     EP.DUT.u_protocol_core.ack_tx_count,
+                     EP.DUT.u_protocol_core.codec_cfg_request_count,
+                     EP.DUT.u_protocol_core.codec_tx_completion_count,
+                     EP.DUT.u_protocol_core.core_rx_valid,
+                     EP.DUT.u_protocol_core.core_tx_valid,
+                     EP.DUT.bdf_valid, EP.DUT.cdc_errors);
+        end
+    end
+
+    // B2的Root Port事务驱动。只使用RP示例环境已经公开的task和结果寄存器。
+    initial begin : k11b2_transaction_test
+        if ($test$plusargs("K11B2_RUN")) begin
+            wait (sys_rst_n === 1'b1);
+            fork : b2_timeout_guard
+                begin
+                    #800000000;
+                    $display("K11B2_VCS_FAIL reason=global_timeout ep_state=%0d ep_link=%0d ep_dll=%0d rp_state=%0h rp_user_link=%0d fc=%0d cdc=%02x",
+                             EP.DUT.ltssm_state, EP.DUT.link_up,
+                             EP.DUT.dll_active, RP.cfg_ltssm_state,
+                             RP.user_lnk_up, EP.DUT.dll_fc_state,
+                             EP.DUT.cdc_errors);
+                    $fatal(1);
+                end
+                begin : b2_sequence
+                    wait ((EP.DUT.link_up === 1'b1) &&
+                          (EP.DUT.dll_active === 1'b1) &&
+                          (RP.user_lnk_up === 1'b1));
+                    $display("K11B2_DLL_ACTIVE_PASS ep_fc=%0d rp_state=%0h",
+                             EP.DUT.dll_fc_state, RP.cfg_ltssm_state);
+
+                    RP.tx_usrapp.DEFAULT_TAG = 8'h20;
+                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_READ(
+                        RP.tx_usrapp.DEFAULT_TAG, 12'h000, 4'hf);
+                    RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                    if (RP.tx_usrapp.P_READ_DATA !== 32'hE0011234) begin
+                        $display("K11B2_VCS_FAIL reason=vendor_device actual=%08x",
+                                 RP.tx_usrapp.P_READ_DATA);
+                        $fatal(1);
+                    end
+
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                        RP.tx_usrapp.DEFAULT_TAG, 12'h010, 32'hffff_ffff, 4'hf);
+                    RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_READ(
+                        RP.tx_usrapp.DEFAULT_TAG, 12'h010, 4'hf);
+                    RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                    if (RP.tx_usrapp.P_READ_DATA !== 32'hffff_f000) begin
+                        $display("K11B2_VCS_FAIL reason=bar_mask actual=%08x",
+                                 RP.tx_usrapp.P_READ_DATA);
+                        $fatal(1);
+                    end
+
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                        RP.tx_usrapp.DEFAULT_TAG, 12'h010, 32'h8000_0000, 4'hf);
+                    RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                        RP.tx_usrapp.DEFAULT_TAG, 12'h004, 32'h0000_0002, 4'h3);
+                    // 真实Gen1链路上的Cfg Write Completion往返约1 us；等待500个
+                    // Root user_clk后再观察跨域后的MSE状态。
+                    RP.tx_usrapp.TSK_TX_CLK_EAT(500);
+
+                    if (!EP.DUT.bdf_valid ||
+                        (EP.DUT.bar0_base !== 32'h8000_0000) ||
+                        !EP.DUT.memory_space_enable) begin
+                        $display("K11B2_VCS_FAIL reason=cfg_state bdf_valid=%0d bar=%08x mse=%0d",
+                                 EP.DUT.bdf_valid, EP.DUT.bar0_base,
+                                 EP.DUT.memory_space_enable);
+                        $fatal(1);
+                    end
+                    $display("K11B2_ENUM_PASS bdf=%04x bar0=%08x",
+                             EP.DUT.captured_bdf, EP.DUT.bar0_base);
+
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_MEMORY_READ_32(
+                        RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                        32'h8000_0000, 4'h0, 4'hf);
+                    RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                    if (RP.tx_usrapp.P_READ_DATA !== 32'h5043_4945) begin
+                        $display("K11B2_VCS_FAIL reason=signature actual=%08x",
+                                 RP.tx_usrapp.P_READ_DATA);
+                        $fatal(1);
+                    end
+
+                    RP.tx_usrapp.DATA_STORE[0] = 8'h19;
+                    RP.tx_usrapp.DATA_STORE[1] = 8'h7e;
+                    RP.tx_usrapp.DATA_STORE[2] = 8'hc3;
+                    RP.tx_usrapp.DATA_STORE[3] = 8'ha5;
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_MEMORY_WRITE_32(
+                        RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                        32'h8000_0040, 4'h0, 4'hf, 1'b0);
+                    RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_MEMORY_READ_32(
+                        RP.tx_usrapp.DEFAULT_TAG, 3'd0, 11'd1,
+                        32'h8000_0040, 4'h0, 4'hf);
+                    RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                    if (RP.tx_usrapp.P_READ_DATA !== 32'hA5C3_7E19) begin
+                        $display("K11B2_VCS_FAIL reason=scratch actual=%08x",
+                                 RP.tx_usrapp.P_READ_DATA);
+                        $fatal(1);
+                    end
+                    if ((EP.DUT.cdc_errors !== 8'h00) ||
+                        (EP.DUT.link_up !== 1'b1) ||
+                        (EP.DUT.dll_active !== 1'b1)) begin
+                        $display("K11B2_VCS_FAIL reason=final_state cdc=%02x link=%0d dll=%0d",
+                                 EP.DUT.cdc_errors, EP.DUT.link_up,
+                                 EP.DUT.dll_active);
+                        $fatal(1);
+                    end
+                    $display("K11B2_BAR_PASS signature=50434945 scratch=%08x",
+                             RP.tx_usrapp.P_READ_DATA);
+                    $display("K11B2_VCS_PASS");
+                    $finish;
+                end
+            join
+        end
+    end
+`endif
 
     initial begin
         wait (sys_rst_n === 1'b1);
@@ -176,7 +324,7 @@ module board;
             $display("K11B_VCS_CHECKER_SELFTEST_PASS ep_state=%0d rp_link=%0d timeout=%0d",
                      EP.DUT.ltssm_state, RP.user_lnk_up, EP.DUT.timeout_count);
             $finish;
-        end else begin
+        end else if (!b2_active) begin
             #160000000;
             $display("K11B_SERIAL_ACTIVITY ep_tx=%0d rp_tx=%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d ep_rxvalid=%0d ep_data_valid=%0d ep_elec_idle=%0d ep_rxstatus=%0d",
                      ep_tx_edge_count, rp_tx_edge_count[0], rp_tx_edge_count[1],
@@ -223,6 +371,31 @@ module k11b_endpoint_compat #(
 
     initial usr_irq_req = {C_NUM_USR_IRQ{1'b0}};
 
+`ifdef K11B2_DUT
+    wire link_up, dll_active, bdf_valid, memory_space_enable;
+    wire [5:0] ltssm_state;
+    wire [1:0] dll_fc_state, negotiated_speed;
+    wire [2:0] negotiated_width;
+    wire [15:0] captured_bdf;
+    wire [31:0] bar0_base;
+    wire [7:0] cdc_errors;
+
+    kcu105_pcie_ep_gen1_top #(
+        .DETECT_QUIET_CYCLES   (DETECT_QUIET_CYCLES),
+        .DETECT_TIMEOUT_CYCLES (DETECT_TIMEOUT_CYCLES),
+        .TRAIN_TIMEOUT_CYCLES  (TRAIN_TIMEOUT_CYCLES),
+        .HOT_RESET_CYCLES      (HOT_RESET_CYCLES)
+    ) DUT (
+        .pcie_refclk_p(pcie_refclk_p), .pcie_refclk_n(pcie_refclk_n),
+        .pcie_perst_n(pcie_perst_n), .pcie_rxp(pcie_rxp), .pcie_rxn(pcie_rxn),
+        .pcie_txp(pcie_txp), .pcie_txn(pcie_txn), .led(led),
+        .link_up(link_up), .dll_active(dll_active), .ltssm_state(ltssm_state),
+        .dll_fc_state(dll_fc_state), .negotiated_speed(negotiated_speed),
+        .negotiated_width(negotiated_width), .captured_bdf(captured_bdf),
+        .bdf_valid(bdf_valid), .bar0_base(bar0_base),
+        .memory_space_enable(memory_space_enable), .cdc_errors(cdc_errors)
+    );
+`else
     kcu105_pcie_gen1_top #(
         .DETECT_QUIET_CYCLES   (DETECT_QUIET_CYCLES),
         .DETECT_TIMEOUT_CYCLES (DETECT_TIMEOUT_CYCLES),
@@ -238,6 +411,7 @@ module k11b_endpoint_compat #(
         .pcie_txn      (pcie_txn),
         .led           (led)
     );
+`endif
 
     wire _unused_compat = &{1'b0, user_clk, m_axi_wvalid, m_axi_wready,
                             m_axi_wdata, m_axi_wstrb, usr_irq_req, usr_irq_ack};

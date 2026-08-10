@@ -1,6 +1,6 @@
 # K11-B VCS 串行集成接口冻结
 
-状态：**v1 已冻结**
+状态：**v1.1 已冻结（增加K11-B2生产顶层状态）**
 
 ## 1. 板级仿真接口
 
@@ -19,6 +19,26 @@ Root Port Lane 1～7 不与 Endpoint 相连，其 RXP/RXN 分别固定为 `0/0`�
 K02 与 K03 继续使用 `K02-PHY32-v1.1`：Gen1 下每拍有效 Symbol 位于低 16 bit，
 线路最先出现的 Symbol 位于 `[7:0]`。K03 与后续 DLL 继续使用 `K03-MAC16-v1`。
 本阶段不新增协议接口。
+
+K11-B2生产顶层名称固定为`kcu105_pcie_ep_gen1_top`。板级串行端口保持第1节不变，
+另外提供以下只读状态输出用于仿真、ILA和上板定位：
+
+| 信号 | 位宽 | 时钟语义 | 复位值/含义 |
+|---|---:|---|---|
+| `link_up` | 1 | `phy_pclk` | 0；K03处于L0 |
+| `dll_active` | 1 | `phy_pclk` | 0；InitFC完成 |
+| `ltssm_state` | 6 | `phy_pclk` | 0；沿用K03状态编码 |
+| `dll_fc_state` | 2 | `phy_pclk` | 0；沿用K05编码 |
+| `negotiated_speed` | 2 | `phy_pclk` | 0=Gen1 |
+| `negotiated_width` | 3 | `phy_pclk` | 1=x1，仅L0/Recovery有效 |
+| `captured_bdf` | 16 | `phy_coreclk` | 0；K08捕获的本地BDF |
+| `bdf_valid` | 1 | `phy_coreclk` | 0；BDF已捕获 |
+| `bar0_base` | 32 | `phy_coreclk` | 0；4 KiB对齐BAR0基址 |
+| `memory_space_enable` | 1 | `phy_coreclk` | 0；Command.MSE |
+| `cdc_errors` | 8 | 混合sticky状态 | 0；任一位为1均失败 |
+
+这些输出只用于状态观测，不允许反向控制协议逻辑。跨域状态只能在各自所属时钟域采样；
+测试平台若组合判断多个域，必须要求条件连续稳定，不依赖同拍原子性。
 
 为 VCS 缩短运行时间，`kcu105_pcie_gen1_top` 新增以下**参数**，端口不变：
 
@@ -39,3 +59,8 @@ VCS 日志使用固定机器可读标记：
 - `K11B_VCS_GEN1_L0_PASS`：真实串行 B1 门通过；
 - `K11B_VCS_GEN1_L0_FAIL`：超时并打印双方状态；
 - `K11B_VCS_REAL_PHY_PASS`：脚本确认编译、展开、运行和日志检查全部成功。
+- `K11B2_CHECKER_SELFTEST_PASS`：K03-only负向Stub被枚举门禁检出；
+- `K11B2_DLL_ACTIVE_PASS`：双方用户/Data Link链路已就绪；
+- `K11B2_ENUM_PASS`：Vendor/Device、BAR探测/分配和MSE正确；
+- `K11B2_BAR_PASS`：Demo签名及Scratch写读正确；
+- `K11B2_VCS_PASS`：B2全部门禁通过。

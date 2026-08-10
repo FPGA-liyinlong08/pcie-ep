@@ -20,8 +20,9 @@ Xilinx串行模型和板卡的验证。真实`pcie_phy`串行仿真、Receiver D
   FIFO；只负责CDC和Packet原子对齐。
 - `k09_tlp_test_top`：名称保留自K09验证基线，内部使用生产K07 Codec、K08配置空间
   和K09 BAR Master；K11-A把它作为可综合TL子层，不包含行为模型。
-- `k11a_offline_top`：集成生产K06 DLL、异步桥、上述TL子层和生产K10 Demo Slave，
-  上边界为K03的16-bit MAC Packet接口；它是K11-A的可综合离线集成顶层。
+- `k11a_offline_top`：位于`rtl/ep/k11a_offline_top.sv`，集成生产K06 DLL、异步桥、
+  上述TL子层和生产K10 Demo Slave；上边界为K03的16-bit MAC Packet接口。模块名为
+  保持K11-A冻结接口不变而保留，K11-B直接复用该生产RTL。
 - K02 PHY、K03 LTSSM/MAC和板级管脚不进入该顶层；真正的
   `kcu105_pcie_ep_gen1_top`留到K11-B完成，动态串行验证也延期到K11-B。
 

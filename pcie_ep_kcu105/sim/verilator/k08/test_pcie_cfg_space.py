@@ -15,7 +15,7 @@ from cocotb.triggers import ClockCycles, FallingEdge, ReadOnly, RisingEdge
 from k08_cfg_model import CfgSpaceModel, SC, UR
 
 
-TEST_BDF = 0x0100  # 01:00.0
+TEST_BDF = 0x01A0  # 01:14.0，覆盖Root Port分配非零Device Number
 NEGATIVE_MARKER = Path(__file__).with_name("negative_checker_observed.txt")
 OUTPUT_NAMES = (
     "captured_bdf",
@@ -462,8 +462,8 @@ async def bdf_bar_and_control_directed(dut):
     driver = await start_tb(dut)
     model = CfgSpaceModel()
 
-    # 尚未捕获时，Device或Function非0都必须UR且无副作用。
-    for bad_bdf in (0x0101, 0x0108):
+    # 尚未捕获时只拒绝非零Function；Device Number由Root Port自由分配。
+    for bad_bdf in (0x0101, 0x01A1):
         rsp = await model_access(
             driver, model, write=False, addr=0, target_bdf=bad_bdf
         )

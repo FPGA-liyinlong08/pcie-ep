@@ -140,8 +140,10 @@ module pcie_cfg_space (
         endcase
     end
 
+    // 单Function Endpoint只要求Function Number为0；Device Number由Root Port分配，
+    // 不能假定为0。首次命中时捕获完整Bus/Device/Function。
     wire target_device_function_zero =
-        (cfg_req_target_bdf[7:0] == 8'd0);
+        (cfg_req_target_bdf[2:0] == 3'd0);
     wire target_bdf_matches =
         !bdf_valid || (cfg_req_target_bdf == captured_bdf);
     wire request_hits_function =

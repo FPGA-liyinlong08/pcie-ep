@@ -124,15 +124,50 @@ module pcie_tlp_async_bridge #(
         .m_data(metadata_m_data), .m_underflow(metadata_underflow)
     );
 
-    assign dll_tx_valid = tx_pkt_m_valid && metadata_m_valid;
-    assign tx_pkt_m_ready = dll_tx_ready && metadata_m_valid;
-    assign metadata_m_ready = dll_tx_valid && dll_tx_ready && tx_pkt_m_eop;
-    assign dll_tx_data = tx_pkt_m_data;
-    assign dll_tx_keep = tx_pkt_m_keep;
-    assign dll_tx_sop = tx_pkt_m_sop;
-    assign dll_tx_eop = tx_pkt_m_eop;
-    assign dll_tx_error = tx_pkt_m_error;
-    assign {dll_tx_type, dll_tx_data_credits} = metadata_m_data;
+    // FIFO读口与DLL Replay之间插入一拍弹性寄存器。除切断BRAM输出到
+    // Replay RAM写使能的长组合路径外，还允许下游消费旧拍时同拍装入新拍。
+    logic         tx_stage_valid;
+    logic [127:0] tx_stage_data;
+    logic [15:0]  tx_stage_keep;
+    logic         tx_stage_sop;
+    logic         tx_stage_eop;
+    logic [3:0]   tx_stage_error;
+    logic [13:0]  tx_stage_metadata;
+    wire tx_stage_ready = !tx_stage_valid || dll_tx_ready;
+    wire tx_stage_load = tx_stage_ready && tx_pkt_m_valid && metadata_m_valid;
+
+    assign tx_pkt_m_ready = tx_stage_ready && metadata_m_valid;
+    assign metadata_m_ready = tx_stage_load && tx_pkt_m_eop;
+
+    always_ff @(posedge pipe_clk or negedge pipe_rst_n) begin
+        if (!pipe_rst_n) begin
+            tx_stage_valid    <= 1'b0;
+            tx_stage_data     <= '0;
+            tx_stage_keep     <= '0;
+            tx_stage_sop      <= 1'b0;
+            tx_stage_eop      <= 1'b0;
+            tx_stage_error    <= '0;
+            tx_stage_metadata <= '0;
+        end else if (tx_stage_ready) begin
+            tx_stage_valid <= tx_stage_load;
+            if (tx_stage_load) begin
+                tx_stage_data     <= tx_pkt_m_data;
+                tx_stage_keep     <= tx_pkt_m_keep;
+                tx_stage_sop      <= tx_pkt_m_sop;
+                tx_stage_eop      <= tx_pkt_m_eop;
+                tx_stage_error    <= tx_pkt_m_error;
+                tx_stage_metadata <= metadata_m_data;
+            end
+        end
+    end
+
+    assign dll_tx_valid = tx_stage_valid;
+    assign dll_tx_data = tx_stage_data;
+    assign dll_tx_keep = tx_stage_keep;
+    assign dll_tx_sop = tx_stage_sop;
+    assign dll_tx_eop = tx_stage_eop;
+    assign dll_tx_error = tx_stage_error;
+    assign {dll_tx_type, dll_tx_data_credits} = tx_stage_metadata;
 
     pcie_async_event_fifo #(
         .WIDTH(14), .LGFIFO(EVENT_LGFIFO)

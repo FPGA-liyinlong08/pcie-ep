@@ -197,11 +197,11 @@ class CfgSpaceModel:
     ) -> CfgResponse:
         """执行一次已握手请求，并返回应产生的响应。"""
         target_bdf &= 0xFFFF
-        device_function = target_bdf & 0xFF
+        function_number = target_bdf & 0x7
         # 脉冲在每个新事务开始前自动撤销；UR也不能延长上一次脉冲。
         self.retrain_link_pulse = False
 
-        if device_function != 0:
+        if function_number != 0:
             cid = self.captured_bdf if self.bdf_valid else 0
             return CfgResponse(UR, 0, cid)
 

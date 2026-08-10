@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+project_dir="$(cd "${script_dir}/../.." && pwd)"
+build_dir="${script_dir}/build_k11b2/impl"
+vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
+
+export XILINX_LOCAL_USER_DATA=no
+mkdir -p "${build_dir}"
+cd "${project_dir}"
+
+if [[ "${K11B2_REUSE_BUILD:-0}" != "1" ]]; then
+  "${script_dir}/run_k02_ip_generation.sh"
+  "${vivado_bin}" -mode batch -source "${script_dir}/run_k11b2_impl.tcl" \
+    -nojournal -log "${build_dir}/vivado.log"
+fi
+
+if grep -q '^ERROR:' "${build_dir}/vivado.log"; then
+  echo "错误：K11-B2 Vivado日志存在Error" >&2
+  exit 1
+fi
+if grep -q '^CRITICAL WARNING:' "${build_dir}/vivado.log"; then
+  echo "错误：K11-B2 Vivado日志存在Critical Warning" >&2
+  exit 1
+fi
+
+warning_ids="$(grep '^WARNING: \[' "${build_dir}/vivado.log" \
+  | sed -E 's/^WARNING: \[([^]]+)\].*/\1/' | sort -u)"
+expected_warning_ids="$(printf '%s\n' \
+  'Synth 8-3848' \
+  'Synth 8-3917' \
+  'Synth 8-6014' \
+  'Synth 8-6779' \
+  'Synth 8-7023' \
+  'Synth 8-7071' \
+  'Synth 8-7080' \
+  'Synth 8-7129' \
+  'Vivado 12-975')"
+if [[ "${warning_ids}" != "${expected_warning_ids}" ]]; then
+  echo "错误：K11-B2 Warning ID集合与固定allowlist不一致" >&2
+  printf '实际：\n%s\n期望：\n%s\n' "${warning_ids}" "${expected_warning_ids}" >&2
+  exit 1
+fi
+
+if grep -Eq '\|[[:space:]]*(Critical Warning|Error)[[:space:]]*\|' \
+  "${build_dir}/drc.rpt"; then
+  echo "错误：K11-B2 DRC报告存在Critical Warning或Error" >&2
+  exit 1
+fi
+if grep -Eq '^CDC-[0-9]+[[:space:]]+Critical' "${build_dir}/cdc_routed.rpt"; then
+  echo "错误：K11-B2 CDC报告存在Critical路径" >&2
+  exit 1
+fi
+grep -q 'All user specified timing constraints are met.' \
+  "${build_dir}/timing_summary.rpt"
+grep -q '^K11B2_IMPL_PASS$' "${build_dir}/summary.txt"
+cat "${build_dir}/summary.txt"

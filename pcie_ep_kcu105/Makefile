@@ -21,7 +21,7 @@
 	k10-vivado k10 \
 	k11a-checker-selftest k11a-lint k11a-bridge k11a-offline \
 	k11a-regression k11a-vivado k11a \
-	k11b-vcs-serial clean
+	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vivado clean
 
 PYTHON ?= python3
 
@@ -213,6 +213,37 @@ k03: k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
 
 k11b-vcs-serial:
 	./sim/vcs/run_k11b_serial.sh
+
+k11b2-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		-Wno-DECLFILENAME -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+		--top-module kcu105_pcie_ep_gen1_top \
+		/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v \
+		sim/verilator/k02/xilinx_primitive_stubs.sv \
+		sim/verilator/k02/pcie_phy_x1_gen3_behavioral_stub.sv \
+		rtl/common/pcie_reset_sync.sv rtl/common/pcie_gray_sync.sv \
+		rtl/common/pcie_async_pkt_fifo.sv rtl/common/pcie_async_event_fifo.sv \
+		rtl/common/pcie_tlp_async_bridge.sv rtl/common/pcie_cdc_snapshot.sv \
+		rtl/common/pcie_cdc_pulse.sv rtl/phy/kcu105_reset_ctrl.sv \
+		rtl/phy/kcu105_refclk_reset.sv rtl/phy/kcu105_pcie_phy_wrapper.sv \
+		rtl/phy/pcie_gen12_scrambler.sv rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
+		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
+		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_ltssm_mac_gen1.sv \
+		rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
+		rtl/dll/pcie_crc32_lcrc.sv rtl/dll/pcie_fc_local_credit_pool.sv \
+		rtl/dll/pcie_dllp_codec.sv rtl/dll/pcie_dllp_fc_manager.sv \
+		rtl/dll/pcie_dllp_tx_arbiter.sv rtl/dll/pcie_dll_mac_tx_arbiter.sv \
+		rtl/dll/pcie_dll_replay.sv rtl/dll/pcie_dll.sv \
+		rtl/tl/pcie_tlp_codec.sv rtl/tl/pcie_cfg_space.sv \
+		rtl/tl/pcie_bar_axil_master.sv rtl/tl/demo_axil_slave.sv \
+		sim/verilator/k09_integration/k09_tlp_test_top.sv \
+		rtl/ep/k11a_offline_top.sv rtl/ep/kcu105_pcie_ep_gen1_top.sv
+
+k11b2-vcs-serial:
+	./sim/vcs/run_k11b2_serial.sh
+
+k11b2-vivado:
+	./fpga/kcu105/run_k11b2_impl.sh
 
 k04-checker-selftest:
 	@$(MAKE) -C sim/verilator/k04 NEGATIVE_STUB=1 \
@@ -558,7 +589,7 @@ k11a-lint:
 		rtl/tl/pcie_tlp_codec.sv rtl/tl/pcie_cfg_space.sv \
 		rtl/tl/pcie_bar_axil_master.sv rtl/tl/demo_axil_slave.sv \
 		sim/verilator/k09_integration/k09_tlp_test_top.sv \
-		sim/verilator/k11a/k11a_offline_top.sv
+		rtl/ep/k11a_offline_top.sv
 
 k11a-bridge:
 	cd sim/verilator/k11a && CCACHE_DISABLE=1 \

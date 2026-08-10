@@ -37,7 +37,8 @@ BAR0探测/分配和K09所需配置状态输出。生产模块与K07 TLP Codec�
 ## 3. 实现结果
 
 - 单响应槽：请求握手后一拍产生SC/UR，响应反压期间全部字段稳定；
-- 首次只有Device 0/Function 0可以捕获完整BDF；捕获后精确匹配，错配访问返回UR；
+- 首次Function 0请求捕获完整BDF，Device Number允许由Root Port分配为非零；捕获后
+  精确匹配，错配访问返回UR；
 - PERST#取消待响应并复位配置；Hot Reset清可写状态/BDF但保持已产生响应到握手；
 - Vendor/Device=`1234:e001`，Class=`ff0000`，Revision=`01`；
 - PCIe Capability位于`0x40`，报告Gen3 x1、MPS 128 B、无ASPM/FLR；
@@ -139,7 +140,7 @@ Type-0 TLP，再经SimPort适配器、生产K07解码、生产K08响应、生产
 ## 7. 已知限制与延期
 
 - 单Function、单响应槽、VC0，不支持连续每拍配置访问；
-- 只有Device 0/Function 0可首次捕获，Bus号通过首个合法请求取得；
+- 只有Function 0可首次捕获，Bus号和Device号均通过首个合法请求取得；
 - 无PM、MSI/MSI-X、AER、ASPM、FLR、SR-IOV和扩展Capability；
 - K07-v1固定为配置读返回1 DW/4 Byte，K08因此忽略CfgRd BE；
 - Gen3能力已经报告，但Gen3 EQ与完整集成分别属于K12/K13；

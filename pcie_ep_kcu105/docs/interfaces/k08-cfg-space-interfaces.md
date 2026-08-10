@@ -89,8 +89,8 @@ merged[8*i +: 8] = cfg_req_be[i] ? cfg_req_wdata[8*i +: 8]
 
 | 条件 | 动作 | 响应 |
 |---|---|---|
-| `target_bdf.device/function != 0` | 不捕获、不读写 | UR，Completer ID为0或已捕获BDF |
-| `!bdf_valid && device/function==0` | 捕获完整目标BDF并执行访问 | SC，Completer ID为目标BDF |
+| `target_bdf.function != 0` | 不捕获、不读写 | UR，Completer ID为0或已捕获BDF |
+| `!bdf_valid && function==0` | 捕获完整目标BDF并执行访问；Device可非0 | SC，Completer ID为目标BDF |
 | `bdf_valid && target==captured` | 正常执行 | SC，Completer ID为捕获BDF |
 | `bdf_valid && target!=captured` | 不读写 | UR，Completer ID为捕获BDF |
 
