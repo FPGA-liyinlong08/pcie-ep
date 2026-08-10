@@ -1,6 +1,6 @@
 # K11-B 真实 PHY/VCS RTL 前验证计划
 
-状态：**K11-B1 PASS；K11-B2 D001～D008及KU040实现PASS，修改后VCS重跑待许可证**
+状态：**K11-B1 PASS；K11-B2 D001～D008、修改后VCS及KU040实现PASS**
 
 ## 1. 参考对象和 Checker
 
@@ -83,6 +83,6 @@ K03、K06、K08～K11-A离线回归、VCS串行回归和KU040完整实现。实�
   签名和Scratch读写，D002～D008全部通过；
 - 完整KU040实现首次暴露TX FIFO到Replay RAM的250 MHz长组合路径，增加一拍弹性级后
   `WNS=+0.020 ns`、`WHS=+0.014 ns`，DRC/CDC通过并成功生成bitstream；
-- 弹性级修改后的Verilator双向随机桥回归通过；真实PHY VCS重跑因
-  `VCSCompiler_Net`许可证排队中止，恢复许可证后必须补跑；
+- 弹性级修改后的Verilator双向随机桥回归通过；真实PHY VCS在可访问本机许可证服务
+  的非隔离环境重跑通过，输出全部K11-B2固定PASS标记；
 - 100组串行随机BAR、坏LCRC、ACK丢失和PERST#注入尚未执行，实板继续延期。

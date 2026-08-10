@@ -50,8 +50,8 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K11-B2：真实PHY基础路径已完成DLL Active、`1234:e001`枚举、4 KiB BAR0分配、
   Demo签名和Scratch读写；完整KU040实现`WNS=+0.020 ns`、`WHS=+0.014 ns`，
   DRC/CDC及bitstream均通过。为时序增加TX CDC出口一拍弹性级后，Verilator桥回归
-  已通过，真实PHY VCS重跑受`VCSCompiler_Net`许可证排队阻塞；串行随机/注错和实板
-  门禁尚未完成，因此K11-B2暂不最终冻结。
+  已通过；在可访问`27000@wx-linux`的非隔离环境中，弹性级修改后的真实PHY VCS
+  重跑也已通过。串行随机/注错和实板门禁尚未完成，因此K11-B2暂不最终冻结。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。

@@ -2,7 +2,7 @@
 
 日期：2026-08-10
 
-状态：**基础Directed与Vivado PASS；修改后VCS重跑待许可证，暂不最终冻结**
+状态：**基础Directed、修改后VCS与Vivado PASS；串行加固/实板待完成**
 
 ## 1. 已完成内容
 
@@ -62,11 +62,25 @@ failing endpoints=1835
 Vivado普通Warning ID固定为`Synth 8-3848/3917/6014/6779/7023/7071/7080/7129`
 及无负路径查询产生的`Vivado 12-975`；运行脚本对集合做精确门禁，新增Warning失败。
 
-## 4. 当前阻塞与未完成项
+## 4. 许可证问题复核与修改后VCS补签
 
-弹性级修改后的真实PHY VCS重跑在编译阶段等待`VCSCompiler_Net`许可证，短时未释放后
-人工中止。此前基础VCS结果有效，但因生产RTL已有一拍延迟变化，恢复许可证后仍必须
-重新运行`make k11b2-vcs-serial`，不能用旧日志替代最终签核。
+隔离执行环境内重跑时，elaboration持续显示`VCSCompiler_Net`排队。非隔离环境查询
+`27000@wx-linux`确认`lmgrd/snpslmd`均为UP，Compiler/Runtime/MX Runtime各99席且
+0占用，证明原因不是席位耗尽，而是隔离网络不能访问本机许可证端口。
+
+在可访问许可证服务的非隔离环境重新执行后，弹性级修改后的RTL得到：
+
+```text
+K11B2_DLL_ACTIVE_PASS ep_fc=3 rp_state=10
+K11B2_ENUM_PASS bdf=01a0 bar0=80000000
+K11B2_BAR_PASS signature=50434945 scratch=a5c37e19
+K11B2_VCS_PASS
+K11B2_VCS_REAL_PHY_PASS
+```
+
+仿真结束时间约153.764 us，CPU约13.72 s。修改前的旧日志不再用于当前RTL签核。
+
+## 5. 未完成项
 
 尚未完成：100组串行随机BAR/BE、坏LCRC、ACK丢失、PERST#恢复，以及KCU105实板
 Gen1枚举、20次冷启动和100次重训。按阶段门规则，以上项目完成前K11-B2与K11整体
