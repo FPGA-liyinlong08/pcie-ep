@@ -513,3 +513,41 @@ Probe6的稳定状态和第一次发送转换如下：
 
 Core ILA本次没有有效数据（触发器在配置交互前发生），需在冷启动后重新布防链路退出触发器
 以取得Root Port TS1和最后一个配置请求的完整时序。
+
+### 11.3 第二次冷启动定点采样（2026-08-11 16:12:31）
+
+重新下载并Arm ILA后，通过SSH输入sudo密码执行远端冷启动，主机恢复后自动上传：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_161231_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_161231_u_ila_core.csv
+```
+
+PIPE ILA结果：
+
+- 触发点为采样`3072`；
+- Endpoint最终LTSSM=`POLLING_ACTIVE (0x02)`，`link_up=0`、`dll_active=0`；
+- `pipe_rst_n=1`、`txresetdone=1`、`gtpowergood=1`、`qpll1lock=1`、
+  `pciesynctxsyncdone=1`；
+- 采样`3155`开始`phy_txdata_valid=1`、`phy_txelecidle=0`、GT `txelecidle_in=0`，
+  与先前采样一致地进入连续TS1发送窗口；
+- RX侧没有收到Root Port TS1/TS2，配置请求和Completion计数为0。
+
+冷启动后Root Port完整状态（`sudo lspci -s 00:01.0 -vvv`）：
+
+```text
+LnkSta: Speed 2.5GT/s (downgraded), Width x1 (downgraded)
+        TrErr- Train+ SlotClk+ DLActive-
+LnkSta2: EqualizationComplete-, EqualizationPhase1/2/3-
+AER: DLP- SDES- TLP- FCP- CmpltTO- BadTLP- BadDLLP- RxErr-
+Endpoint: 未枚举
+```
+
+因此本轮进一步排除：GT TX reset未完成、PLL/电源未就绪、Endpoint持续Electrical Idle、
+Endpoint主动发送非法TLP，以及常见PCIe物理错误。当前直接现象是：**Endpoint已准备并
+提交Gen1 TS1，但Root Port没有向Endpoint返回训练序列，链路停在Root Port Train+、
+DLActive-和Endpoint Polling.Active的单向训练状态**。
+
+下一步不修改协议RTL，转为对比Root Port训练控制寄存器和PERST#/参考时钟实际时序；如果
+需要继续在Endpoint侧取证，应将触发从`DETECT_ACTIVE`改为更长时间的`POLLING_ACTIVE`窗口，
+并加入原始`phy_txdata/phy_txdatak`探针，以核对TS1内容和发送周期。
