@@ -481,3 +481,9 @@ make -C /home/wx/Documents/PCIe/pcie_ep_kcu105 k11b2-ila-hw-capture-wait
 
 采样后重点检查Probe6中`txresetdone/gtpowergood/qpll1lock/pciesynctxsyncdone`与
 `phy_txdata_valid/txelecidle`的先后关系，并与TS1 Ordered Set窗口对齐。
+
+### 11.1 远端测试主机连接记录
+
+- 主机：`192.168.11.126`；账户：`wx`；主机名：`wx-ubuntu`；
+- 已确认免密SSH可用（`BatchMode=yes`）；后续冷启动、日志采集和PCIe状态读取可自动执行；
+- 不在工程、脚本或报告中保存账户密码。
