@@ -589,3 +589,56 @@ fpga/kcu105/build_k11b2_ila/capture/20260811_171324_u_ila_core.csv
 均已准备好；该复位链路本身没有卡死。释放后的约49 µs窗口内尚未出现TX数据，说明
 LTSSM仍需要后续初始化时间，不能把“复位释放后立即无TS1”判为PHY故障。后续应使用
 `DETECT_ACTIVE`触发继续观察复位释放后的LTSSM进入和TS1启动时间。
+
+### 11.6 Root Port 强制 D0 与 Retrain 控制验证（2026-08-11 17:17:13）
+
+为排除 Root Port 处于低功耗状态或未执行重新训练，先在远端主机读取并修改 Root
+Port `00:01.0` 的电源管理和链路控制寄存器。冷启动后的初始值为：
+
+```text
+PMCSR       = 0103        # D3hot
+LnkCtl      = 0000        # CommClk-，Retrain-，Disabled-
+LnkSta      = 1811        # 2.5 GT/s x1，Train+，DLActive-
+LnkCtl2     = 0001        # Target Link Speed = Gen1
+BridgeCtl   = 0012        # Secondary Bus Reset 未置位
+```
+
+在 ILA 已布防的情况下执行：
+
+```text
+setpci -s 00:01.0 CAP_PM+4.w=0100     # 强制 D0
+setpci -s 00:01.0 CAP_EXP+10.w=0020   # 请求 Retrain
+```
+
+一秒后 Root Port 读回：
+
+```text
+PMCSR       = 0100        # D0
+LnkCtl      = 0000        # Retrain 请求已自动清除
+LnkSta      = 1811        # 仍为 Train+、DLActive-、Gen1 x1
+LnkCtl2     = 0001
+```
+
+主机仍显示 `Train+ / DLActive-`，Endpoint 未重新枚举，AER 中 `RxErr`、`BadTLP`、
+`BadDLLP`、`CmpltTO` 等计数均为零。由此可判定：**D3hot 不是唯一原因；即使 Root
+Port 被显式置为 D0 并请求 Retrain，也没有重新开始双向训练**。这次操作没有修改
+Endpoint 协议 RTL。
+
+对应的 PIPE 采样文件为：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_171713_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_171713_u_ila_core.csv
+```
+
+PIPE ILA 在 `DETECT_ACTIVE`→`POLLING_ACTIVE` 时触发，最终状态为
+`POLLING_ACTIVE (0x02)`、`link_up=0`、`dll_active=0`。采样 3155 起
+`phy_txdata_valid=1`、`phy_txelecidle=0`，即 Endpoint 再次连续提交 TS1；整个窗口
+没有收到 Root Port TS1/TS2，DLL/TLP/配置请求计数仍为零，Core ILA 没有有效采样。
+
+本轮把“Endpoint 已离开电气空闲并发送 TS1”与“Root Port 没有返回训练序列”在同一
+次 D0+Retrain 操作中再次对齐。当前直接故障仍定位在 Root Port 的训练启动/接收路径
+或板级 PERST#/参考时钟实际条件，不能归因于 Endpoint GT reset-done、QPLL 锁定、
+PHY 状态复位释放或 Endpoint 主动发送 TLP。下一步应保留此寄存器快照，继续检查
+Root Port 所在插槽的 PERST# 释放时刻、参考时钟有效时刻与其 LTSSM 从 Detect.Active
+进入 Polling 的条件；不重复验证已经由官方 XDMA Gen3 x1 证明正常的物理链路。
