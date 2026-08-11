@@ -6,8 +6,21 @@ set ila_pipe_only [expr {$ila_debug && [info exists ::env(K11B2_ILA_PIPE_ONLY)] 
                          $::env(K11B2_ILA_PIPE_ONLY) eq "1"}]
 set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
                         $::env(G2_GEN1_ONLY) eq "1"}]
+set g7_rx_p0_quiet [expr {[info exists ::env(G7_RX_P0_QUIET)] &&
+                          $::env(G7_RX_P0_QUIET) eq "1"}]
+set g8_fast_detect [expr {[info exists ::env(G8_FAST_DETECT)] &&
+                          $::env(G8_FAST_DETECT) eq "1"}]
 if {$ila_debug && $g2_gen1_only} {
   error "G2 Gen1/CPLL诊断构建不支持ILA模式"
+}
+if {$g7_rx_p0_quiet && !$ila_debug} {
+  error "G7 Detect.Quiet P0诊断必须启用K11B2_ILA_DEBUG"
+}
+if {$g8_fast_detect && !$ila_debug} {
+  error "G8快速首次Detect诊断必须启用K11B2_ILA_DEBUG"
+}
+if {$g7_rx_p0_quiet && $g8_fast_detect} {
+  error "G7与G8必须单变量A/B，不能同时启用"
 }
 set ila_resume  [expr {$ila_debug && [info exists ::env(K11B2_ILA_RESUME)] &&
                        $::env(K11B2_ILA_RESUME) eq "1"}]
@@ -16,7 +29,9 @@ set phy_ip_root [file join $script_dir \
                   [expr {$g2_gen1_only ? "ip_g2_gen1" : "ip"}]]
 set build_dir   [file join $script_dir \
                   [expr {$g2_gen1_only ? "build_g2_gen1" :
-                         ($ila_debug ? "build_k11b2_ila" : "build_k11b2")}] impl]
+                         ($g7_rx_p0_quiet ? "build_g7_rxp0_ila" :
+                         ($g8_fast_detect ? "build_g8_fast_detect_ila" :
+                         ($ila_debug ? "build_k11b2_ila" : "build_k11b2")))}] impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
 set afifo_path  /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
 set part_name   xcku040-ffva1156-2-e
@@ -65,7 +80,16 @@ foreach f $sv_files { read_verilog -sv [file join $project_dir $f] }
 read_xdc [file join $script_dir k03_gen1_ltssm_mac.xdc]
 
 if {$ila_debug} {
-  synth_design -top $top_name -part $part_name -generic K11B2_ILA_DEBUG=1
+  if {$g7_rx_p0_quiet} {
+    synth_design -top $top_name -part $part_name \
+      -generic K11B2_ILA_DEBUG=1 -generic G7_RX_P0_QUIET=1
+  } elseif {$g8_fast_detect} {
+    # 250 MHz PIPE时钟下25,000周期约100 us，只验证首次Detect启动竞态。
+    synth_design -top $top_name -part $part_name \
+      -generic K11B2_ILA_DEBUG=1 -generic DETECT_QUIET_CYCLES=25000
+  } else {
+    synth_design -top $top_name -part $part_name -generic K11B2_ILA_DEBUG=1
+  }
   write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
 } else {
   synth_design -top $top_name -part $part_name
@@ -104,6 +128,16 @@ if {$ila_debug} {
     }
     set_property MARK_DEBUG TRUE $result
     return $result
+  }
+  proc phy_boundary_net_first {regexp_patterns} {
+    foreach regexp_pattern $regexp_patterns {
+      set result [get_nets -hierarchical -quiet -regexp $regexp_pattern]
+      if {[llength $result] == 1} {
+        set_property MARK_DEBUG TRUE $result
+        return $result
+      }
+    }
+    error "K11-B4 PHY诊断网候选均不存在或不唯一：$regexp_patterns"
   }
   proc phy_boundary_bus {regexp_pattern expected_width} {
     set result [lsort -dictionary [get_nets -hierarchical -quiet -regexp $regexp_pattern]]
@@ -147,7 +181,9 @@ if {$ila_debug} {
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_n_pipe] \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_rise_pipe] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/pipe_rst_n$}] \
-    [phy_boundary_net {^u_endpoint/phy_txdata_valid$}] \
+    [phy_boundary_net_first [list \
+      {^u_endpoint/phy_txdata_valid$} \
+      {^u_endpoint/u_phy_wrapper/phy_txdata_valid$}]] \
     [phy_boundary_net {^u_endpoint/phy_txelecidle$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/txresetdone_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/gtpowergood_out\[0\]$}] \
@@ -330,6 +366,8 @@ puts $summary_file "WNS=$wns"
 puts $summary_file "ILA_DEBUG=$ila_debug"
 puts $summary_file "ILA_PIPE_ONLY=$ila_pipe_only"
 puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
+puts $summary_file "G7_RX_P0_QUIET=$g7_rx_p0_quiet"
+puts $summary_file "G8_FAST_DETECT=$g8_fast_detect"
 puts $summary_file "PHY_MODULE=$phy_module"
 puts $summary_file "TIMING_POLICY=[expr {$ila_debug ? "DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED" : "WNS_GE_0_REQUIRED"}]"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"

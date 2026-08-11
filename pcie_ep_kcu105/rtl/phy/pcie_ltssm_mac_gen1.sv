@@ -8,7 +8,10 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer TRAIN_TIMEOUT_CYCLES  = 6_000_000,
     parameter integer HOT_RESET_CYCLES      = 250_000,
     parameter integer TX_BUFFER_BYTES       = 160,
-    parameter integer K11B2_ILA_DEBUG      = 0
+    parameter integer K11B2_ILA_DEBUG       = 0,
+    // G7仅用于上板A/B：Detect.Quiet保持P0，让Root Port在首次Detect前
+    // 有完整窗口观察Endpoint接收终端；Detect.Active仍切到P1执行本端Detect。
+    parameter integer G7_RX_P0_QUIET        = 0
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -367,8 +370,9 @@ module pcie_ltssm_mac_gen1 #(
     assign phy_rxpolarity     = 1'b0;
     // Receiver Detect必须在P1执行；Detect成功后的PHY_POWERUP已请求P0，
     // 但在第二个PhyStatus到达前仍保持TX Electrical Idle且不提交数据。
-    assign phy_powerdown      = ((ltssm_state == DETECT_QUIET) ||
-                                 (ltssm_state == DETECT_ACTIVE)) ? 2'b10 : 2'b00;
+    assign phy_powerdown      = (ltssm_state == DETECT_ACTIVE) ? 2'b10 :
+                                ((ltssm_state == DETECT_QUIET) &&
+                                 (G7_RX_P0_QUIET == 0)) ? 2'b10 : 2'b00;
     assign phy_rate           = 2'b00;
     assign phy_txmargin       = 3'b000;
     assign phy_txswing        = 1'b0;

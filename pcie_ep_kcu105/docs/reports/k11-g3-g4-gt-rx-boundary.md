@@ -1,8 +1,8 @@
-# K11 G3/G4/G5 GT 接收边界验证报告
+# K11 G3～G8 GT 接收边界验证报告
 
 日期：2026-08-11
 
-状态：**G3/G4/G5完成；物理通道和GT RX配置已排除，问题收敛到Standalone未促使Root Port发送训练序列**
+状态：**G3～G8完成；Standalone数据链路可在热接管条件进入L0，冷启动首次双向Detect仍失败**
 
 ## 1. 验证目的
 
@@ -140,9 +140,69 @@ XDMA成功时，对端电气活动先到达（`RXELECIDLE 1→0`），约95个`u
 `RXVALID=1`。这些动态RX控制与Standalone进入Polling.Active后的控制值一致；唯一实质差异是
 Standalone始终收不到前面的对端电气活动。
 
-## 8. 结论与下一步
+## 8. G6：XDMA建链后的Standalone热接管
 
-G3/G4/G5排除：
+在XDMA已完成Gen3 x1建链且主机不重启的状态下，直接通过JTAG下载当前Standalone镜像。
+Root Port自动恢复为Gen1 x1，直接配置空间读取返回：
+
+```text
+setpci -s 01:00.0 0.l = e0011234
+LnkSta = 2.5 GT/s x1, Train-, DLActive+
+```
+
+移除旧XDMA设备节点并rescan后，Linux重新枚举为`1234:e001`，证明不是缓存假阳性。随后对
+Root Port执行Link Disable/Enable，Standalone再次恢复L0。链路退出ILA记录：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_232539_g6_link_disable.csv
+L0(0x0a) -> Recovery.RcvrLock(0x0b)
+RXELECIDLE变高，RXPD保持P0，GT RXRESETDONE保持1
+```
+
+但保持同一Standalone镜像重启主机后，链路再次停在`Train+ / DLActive-`。在该失败状态下
+强制Root Port D0并执行Link Disable/Enable与rescan仍不能恢复。由此确认：
+
+- Standalone的训练、配置、L0和Recovery路径具备实板工作能力；
+- 成功依赖Root Port此前已经被XDMA带入L0，问题位于冷启动首次双向Detect阶段；
+- 仅靠主机D0、软件Retrain或Link Toggle不能替代该初始条件。
+
+## 9. G7：Detect.Quiet接收P0 A/B
+
+增加默认关闭的`G7_RX_P0_QUIET`诊断参数，使Detect.Quiet保持P0，仅在本端
+Detect.Active时进入P1。构建WNS为`-0.035 ns`，仅作为诊断镜像；lint和10组LTSSM
+Verilator回归通过。冷启动结果仍为`Train+ / DLActive-`，采样为：
+
+```text
+fpga/kcu105/build_g7_rxp0_ila/capture/20260811_234157_u_ila_pipe.csv
+RXPD values = {P0, P1}
+GT RXRESETDONE = 4096/4096
+GT RXVALID = 0/4096
+GT RXELECIDLE=0 = 0/4096
+最终状态 = Polling.Active
+```
+
+因此Root Port首次不发训练序列不能由“Standalone在Detect.Quiet保持P1”单独解释。
+
+## 10. G8：首次Detect提前A/B
+
+增加默认关闭的`G8_FAST_DETECT`诊断构建，把首次Detect.Quiet从默认1,500,000个PIPE周期
+缩短到25,000周期（约100 us），其余PHY/LTSSM行为不变。该重布线诊断镜像WNS为
+`-0.184 ns`，DRC Error/Critical为0，不作为正式时序验收。冷启动仍未枚举：
+
+```text
+Root Port PMCSR = 0103 (D3hot)
+Root Port LnkSta = 1811 (Train+, DLActive-)
+fpga/kcu105/build_g8_fast_detect_ila/capture/20260811_235523_u_ila_pipe.csv
+最终状态 = Polling.Active，GT RXVALID=0，GT RX始终Electrical Idle
+```
+
+首次Detect提前到100 us仍无效，排除默认Detect.Quiet计数过长这一单因素。额外检查确认
+Standalone与XDMA的`TERM_RCAL_CFG`和`TERM_RCAL_OVRD`完全一致，GTHE3也没有可动态控制的
+`*TERM*`输入端口。
+
+## 11. 结论与下一步
+
+G3～G8排除：
 
 - GT RX复位未完成；
 - GT RX在接收数据但被Standalone PHY后处理屏蔽；
@@ -150,10 +210,11 @@ G3/G4/G5排除：
 - Standalone与成功XDMA在RX模拟/终端静态属性上存在关键差异。
 - 板级Lane、物理引脚、极性、REFCLK、PERST#或Root Port失效。
 - 当前失败是近期源码提交造成的确定性回归。
+- Detect.Quiet使用P1或首次Detect启动过晚这两个单因素。
 
-剩余现象是：Standalone完成对Root Port的Receiver Detect并发送TS1，但Root Port方向始终为
-Electrical Idle；XDMA则能促使Root Port发出训练序列。下一步执行G6，直接验证Root Port是否
-检测到Standalone RX终端：下载Standalone后，不先改RTL，依次做Root Port Secondary Bus Reset、
-Link Disable/Enable和总线rescan，并同步触发`RXELECIDLE`下降沿。若热重训能进入L0，问题属于
-上电/首次Detect时序；若仍无电气活动，则进一步对比Standalone与XDMA的TX Detect/终端呈现时序，
-而不是回到物理引脚检查。
+最关键的新证据是：Standalone本身可以完成L0、配置空间访问及Recovery，但只有在XDMA先建立
+链路后热接管才能成功。下一步不再改DLL/TLP，也不复查物理引脚；应把G9限定为首次双向Detect
+的模拟边界验证：使用示波器或PCIe一致性夹具比较冷启动时Standalone与XDMA的接收端终端呈现、
+Root Port TX Receiver Detect波形和Endpoint TX共模/电气空闲退出。若必须继续纯数字A/B，则从
+XDMA成功镜像逐步替换为Standalone PHY控制，保留XDMA的上电/GT初始化序列，找出使Root Port
+开始发TS1的最小差异。

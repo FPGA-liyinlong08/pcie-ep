@@ -3,7 +3,9 @@
 
 // K11-B2 KCU105板级封装。完整状态保留在生产顶层内部，板级仅导出已冻结管脚。
 module kcu105_pcie_ep_gen1_board_top #(
-    parameter integer K11B2_ILA_DEBUG = 0
+    parameter integer K11B2_ILA_DEBUG = 0,
+    parameter integer G7_RX_P0_QUIET  = 0,
+    parameter integer DETECT_QUIET_CYCLES = 1_500_000
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -27,7 +29,9 @@ module kcu105_pcie_ep_gen1_board_top #(
     wire [7:0]  cdc_errors;
 
     kcu105_pcie_ep_gen1_top #(
-        .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)
+        .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
+        .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
+        .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),
         .pcie_refclk_n(pcie_refclk_n),

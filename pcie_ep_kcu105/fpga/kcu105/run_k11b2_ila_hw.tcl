@@ -1,6 +1,14 @@
 set script_dir  [file dirname [file normalize [info script]]]
-set impl_dir    [file join $script_dir build_k11b2_ila impl]
-set capture_dir [file join $script_dir build_k11b2_ila capture]
+set g7_rx_p0_quiet [expr {[info exists ::env(G7_RX_P0_QUIET)] &&
+                          $::env(G7_RX_P0_QUIET) eq "1"}]
+set g8_fast_detect [expr {[info exists ::env(G8_FAST_DETECT)] &&
+                          $::env(G8_FAST_DETECT) eq "1"}]
+if {$g7_rx_p0_quiet && $g8_fast_detect} { error "G7与G8不能同时启用" }
+set build_name  [expr {$g7_rx_p0_quiet ? "build_g7_rxp0_ila" :
+                       ($g8_fast_detect ? "build_g8_fast_detect_ila" :
+                                         "build_k11b2_ila")}]
+set impl_dir    [file join $script_dir $build_name impl]
+set capture_dir [file join $script_dir $build_name capture]
 set bit_path    [file join $impl_dir k11b2_gen1_endpoint_ila.bit]
 set ltx_path    [file join $impl_dir k11b2_gen1_endpoint_ila.ltx]
 
