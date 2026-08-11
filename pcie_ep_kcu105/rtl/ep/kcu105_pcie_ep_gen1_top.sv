@@ -115,14 +115,28 @@ module kcu105_pcie_ep_gen1_top #(
         // 原始异步复位直接接到 TX/PIPE 时钟域调试核而制造 CDC-1。
         (* mark_debug = "true", keep = "true" *)
         reg [1:0] dbg_perst_sync;
+        (* mark_debug = "true", keep = "true" *)
+        reg dbg_perst_sync_d;
+        (* mark_debug = "true", keep = "true" *)
+        reg dbg_phystatus_rst_d;
         always @(posedge phy_pclk or negedge pcie_perst_n) begin
-            if (!pcie_perst_n)
+            if (!pcie_perst_n) begin
                 dbg_perst_sync <= 2'b00;
-            else
+            end else begin
                 dbg_perst_sync <= {dbg_perst_sync[0], 1'b1};
+            end
         end
+        // 仅用于生成PERST#释放事件；不使用异步复位，避免调试寄存器制造CDC-7。
+        always @(posedge phy_pclk)
+            dbg_perst_sync_d <= dbg_perst_sync[1];
+        always @(posedge phy_pclk)
+            dbg_phystatus_rst_d <= phy_phystatus_rst;
         (* mark_debug = "true", keep = "true" *)
         wire dbg_perst_n_pipe = dbg_perst_sync[1];
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_perst_rise_pipe = dbg_perst_sync[1] && !dbg_perst_sync_d;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_phystatus_rst_fall_pipe = dbg_phystatus_rst_d && !phy_phystatus_rst;
         (* mark_debug = "true", keep = "true" *)
         wire [63:0] dbg_pipe_top = {
             13'd0,

@@ -455,7 +455,7 @@ Lane 0物理收发路径均可工作。本阶段探针只验证自研RTL与stand
 | 6 | GT `qpll1lock` | 确认发送PLL锁定 |
 | 7 | GT `pciesynctxsyncdone` | 确认PCIe TX同步完成 |
 | 8 | GT `txelecidle_in` | 观察PHY送入GT的电气空闲控制 |
-| 9 | GT `pcierategen3` | 观察PHY速率控制状态 |
+| 9 | `dbg_phystatus_rst_fall_pipe` | 捕获PHY状态复位撤销单周期事件（早期镜像此位曾为GT `pcierategen3`） |
 
 诊断构建结果：
 
@@ -568,3 +568,24 @@ QPLL lock按PHY复位流程撤销；没有出现PERST#低电平期间继续提�
 只覆盖下降沿，尚未覆盖主机释放PERST#后的上升沿和复位释放延迟；下一步在主机仍保持
 PERST#低电平时Arm上升沿触发，再自动等待主机启动，以测量`PERST#↑ → pipe_rst_n↑ →
 txresetdone↑ → TS1`的相对顺序。
+### 11.5 PHY状态复位撤销与PIPE复位释放（2026-08-11 17:13:24）
+
+使用`program-arm-phy-reset-release`触发`dbg_phystatus_rst_fall_pipe`，捕获文件：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_171324_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_171324_u_ila_core.csv
+```
+
+关键时序（`phy_pclk`采样）：
+
+| 采样点 | `phy_phystatus_rst` | `dbg_phystatus_rst_fall` | `pipe_rst_n` | `txresetdone` | `qpll1lock` | `pciesynctxsyncdone` | TX数据 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1023 | 1 | 0 | 0 | 1 | 1 | 1 | 无 |
+| 1024 | 0 | 1 | 0 | 1 | 1 | 1 | 无 |
+| 1028 | 0 | 0 | 1 | 1 | 1 | 1 | 无 |
+
+结论：PHY状态复位在触发点撤销，4个`phy_pclk`周期后PIPE复位同步释放，GT TX相关状态
+均已准备好；该复位链路本身没有卡死。释放后的约49 µs窗口内尚未出现TX数据，说明
+LTSSM仍需要后续初始化时间，不能把“复位释放后立即无TS1”判为PHY故障。后续应使用
+`DETECT_ACTIVE`触发继续观察复位释放后的LTSSM进入和TS1启动时间。

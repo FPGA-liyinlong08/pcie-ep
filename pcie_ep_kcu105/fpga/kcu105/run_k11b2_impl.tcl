@@ -121,11 +121,12 @@ if {$ila_debug} {
   add_ila_probe u_ila_pipe 5 \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_phy_rxidle_conflict]
   # probe6 位序（由低到高对应列表顺序）：
-  # 同步后的PERST#、PIPE_RST_N、PHY TX_VALID、PHY TX_ELECIDLE、
+  # 同步后的PERST#、PERST#上升沿脉冲、PIPE_RST_N、PHY TX_VALID、PHY TX_ELECIDLE、
   # GT TXRESETDONE、GT POWERGOOD、QPLL1LOCK、PCIe TX sync done、
-  # GT 侧 TXELECIDLE 输入、GT PCIE RATE GEN3。
+  # GT 侧 TXELECIDLE 输入、PHY状态复位撤销事件。
   set phy_probe_nets [list \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_n_pipe] \
+    [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_rise_pipe] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/pipe_rst_n$}] \
     [phy_boundary_net {^u_endpoint/phy_txdata_valid$}] \
     [phy_boundary_net {^u_endpoint/phy_txelecidle$}] \
@@ -134,7 +135,7 @@ if {$ila_debug} {
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/qpll1lock_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pciesynctxsyncdone_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/txelecidle_in\[0\]$}] \
-    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierategen3_out\[0\]$}]]
+    [debug_scalar_net u_endpoint/g_ila_debug/dbg_phystatus_rst_fall_pipe]]
   add_ila_probe u_ila_pipe 6 $phy_probe_nets
 
   create_debug_core u_ila_core ila
@@ -153,7 +154,7 @@ if {$ila_debug} {
   add_ila_probe u_ila_core 3 \
     [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
 
-  puts "K11B4_ILA_INSERT_PASS pipe_width=461 core_width=450 depth=4096"
+  puts "K11B4_ILA_INSERT_PASS pipe_width=462 core_width=450 depth=4096"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]
