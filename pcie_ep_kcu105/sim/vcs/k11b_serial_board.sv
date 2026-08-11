@@ -45,6 +45,7 @@ module board;
     reg [5:0] last_ep_state;
     integer stable_count;
     reg seen_detect;
+    reg seen_phy_powerup;
     reg seen_polling;
     reg seen_configuration;
     integer rp_tx_edge_count [0:7];
@@ -110,6 +111,7 @@ module board;
         last_ep_state = 6'h3f;
         stable_count = 0;
         seen_detect = 1'b0;
+        seen_phy_powerup = 1'b0;
         seen_polling = 1'b0;
         seen_configuration = 1'b0;
         ep_tx_edge_count = 0;
@@ -149,6 +151,18 @@ module board;
 
             if (EP.DUT.ltssm_state <= 6'd1)
                 seen_detect <= 1'b1;
+            if (EP.DUT.ltssm_state == 6'd15) begin
+                seen_phy_powerup <= 1'b1;
+                if ((EP.DUT.phy_powerdown !== 2'b00) ||
+                    (EP.DUT.phy_txdetectrx !== 1'b0) ||
+                    (EP.DUT.phy_txelecidle !== 1'b1) ||
+                    (EP.DUT.phy_txdata_valid !== 1'b0)) begin
+                    $display("K11B_VCS_PHY_CONTRACT_FAIL reason=bad_p0_wait powerdown=%0b txdetect=%0d txidle=%0d txvalid=%0d",
+                             EP.DUT.phy_powerdown, EP.DUT.phy_txdetectrx,
+                             EP.DUT.phy_txelecidle, EP.DUT.phy_txdata_valid);
+                    $fatal(1);
+                end
+            end
             if ((EP.DUT.ltssm_state == 6'd2) || (EP.DUT.ltssm_state == 6'd3))
                 seen_polling <= 1'b1;
             if ((EP.DUT.ltssm_state >= 6'd4) && (EP.DUT.ltssm_state <= 6'd9))
@@ -164,9 +178,11 @@ module board;
 
             if (!disconnect_lane0 && !b2_active &&
                 (stable_count == STABLE_PCLK_CYCLES-1)) begin
-                if (!seen_detect || !seen_polling || !seen_configuration) begin
-                    $display("K11B_VCS_GEN1_L0_FAIL reason=missing_state_coverage detect=%0d polling=%0d config=%0d",
-                             seen_detect, seen_polling, seen_configuration);
+                if (!seen_detect || !seen_phy_powerup || !seen_polling ||
+                    !seen_configuration) begin
+                    $display("K11B_VCS_GEN1_L0_FAIL reason=missing_state_coverage detect=%0d powerup=%0d polling=%0d config=%0d",
+                             seen_detect, seen_phy_powerup, seen_polling,
+                             seen_configuration);
                     $fatal(1);
                 end
                 if ((EP.DUT.negotiated_width !== 3'd1) ||

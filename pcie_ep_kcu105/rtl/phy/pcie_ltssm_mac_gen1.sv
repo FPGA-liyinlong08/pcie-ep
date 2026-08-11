@@ -88,6 +88,9 @@ module pcie_ltssm_mac_gen1 #(
     localparam [5:0] RECOVERY_RCVRCFG     = 6'd12;
     localparam [5:0] RECOVERY_IDLE        = 6'd13;
     localparam [5:0] HOT_RESET            = 6'd14;
+    // standalone PHY适配子状态：Receiver Detect在P1完成后，MAC先请求P0，
+    // 并等待一次独立PhyStatus完成脉冲，之后才进入PCIe Polling.Active发TS1。
+    localparam [5:0] PHY_POWERUP           = 6'd15;
 
     localparam [31:0] DETECT_QUIET_LIMIT   = DETECT_QUIET_CYCLES - 1;
     localparam [31:0] DETECT_TIMEOUT_LIMIT = DETECT_TIMEOUT_CYCLES - 1;
@@ -320,7 +323,7 @@ module pcie_ltssm_mac_gen1 #(
         tx_os_enable   = 1'b1;
         tx_os_training_control = 8'h00;
         case (ltssm_state)
-            DETECT_QUIET, DETECT_ACTIVE: begin
+            DETECT_QUIET, DETECT_ACTIVE, PHY_POWERUP: begin
                 tx_os_enable   = 1'b0;
                 tx_os_link_pad = 1'b1;
                 tx_os_lane_pad = 1'b1;
@@ -358,10 +361,14 @@ module pcie_ltssm_mac_gen1 #(
     assign phy_txsync_header  = 2'b00;
     assign phy_txdetectrx     = (ltssm_state == DETECT_ACTIVE);
     assign phy_txelecidle     = (ltssm_state == DETECT_QUIET) ||
-                                (ltssm_state == DETECT_ACTIVE);
+                                (ltssm_state == DETECT_ACTIVE) ||
+                                (ltssm_state == PHY_POWERUP);
     assign phy_txcompliance   = 1'b0;
     assign phy_rxpolarity     = 1'b0;
-    assign phy_powerdown      = phy_txelecidle ? 2'b10 : 2'b00;
+    // Receiver Detect必须在P1执行；Detect成功后的PHY_POWERUP已请求P0，
+    // 但在第二个PhyStatus到达前仍保持TX Electrical Idle且不提交数据。
+    assign phy_powerdown      = ((ltssm_state == DETECT_QUIET) ||
+                                 (ltssm_state == DETECT_ACTIVE)) ? 2'b10 : 2'b00;
     assign phy_rate           = 2'b00;
     assign phy_txmargin       = 3'b000;
     assign phy_txswing        = 1'b0;
@@ -422,11 +429,24 @@ module pcie_ltssm_mac_gen1 #(
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
                             if (phy_rxstatus == 3'b011) begin
-                                ltssm_state <= POLLING_ACTIVE;
+                                ltssm_state <= PHY_POWERUP;
                             end else begin
                                 ltssm_state <= DETECT_QUIET;
                                 training_error_count <= sat_inc32(training_error_count);
                             end
+                        end else if (state_timer >= DETECT_TIMEOUT_LIMIT) begin
+                            ltssm_state <= DETECT_QUIET;
+                            state_timer <= 32'd0;
+                            timeout_count <= sat_inc32(timeout_count);
+                        end else begin
+                            state_timer <= state_timer + 1'b1;
+                        end
+                    end
+                    PHY_POWERUP: begin
+                        rx_ts_count <= 5'd0;
+                        if (phy_phystatus) begin
+                            ltssm_state <= POLLING_ACTIVE;
+                            state_timer <= 32'd0;
                         end else if (state_timer >= DETECT_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;

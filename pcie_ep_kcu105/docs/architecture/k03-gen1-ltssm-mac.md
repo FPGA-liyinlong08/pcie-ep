@@ -90,7 +90,7 @@ flowchart LR
 冻结状态顺序如下：
 
 ```text
-Detect.Quiet → Detect.Active → Polling.Active → Polling.Configuration
+Detect.Quiet → Detect.Active → PHY.PowerUp → Polling.Active → Polling.Configuration
  → Configuration.Linkwidth.Start → Configuration.Linkwidth.Accept
  → Configuration.Lanenum.Wait → Configuration.Lanenum.Accept
  → Configuration.Complete → Configuration.Idle → L0
@@ -101,7 +101,9 @@ L0 --HotResetReq--> HotReset → Detect.Quiet
 ```
 
 - Detect.Quiet 在 P1/Electrical Idle 等待，Detect.Active 拉高 `phy_txdetectrx`，直到
-  `phy_phystatus`；仅 `phy_rxstatus=3'b011` 视为 Receiver Present；
+  Receiver Detect 的 `phy_phystatus`；仅 `phy_rxstatus=3'b011` 视为 Receiver Present；
+- Detect 成功后进入 PHY.PowerUp，请求 P0 但继续保持 TX Electrical Idle；等待
+  Power 操作的第二个、独立 `phy_phystatus` 后才进入 Polling.Active 发 TS1；
 - Polling.Active 连续接收 8 个 PAD/PAD TS1 后进入 Polling.Configuration；
 - Polling.Configuration 连续接收 8 个 PAD/PAD TS2 后进入 Configuration；
 - Linkwidth.Start 捕获非 PAD Link Number；本 Endpoint 只接受 Lane 0；

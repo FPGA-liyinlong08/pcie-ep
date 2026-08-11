@@ -7,7 +7,14 @@ vcs_home="${VCS_HOME:-/home/synopsys/vcs-mx/O-2018.09-SP2}"
 vivado_home="${VIVADO_HOME:-/home/Xilinx/Vivado/2021.2}"
 simlib_dir="${XILINX_VCS_SIMLIB:-/home/wx/Documents/vcs_compile_simlib}"
 rp_dir="${K11B_RP_IMPORTS:-/home/wx/Documents/XDMA/xdma_dec_250922/imports}"
-ip_dir="${project_dir}/fpga/kcu105/ip/pcie_phy_x1_gen3"
+g2_gen1_only="${G2_GEN1_ONLY:-0}"
+if [[ "${g2_gen1_only}" == "1" ]]; then
+    phy_ip_root="ip_g2_gen1"
+else
+    phy_ip_root="ip"
+fi
+phy_name="pcie_phy_x1_gen3"
+ip_dir="${project_dir}/fpga/kcu105/${phy_ip_root}/${phy_name}"
 license_timeout="${VCS_LICENSE_TIMEOUT:-300}"
 simulation_timeout="${K11B_SIM_TIMEOUT:-900}"
 b2_mode="${K11B2_MODE:-0}"
@@ -23,8 +30,8 @@ export VCS_ARCH_OVERRIDE=linux
 
 cd "${script_dir}"
 ./check_env.sh
-test -s "${ip_dir}/pcie_phy_x1_gen3.xci"
-test -s "${ip_dir}/sim/pcie_phy_x1_gen3.v"
+test -s "${ip_dir}/${phy_name}.xci"
+test -s "${ip_dir}/sim/${phy_name}.v"
 test -s "${rp_dir}/pcie3_uscale_rp_core_top.v"
 test -s "${rp_dir}/pcie3_uscale_rp_top.v"
 test -s "${afifo}"
@@ -37,26 +44,33 @@ printf 'WORK > DEFAULT\nDEFAULT : %s\nxil_defaultlib : %s\nOTHERS=%s/synopsys_si
     > "${setup_file}"
 export SYNOPSYS_SIM_SETUP="${setup_file}"
 
+gt_common_files=()
+if [[ "${g2_gen1_only}" != "1" ]]; then
+    gt_common_files+=(
+        "${ip_dir}/ip_0/sim/gtwizard_ultrascale_v1_7_gthe3_common.v"
+        "${ip_dir}/ip_0/sim/${phy_name}_gt_gthe3_common_wrapper.v"
+    )
+fi
+
 "${vcs_home}/bin/vlogan" -full64 +v2k -work xil_defaultlib \
     "${ip_dir}/ip_0/sim/gtwizard_ultrascale_v1_7_gthe3_channel.v" \
-    "${ip_dir}/ip_0/sim/pcie_phy_x1_gen3_gt_gthe3_channel_wrapper.v" \
-    "${ip_dir}/ip_0/sim/gtwizard_ultrascale_v1_7_gthe3_common.v" \
-    "${ip_dir}/ip_0/sim/pcie_phy_x1_gen3_gt_gthe3_common_wrapper.v" \
-    "${ip_dir}/ip_0/sim/pcie_phy_x1_gen3_gt_gtwizard_gthe3.v" \
-    "${ip_dir}/ip_0/sim/pcie_phy_x1_gen3_gt_gtwizard_top.v" \
-    "${ip_dir}/ip_0/sim/pcie_phy_x1_gen3_gt.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_sync_cell.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_sync.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_phy_ff_chain.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_phy_pipeline.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_us_gt_phy_wrapper.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_us_gt_phy_clk.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_us_gt_phy_rst.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_us_gt_phy_txeq.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_us_gt_phy_rxeq.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_gtwizard_top.v" \
-    "${ip_dir}/source/pcie_phy_x1_gen3_core_top.v" \
-    "${ip_dir}/sim/pcie_phy_x1_gen3.v" \
+    "${ip_dir}/ip_0/sim/${phy_name}_gt_gthe3_channel_wrapper.v" \
+    "${gt_common_files[@]}" \
+    "${ip_dir}/ip_0/sim/${phy_name}_gt_gtwizard_gthe3.v" \
+    "${ip_dir}/ip_0/sim/${phy_name}_gt_gtwizard_top.v" \
+    "${ip_dir}/ip_0/sim/${phy_name}_gt.v" \
+    "${ip_dir}/source/${phy_name}_sync_cell.v" \
+    "${ip_dir}/source/${phy_name}_sync.v" \
+    "${ip_dir}/source/${phy_name}_phy_ff_chain.v" \
+    "${ip_dir}/source/${phy_name}_phy_pipeline.v" \
+    "${ip_dir}/source/${phy_name}_us_gt_phy_wrapper.v" \
+    "${ip_dir}/source/${phy_name}_us_gt_phy_clk.v" \
+    "${ip_dir}/source/${phy_name}_us_gt_phy_rst.v" \
+    "${ip_dir}/source/${phy_name}_us_gt_phy_txeq.v" \
+    "${ip_dir}/source/${phy_name}_us_gt_phy_rxeq.v" \
+    "${ip_dir}/source/${phy_name}_gtwizard_top.v" \
+    "${ip_dir}/source/${phy_name}_core_top.v" \
+    "${ip_dir}/sim/${phy_name}.v" \
     -l build/k11b_ep_phy_vlogan.log
 
 "${vcs_home}/bin/vlogan" -full64 +v2k -work xil_defaultlib \

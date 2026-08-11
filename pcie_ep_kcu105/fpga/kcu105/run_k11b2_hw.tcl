@@ -10,13 +10,17 @@ if {[llength $argv] >= 1} {
 if {[llength $argv] >= 2} {
     set action [lindex $argv 1]
 }
-if {$action ni {probe program program-debug}} {
-    error "K11-B2 Hardware action必须为probe、program或program-debug"
+if {$action ni {probe program program-debug program-g2-gen1}} {
+    error "K11-B2 Hardware action必须为probe、program、program-debug或program-g2-gen1"
 }
 
 if {$action eq "program-debug"} {
     set bit_path [file join $script_dir build_k11b2 impl \
                       k11b2_gen1_endpoint_debug.bit]
+}
+if {$action eq "program-g2-gen1"} {
+    set bit_path [file join $script_dir build_g2_gen1 impl \
+                      g2_gen1_cpll_endpoint.bit]
 }
 
 file mkdir $build_dir
@@ -36,7 +40,7 @@ if {[llength $ku040_devices] != 1} {
 }
 set ku040 [lindex $ku040_devices 0]
 
-if {$action in {program program-debug}} {
+if {$action in {program program-debug program-g2-gen1}} {
     if {![file exists $bit_path]} {
         error "K11-B2 bitstream不存在：$bit_path"
     }

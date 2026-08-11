@@ -2,11 +2,20 @@ set script_dir  [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
 set ila_debug   [expr {[info exists ::env(K11B2_ILA_DEBUG)] &&
                        $::env(K11B2_ILA_DEBUG) eq "1"}]
+set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
+                        $::env(G2_GEN1_ONLY) eq "1"}]
+if {$ila_debug && $g2_gen1_only} {
+  error "G2 Gen1/CPLL诊断构建不支持ILA模式"
+}
 set ila_resume  [expr {$ila_debug && [info exists ::env(K11B2_ILA_RESUME)] &&
                        $::env(K11B2_ILA_RESUME) eq "1"}]
+set phy_module  pcie_phy_x1_gen3
+set phy_ip_root [file join $script_dir \
+                  [expr {$g2_gen1_only ? "ip_g2_gen1" : "ip"}]]
 set build_dir   [file join $script_dir \
-                  [expr {$ila_debug ? "build_k11b2_ila" : "build_k11b2"}] impl]
-set xci_path    [file join $script_dir ip pcie_phy_x1_gen3 pcie_phy_x1_gen3.xci]
+                  [expr {$g2_gen1_only ? "build_g2_gen1" :
+                         ($ila_debug ? "build_k11b2_ila" : "build_k11b2")}] impl]
+set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
 set afifo_path  /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
 set part_name   xcku040-ffva1156-2-e
 set top_name    kcu105_pcie_ep_gen1_board_top
@@ -23,10 +32,10 @@ if {![file exists $afifo_path]} { error "缺少冻结afifo依赖：$afifo_path" 
 
 set_part $part_name
 read_ip $xci_path
-generate_target all [get_ips pcie_phy_x1_gen3]
-set ip_dcp [file join $script_dir ip pcie_phy_x1_gen3 pcie_phy_x1_gen3.dcp]
+generate_target all [get_ips $phy_module]
+set ip_dcp [file join $phy_ip_root $phy_module ${phy_module}.dcp]
 if {[file exists $ip_dcp]} { file delete -force $ip_dcp }
-synth_ip -force [get_ips pcie_phy_x1_gen3]
+synth_ip -force [get_ips $phy_module]
 
 read_verilog $afifo_path
 set sv_files [list \
@@ -169,10 +178,10 @@ opt_design
 place_design
 phys_opt_design
 route_design
-if {$ila_debug} {
-  # 调试构建允许负时序，但仍尽量降低ILA对训练路径的扰动。
-  phys_opt_design -directive AggressiveExplore
-}
+# 路由后对正式与ILA构建统一执行进取物理优化。这不改变RTL，
+# 主要收敛MAC TX到GTHE3 TXDATA的跨层长路由；正式构建仍由下方
+# WNS/WHS>=0门禁决定是否生成bitstream。
+phys_opt_design -directive AggressiveExplore
 write_checkpoint -force [file join $build_dir k11b2_routed.dcp]
 report_utilization -file [file join $build_dir utilization_routed.rpt]
 report_timing_summary -delay_type min_max -report_unconstrained \
@@ -200,11 +209,19 @@ require_port_pin pcie_txn AC3
 set gth_channels [get_cells -hierarchical -filter {REF_NAME == GTHE3_CHANNEL}]
 set gth_commons  [get_cells -hierarchical -filter {REF_NAME == GTHE3_COMMON}]
 if {[llength $gth_channels] != 1} { error "K11-B2 GTHE3_CHANNEL数量错误：[llength $gth_channels]" }
-if {[llength $gth_commons] != 1} { error "K11-B2 GTHE3_COMMON数量错误：[llength $gth_commons]" }
 set channel_loc [get_property LOC $gth_channels]
-set common_loc [get_property LOC $gth_commons]
 if {![string equal -nocase $channel_loc GTHE3_CHANNEL_X0Y7]} { error "K11-B2 GT Channel LOC错误：$channel_loc" }
-if {![string equal -nocase $common_loc GTHE3_COMMON_X0Y1]} { error "K11-B2 GT Common LOC错误：$common_loc" }
+if {$g2_gen1_only} {
+  if {[llength $gth_commons] > 1} {
+    error "G2 Gen1/CPLL GTHE3_COMMON数量错误：[llength $gth_commons]"
+  }
+  set common_loc [expr {[llength $gth_commons] == 1 ?
+                        [get_property LOC $gth_commons] : "NONE_CPLL"}]
+} else {
+  if {[llength $gth_commons] != 1} { error "K11-B2 GTHE3_COMMON数量错误：[llength $gth_commons]" }
+  set common_loc [get_property LOC $gth_commons]
+  if {![string equal -nocase $common_loc GTHE3_COMMON_X0Y1]} { error "K11-B2 GT Common LOC错误：$common_loc" }
+}
 
 set hard_pcie_count [llength [get_cells -quiet -hierarchical -filter {
   REF_NAME =~ PCIE* || PRIMITIVE_TYPE =~ ADVANCED.PCIE.*
@@ -246,15 +263,18 @@ if {[regexp -line {^CDC-[0-9]+[ \t]+Critical[ \t]+[1-9][0-9]*} $cdc_text]} {
   error "K11-B2 CDC存在Critical路径"
 }
 
-set bit_name [expr {$ila_debug ? "k11b2_gen1_endpoint_ila.bit" :
-                                  "k11b2_gen1_endpoint.bit"}]
+set bit_name [expr {$g2_gen1_only ? "g2_gen1_cpll_endpoint.bit" :
+                     ($ila_debug ? "k11b2_gen1_endpoint_ila.bit" :
+                                   "k11b2_gen1_endpoint.bit")}]
 write_bitstream -force [file join $build_dir $bit_name]
 if {$ila_debug} {
   write_debug_probes -force [file join $build_dir k11b2_gen1_endpoint_ila.ltx]
 }
 set summary_file [open [file join $build_dir summary.txt] w]
-puts $summary_file [expr {$ila_debug ? "K11B3_ILA_IMPL_PASS" :
-                                      "K11B2_IMPL_PASS"}]
+set pass_marker [expr {$g2_gen1_only ? "G2_GEN1_CPLL_IMPL_PASS" :
+                        ($ila_debug ? "K11B3_ILA_IMPL_PASS" :
+                                      "K11B2_IMPL_PASS")}]
+puts $summary_file $pass_marker
 puts $summary_file "part=$part_name"
 puts $summary_file "top=$top_name"
 puts $summary_file "GTHE3_CHANNEL_LOC=$channel_loc"
@@ -267,7 +287,9 @@ puts $summary_file "BAR_HIERARCHY_COUNT=$bar_count"
 puts $summary_file "DEMO_HIERARCHY_COUNT=$demo_count"
 puts $summary_file "WNS=$wns"
 puts $summary_file "ILA_DEBUG=$ila_debug"
+puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
+puts $summary_file "PHY_MODULE=$phy_module"
 puts $summary_file "TIMING_POLICY=[expr {$ila_debug ? "DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED" : "WNS_GE_0_REQUIRED"}]"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
-puts "[expr {$ila_debug ? "K11B3_ILA_IMPL_PASS" : "K11B2_IMPL_PASS"}] channel=$channel_loc common=$common_loc WNS=$wns"
+puts "$pass_marker channel=$channel_loc common=$common_loc WNS=$wns"

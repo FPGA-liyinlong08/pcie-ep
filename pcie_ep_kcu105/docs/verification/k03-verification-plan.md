@@ -34,7 +34,7 @@ failure；外层脚本只有观察到该失败后才输出 `K03_CHECKER_SELFTEST
 |---|---|---|
 | K03-D001 | 复位安全值 | P1/Electrical Idle、Gen1、无 Packet、状态 Detect.Quiet |
 | K03-D002 | Receiver Detect 成功/失败/超时 | 仅 011 前进；失败或超时返回 Quiet并计数 |
-| K03-D003 | 正常完整训练 | 所有 15 个状态按冻结顺序，最终稳定 L0 |
+| K03-D003 | 正常完整训练 | 所有 16 个状态按冻结顺序，最终稳定 L0 |
 | K03-D004 | 错 TS identifier | 连续计数清零、错误计数增加、不非法跳转 |
 | K03-D005 | Link/Lane 错误 | PAD、错误 Link、Lane!=0 均不被接受 |
 | K03-D006 | Polling/Configuration 超时 | 返回 Detect，timeout 饱和规则正确 |
@@ -50,6 +50,7 @@ failure；外层脚本只有观察到该失败后才输出 `K03_CHECKER_SELFTEST
 | K03-D016 | Logical Idle编码 | Idle必须为两个D0.0数据字符，K28.3不得被接受为Logical Idle |
 | K03-D017 | Gen1扰码 | 已知向量、COM重置、SKP保持、训练旁路和2万拍随机往返一致 |
 | K03-D018 | 真实串行L0 | Xilinx PHY/GT与Root Port双方Gen1 x1 L0稳定1024个pclk |
+| K03-D019 | Detect后P0握手 | Detect成功后请求P0；第二个PhyStatus前保持Electrical Idle且禁止TS1 |
 
 ## 4. 约束随机和错误注入
 
@@ -66,6 +67,8 @@ failure；外层脚本只有观察到该失败后才输出 `K03_CHECKER_SELFTEST
 必须检查：
 
 - 复位或 Detect 时 `txelecidle=1`，K03 永不请求非 Gen1 rate；
+- Receiver Detect 和 P1→P0 转换必须由两个独立 `phy_phystatus` 完成；P0等待期
+  `powerdown=00` 但 `txelecidle=1` 且 `txdata_valid=0`；
 - 状态只能沿冻结有向边跳转；L0 前 `link_up=0`、`tx_pkt_ready=0`；
 - TS 的 COM/PAD K-code 与十个 identifier 的 Data-code 属性正确；COM 低/高
   Symbol 两种布局均被覆盖；

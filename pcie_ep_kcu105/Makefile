@@ -23,11 +23,13 @@
 	k11a-regression k11a-vivado k11a \
 	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vcs-stress k11b2-vivado \
 	k11b2-hw-probe k11b2-hw-program k11b2-hw-program-debug \
+	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
 	k11b2-ila-hw-capture-cfg-wait k11b2-ila-hw-capture-tx-wait \
 	k11b2-ila-hw-capture-cfg-complete-wait \
 	k11b2-ila-hw-program-arm-cfg-complete k11b2-ila-hw-program-arm-detect-active \
+	k11b2-ila-hw-arm-detect-active \
 	k11b2-ila-hw-program-arm-perst k11b2-ila-hw-program-arm-perst-release k11b2-ila-hw-program-arm-phy-reset-release \
 	k11b2-ila-hw-program-arm-linkdown k11b2-ila-hw-capture-linkdown-wait \
 	k11b2-ila-hw-program-arm-rxidle-conflict k11b2-ila-hw-capture-rxidle-conflict-wait \
@@ -262,6 +264,12 @@ k11b2-vcs-stress:
 k11b2-vivado:
 	./fpga/kcu105/run_k11b2_impl.sh
 
+g2-gen1-vcs-serial:
+	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh
+
+g2-gen1-vivado:
+	./fpga/kcu105/run_g2_gen1_impl.sh
+
 k11b2-debug-finalize:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/finalize_k11b2_debug.tcl
@@ -311,6 +319,11 @@ k11b2-ila-hw-program-arm-detect-active:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
 		-tclargs localhost:3122 program-arm-detect-active
+
+k11b2-ila-hw-arm-detect-active:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 arm-detect-active
 
 k11b2-ila-hw-program-arm-perst:
 	$(VIVADO) -mode batch -nojournal -nolog \
@@ -379,6 +392,11 @@ k11b2-hw-program-debug:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_hw.tcl \
 		-tclargs localhost:3122 program-debug
+
+g2-gen1-hw-program:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_hw.tcl \
+		-tclargs localhost:3122 program-g2-gen1
 
 xdma-x1-demo:
 	./fpga/kcu105/xdma_x1_demo/run_xdma_x1_demo.sh

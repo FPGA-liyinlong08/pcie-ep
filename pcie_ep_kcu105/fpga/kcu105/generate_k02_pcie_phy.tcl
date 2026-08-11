@@ -1,16 +1,23 @@
 set script_dir  [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
-set build_dir   [file join $script_dir build_k02]
-set ip_root     [file join $script_dir ip]
-set xci_path    [file join $ip_root pcie_phy_x1_gen3 pcie_phy_x1_gen3.xci]
+set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
+                         $::env(G2_GEN1_ONLY) eq "1"}]
+set module_name pcie_phy_x1_gen3
+set build_dir   [file join $script_dir \
+                  [expr {$g2_gen1_only ? "build_g2_gen1_phy" : "build_k02"}]]
+set ip_root     [file join $script_dir \
+                  [expr {$g2_gen1_only ? "ip_g2_gen1" : "ip"}]]
+set xci_path    [file join $ip_root $module_name ${module_name}.xci]
 set part_name   xcku040-ffva1156-2-e
+set max_speed   [expr {$g2_gen1_only ? "2.5_GT/s" : "8.0_GT/s"}]
+set pll_type    [expr {$g2_gen1_only ? "CPLL" : "QPLL1"}]
 
 file mkdir $build_dir
 file mkdir $ip_root
 
 # 整个 pcie_phy_x1_gen3 目录都是 Tcl 可再生物。先删除旧输出可避免 Vivado
 # 在已有 IP 目录内再次创建同名子目录，保证连续生成的目录层级也确定。
-set ip_module_dir [file join $ip_root pcie_phy_x1_gen3]
+set ip_module_dir [file join $ip_root $module_name]
 if {[file exists $ip_module_dir]} {
     file delete -force $ip_module_dir
 }
@@ -20,24 +27,24 @@ set_property target_language Verilog [current_project]
 set_property simulator_language Mixed [current_project]
 
 create_ip -name pcie_phy -vendor xilinx.com -library ip -version 1.0 \
-    -module_name pcie_phy_x1_gen3 -dir $ip_root
+    -module_name $module_name -dir $ip_root
 
-set phy_ip [get_ips pcie_phy_x1_gen3]
+set phy_ip [get_ips $module_name]
 if {[llength $phy_ip] != 1} {
-    error "K02 无法创建唯一的 pcie_phy_x1_gen3 IP"
+    error "K02/G2 无法创建唯一的 $module_name IP"
 }
 
 # 配置与 KCU105/KU040 K02 架构冻结值保持一一对应。
 set_property -dict [list \
     CONFIG.phy_lane             {X1} \
-    CONFIG.phy_max_speed        {8.0_GT/s} \
+    CONFIG.phy_max_speed        $max_speed \
     CONFIG.phy_refclk_freq      {100_MHz} \
     CONFIG.phy_userclk_freq     {125_MHz} \
     CONFIG.phy_coreclk_freq     {250_MHz} \
     CONFIG.lane0_gt_bank        {GTH_Quad_225} \
     CONFIG.lane0_gt_location    {GTHE3_CHANNEL_X0Y7} \
     CONFIG.refclk1_location     {Bank_225_MGTREFCLK0} \
-    CONFIG.pll_type             {QPLL1} \
+    CONFIG.pll_type             $pll_type \
     CONFIG.pipeline_stages      {0} \
     CONFIG.ins_loss_profile     {Add-in_Card} \
     CONFIG.aspm                 {No_ASPM} \
@@ -51,14 +58,14 @@ set_property -dict [list \
 
 set expected_config [dict create \
     phy_lane             X1 \
-    phy_max_speed        8.0_GT/s \
+    phy_max_speed        $max_speed \
     phy_refclk_freq      100_MHz \
     phy_userclk_freq     125_MHz \
     phy_coreclk_freq     250_MHz \
     lane0_gt_bank        GTH_Quad_225 \
     lane0_gt_location    GTHE3_CHANNEL_X0Y7 \
     refclk1_location     Bank_225_MGTREFCLK0 \
-    pll_type             QPLL1 \
+    pll_type             $pll_type \
     pipeline_stages      0 \
     ins_loss_profile     Add-in_Card \
     aspm                 No_ASPM \
@@ -84,7 +91,8 @@ if {![file exists $xci_path]} {
 
 set summary_path [file join $build_dir ip_generation_summary.txt]
 set summary_file [open $summary_path w]
-puts $summary_file "K02_IP_GENERATION_PASS"
+puts $summary_file [expr {$g2_gen1_only ? "G2_GEN1_PHY_GENERATION_PASS" :
+                                              "K02_IP_GENERATION_PASS"}]
 puts $summary_file "part=$part_name"
 puts $summary_file "vlnv=xilinx.com:ip:pcie_phy:1.0"
 dict for {name expected} $expected_config {
@@ -93,5 +101,6 @@ dict for {name expected} $expected_config {
 puts $summary_file "xci=$xci_path"
 close $summary_file
 
-puts "K02_IP_GENERATION_PASS xci=$xci_path"
+puts [expr {$g2_gen1_only ? "G2_GEN1_PHY_GENERATION_PASS xci=$xci_path" :
+                              "K02_IP_GENERATION_PASS xci=$xci_path"}]
 close_project

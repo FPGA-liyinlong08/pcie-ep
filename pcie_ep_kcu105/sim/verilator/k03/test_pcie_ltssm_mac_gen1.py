@@ -29,6 +29,7 @@ RECOVERY_RCVRLOCK = 11
 RECOVERY_RCVRCFG = 12
 RECOVERY_IDLE = 13
 HOT_RESET = 14
+PHY_POWERUP = 15
 partner_rx_lfsr = 0xFFFF
 
 
@@ -130,6 +131,18 @@ async def pulse_phystatus(dut, status):
     dut.phy_phystatus.value = 0
 
 
+async def complete_receiver_detect(dut):
+    """完成Receiver Detect以及随后独立的P1->P0 PHY握手。"""
+    await pulse_phystatus(dut, 0b011)
+    await wait_state(dut, PHY_POWERUP)
+    assert int(dut.phy_txdetectrx.value) == 0
+    assert int(dut.phy_powerdown.value) == 0b00
+    assert int(dut.phy_txelecidle.value) == 1
+    assert int(dut.phy_txdata_valid.value) == 0
+    await pulse_phystatus(dut, 0b000)
+    await wait_state(dut, POLLING_ACTIVE)
+
+
 def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x02, control=0):
     ident = TS1 if kind == 1 else TS2
     link_k = 1 if link == PAD else 0
@@ -216,6 +229,10 @@ async def capture_tx_ts(dut, kind, link=PAD, lane=PAD, timeout=64):
                     await tick(dut)
                     data = int(dut.phy_txdata.value)
                     datak = int(dut.phy_txdatak.value)
+                assert int(dut.phy_txdata_valid.value) == 1
+                assert int(dut.phy_txelecidle.value) == 0
+                assert int(dut.phy_powerdown.value) == 0b00
+                assert data >> 16 == 0, "Gen1每拍高16 bit必须为0"
                 got += [data & 0xFF, (data >> 8) & 0xFF]
                 got_k += [datak & 1, (datak >> 1) & 1]
             assert got == expected, f"TX TS{kind} Symbol 错误: {got}"
@@ -236,8 +253,7 @@ async def train_to_l0(
     await wait_state(dut, DETECT_ACTIVE)
     assert int(dut.phy_txdetectrx.value) == 1
     await writable_phase()
-    await pulse_phystatus(dut, 0b011)
-    await wait_state(dut, POLLING_ACTIVE)
+    await complete_receiver_detect(dut)
     if partner_delay:
         await tick(dut, partner_delay)
         await writable_phase()
@@ -347,12 +363,38 @@ async def normal_training(dut):
 
 
 @cocotb.test()
+async def detect_waits_for_p0_phystatus_before_ts1(dut):
+    """Receiver Detect完成后必须等待独立的P1->P0 PhyStatus，才可发送TS1。"""
+    await initialize(dut)
+    await wait_state(dut, DETECT_ACTIVE)
+    assert int(dut.phy_powerdown.value) == 0b10
+    assert int(dut.phy_txdetectrx.value) == 1
+    assert int(dut.phy_txelecidle.value) == 1
+
+    # 该脉冲只确认Receiver Detect完成，不能同时充当P1->P0完成通知。
+    await pulse_phystatus(dut, 0b011)
+    for _ in range(4):
+        assert int(dut.phy_powerdown.value) == 0b00
+        assert int(dut.phy_txdetectrx.value) == 0
+        assert int(dut.phy_txelecidle.value) == 1
+        assert int(dut.phy_txdata_valid.value) == 0
+        await tick(dut)
+        await writable_phase()
+
+    # 新的PhyStatus脉冲确认P0已完成，此后才允许进入Polling.Active并发送TS1。
+    await pulse_phystatus(dut, 0b000)
+    await wait_state(dut, POLLING_ACTIVE)
+    assert int(dut.phy_powerdown.value) == 0b00
+    assert int(dut.phy_txelecidle.value) == 0
+    assert int(dut.phy_txdata_valid.value) == 1
+
+
+@cocotb.test()
 async def gen1_ignores_gen3_rxdata_valid(dut):
     """Gen1 以 RxValid 采样 8b/10b Symbol，RxDataValid 允许保持 0。"""
     await initialize(dut)
     await wait_state(dut, DETECT_ACTIVE)
-    await pulse_phystatus(dut, 0b011)
-    await wait_state(dut, POLLING_ACTIVE)
+    await complete_receiver_detect(dut)
     await send_ts(dut, 1, 8, data_valid=0)
     await wait_state(dut, POLLING_CONFIG)
 
@@ -362,8 +404,7 @@ async def gen1_accepts_com_in_high_symbol(dut):
     """真实 GT 可能把 COM 放在高 Symbol，跨拍重组后仍应识别完整 TS。"""
     await initialize(dut)
     await wait_state(dut, DETECT_ACTIVE)
-    await pulse_phystatus(dut, 0b011)
-    await wait_state(dut, POLLING_ACTIVE)
+    await complete_receiver_detect(dut)
     await send_ts_high_symbol_aligned(dut, 1, 8)
     await wait_state(dut, POLLING_CONFIG)
 
@@ -432,8 +473,7 @@ async def detect_errors_recovery_and_hot_reset(dut):
     assert int(dut.training_error_count.value) >= 1
 
     await wait_state(dut, DETECT_ACTIVE)
-    await pulse_phystatus(dut, 0b011)
-    await wait_state(dut, POLLING_ACTIVE)
+    await complete_receiver_detect(dut)
     await send_ts(dut, 1, 1, corrupt_index=9)
     await tick(dut, 520)
     assert int(dut.timeout_count.value) >= 1

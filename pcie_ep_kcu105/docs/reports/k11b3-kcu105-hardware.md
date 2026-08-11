@@ -646,3 +646,38 @@ D0+Retrain 操作中再次对齐。该现象不能归因于 Endpoint GT reset-do
 通过，后续不再测量板级PERST#/REFCLK/TX波形，也不把Root Port硬件作为首要怀疑对象；
 排查方向转为自研LTSSM/MAC与standalone `pcie_phy`接口契约、TS1内容和发送节拍，详见
 `docs/reports/k11-20260811-debug-archive.md`第6节。
+
+## 15. G1修复后实板复核（2026-08-11 20:27）
+
+使用新构建的`k11b2_gen1_endpoint_ila.bit`下载KCU105，随后对主机
+`192.168.11.126`执行完整Linux重启。为避免二次编程破坏冷启动时序，新增了
+`k11b2-ila-hw-arm-detect-active`入口，仅重新布防ILA而不重写FPGA。
+
+最终采样文件：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_202719_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_202719_u_ila_core.csv
+```
+
+PIPE窗口的准确状态和握手如下：
+
+| 采样范围 | LTSSM | 关键事件 |
+|---:|---|---|
+| 0‑3071 | Detect.Quiet | Electrical Idle=1，TX Valid=0 |
+| 3072‑3154 | Detect.Active | 3154：`PhyStatus=1, RxStatus=3` |
+| 3155‑3291 | PHY.PowerUp(15) | 持续Electrical Idle=1/TX Valid=0；3291：第二个`PhyStatus=1` |
+| 3292‑4095 | Polling.Active | Electrical Idle=0，TX Valid=1，发送TS1 |
+
+因此G1的P1→P0独立握手在实板上已通过。但Endpoint最终仍停在
+`Polling.Active`，采样中没有Root Port TS1/TS2、DLLP或配置交互。冷启动后：
+
+- Linux未枚举`1234:e001`；
+- Root Port为2.5 GT/s x1，仍是`Train+ / DLActive-`；
+- AER为`RxErr-/BadTLP-/BadDLLP-`；
+- Core域`cfg_count=0`、`cpl_count=0`、`bdf_valid=0`、`cdc_errors=0`。
+
+结论：G1修复不是原链路问题的唯一根因。按G1出口条件转入G2，优先核对
+standalone PHY的速率/PLL配置、真实GT收发状态和自研MAC的PHY边界。官方XDMA Gen3 x1
+已经排除物理引脚、Lane映射和板级极性，不再重复检查；也不再修改已通过Checker和
+实板握手验证的TS字段或P0握手。

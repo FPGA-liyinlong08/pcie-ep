@@ -14,7 +14,7 @@
 | `phy_rxdatak` | 输入 | 2 | 对应低、次低两个字节 |
 | `phy_rxdata_valid` | 输入 | 1 | Gen3 block 有效指示；K03 Gen1 不用它门控 Symbol |
 | `phy_rxvalid` | 输入 | 1 | Gen1 CDR/Symbol 有效；K03 以此作为接收条件 |
-| `phy_phystatus` | 输入 | 1 | Detect/Power 操作完成脉冲 |
+| `phy_phystatus` | 输入 | 1 | Detect/Power 操作完成脉冲；两项操作各需要独立脉冲 |
 | `phy_rxelecidle` | 输入 | 1 | RX Electrical Idle |
 | `phy_rxstatus` | 输入 | 3 | Detect 成功编码 `3'b011` |
 | `phy_txdata` | 输出 | 32 | Gen1 高 16 bit 固定 0，先上线字节在 `[7:0]` |
@@ -39,10 +39,10 @@ Symbol更新LFSR。TX/RX均使用同一模块，线路先到的低字节先推�
 | 端口 | 位宽 | 复位值 | K03 规则 |
 |---|---:|---:|---|
 | `phy_txdetectrx` | 1 | 0 | 只在 Detect.Active 为 1 |
-| `phy_txelecidle` | 1 | 1 | Detect/HotReset 为 1，训练与 L0 为 0 |
+| `phy_txelecidle` | 1 | 1 | Detect、PHY.PowerUp等待期为1，训练与L0为0 |
 | `phy_txcompliance` | 1 | 0 | 固定 0 |
 | `phy_rxpolarity` | 1 | 0 | 固定 0 |
-| `phy_powerdown` | 2 | `2'b10` | Detect/HotReset=P1，其余=P0 |
+| `phy_powerdown` | 2 | `2'b10` | Detect=P1；PHY.PowerUp等待期及其余状态=P0 |
 | `phy_rate` | 2 | `2'b00` | K03 永久 Gen1 |
 | `phy_txmargin` | 3 | 0 | 固定 0 |
 | `phy_txswing` | 1 | 0 | 固定 0 |
@@ -123,6 +123,12 @@ Symbol 0 时，同拍 Symbol 1 的首数据字节以 `keep=01,sop=1` 输出；EN
 | 12 | Recovery.RcvrCfg |
 | 13 | Recovery.Idle |
 | 14 | HotReset |
+| 15 | PHY.PowerUp（standalone PHY适配子状态） |
+
+Receiver Detect 必须在 P1 下执行。Detect 的 `phy_phystatus` 且
+`phy_rxstatus=3'b011` 到达后，MAC 进入 PHY.PowerUp：请求 P0、撤销
+`phy_txdetectrx`，但继续保持 TX Electrical Idle 且不提交 TX 数据。只有收到下一次
+独立的 `phy_phystatus` 后才进入 Polling.Active 并开始发送 TS1。
 
 所有状态输出和 Packet 输出均为寄存器或只依赖寄存状态的组合逻辑；禁止形成
 `valid-ready-valid` 组合环路。计数器达到全 1 后饱和，不回绕。

@@ -165,3 +165,35 @@ BridgeCtl = 0012    # Secondary Bus Reset=0
 
 本归档是后续排查的结论入口；详细报告中的“下一步测量板级PERST#/REFCLK/TX波形”等
 历史建议均由本文件第6节取代。
+
+## 8. G1执行更新（2026-08-11）
+
+第6.2节的G1已执行并闭环软件门禁。审计发现：旧RTL在P1中完成Receiver
+Detect后直接进入Polling.Active，没有等待P1→P0转换的独立`PhyStatus`。
+修复后状态顺序为：
+
+```text
+Detect.Active → PHY.PowerUp(15) → Polling.Active
+```
+
+修复前的定向测试可稳定观察到Electrical Idle过早撤销；修复后K03全回归、
+K02模型、Vivado OOC/集成布局布线，以及Xilinx PHY + Root Port联合仿真均通过。
+联合仿真中实际观察到状态0→1→15→2，随后完成L0、枚举和BAR读写。
+
+详细证据见`docs/reports/k11-g1-phy-contract-audit.md`。新比特流已完成实板
+冷启动复核：状态0→1→15→2及两个独立`PhyStatus`完全符合修复后契约，
+但Root Port仍未返回TS1/TS2，Linux未枚举`1234:e001`。因此G1修复不是原故障的
+唯一根因，后续按出口条件转入G2。
+
+## 9. G2执行更新（2026-08-11）
+
+G2没有重复验证板级引脚或Lane映射，而是完成standalone PHY配置A/B：保留原
+Gen3/QPLL1基线，新增独立的Gen1-only/CPLL诊断IP。诊断构建只实例化
+`GTHE3_CHANNEL_X0Y7`，不实例化`GTHE3_COMMON`；完整Endpoint通过DRC、CDC和正式时序
+门禁，WNS为`+0.019 ns`，并成功生成及下载bitstream。
+
+主机冷启动后仍未枚举`1234:e001`，但Root Port稳定报告2.5 GT/s x1、
+`Train+ / DLActive-`；Link Status寄存器连续5次均为`0x1811`，AER无RxErr、BadTLP或
+BadDLLP。该结果排除了原Gen3/QPLL1过配置是链路失败的必要条件，也再次说明物理通道并非
+完全无信号；失败范围收敛到Polling/Configuration训练及standalone PHY RX到MAC的接收
+解码路径。详细证据见`docs/reports/k11-g2-gen1-cpll-board.md`。

@@ -8,7 +8,7 @@ set server_url localhost:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now status upload}} {
+if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now status upload}} {
   error "K11-B3 ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K11-B3 ILA bitstream不存在：$bit_path" }
@@ -46,7 +46,7 @@ foreach ila $ilas {
   }
 }
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now}} {
   foreach ila $ilas {
     set cell_name [get_property CELL_NAME $ila]
     if {$action eq "program-arm-perst" && $cell_name eq "u_ila_pipe"} {
@@ -65,7 +65,7 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
     } elseif {$action in {program-arm-rxidle-conflict capture-rxidle-conflict-wait} && $cell_name eq "u_ila_core"} {
       # Core域没有RxElecIdle信号，使用同一次PHY链路退出的CDC脉冲对齐采样。
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*link_loss_trigger*"}]
-    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active} && $cell_name eq "u_ila_pipe"} {
+    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} && $cell_name eq "u_ila_pipe"} {
       # 复用已有dbg_pipe_top，不修改RTL/ILA位宽；匹配LTSSM=CFG_COMPLETE(0x08)。
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_pipe_top*"}]
     } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait} && $cell_name eq "u_ila_core"} {
@@ -91,9 +91,9 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     } elseif {$action eq "capture-now"} {
       set_property TRIGGER_COMPARE_VALUE eq1'bx [lindex $trigger_probes 0]
-    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active} && $cell_name eq "u_ila_pipe"} {
+    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} && $cell_name eq "u_ila_pipe"} {
       set pattern [string repeat x 64]
-      if {$action eq "program-arm-detect-active"} {
+      if {$action in {program-arm-detect-active arm-detect-active}} {
         # dbg_pipe_top[32:27] = DETECT_ACTIVE (6'd1).
         foreach {bit_index bit_value} {27 1 28 0 29 0 30 0 31 0 32 0} {
           set string_index [expr {63 - $bit_index}]
@@ -126,7 +126,7 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
     } else {
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     }
-    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active} ? 3072 : 1024}] $ila
+    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : 1024}] $ila
     if {$action ni {capture-linkdown-wait capture-rxidle-conflict-wait capture-cfg-complete-wait}} {
       run_hw_ila $ila
     }
