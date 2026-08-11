@@ -337,3 +337,147 @@ malformed DLLP。Core域仍记录`cfg_count=52`、`cpl_count=52`，说明主机�
 “CFG_COMPLETE→CFG_IDLE/L0”训练或DLL错误路径未解决。下一步应针对CFG_COMPLETE之后的
 TS2/Idle接收、PHY `RxValid`语义和FC/malformed错误建立新的定点采样；在获得该证据前不再
 增加新的协议功能修改。
+
+## 14. K11-B3.4 冷启动与XDMA物理链路对照（2026-08-11）
+
+恢复自研调试镜像并布防 `Detect.Active` ILA 后，执行了一次真实Linux冷启动。冷启动后的
+Root Port仍为 `PMCSR=0x0103 (D3hot)`，未枚举端点；ILA却再次捕获到完全相同的训练起点：
+
+```text
+DETECT_ACTIVE + RxStatus=3/phystatus=1
+    -> POLLING_ACTIVE
+    -> 端点连续发送TS1，Root Port方向仍为RxValid=0/RxElecIdle=1
+```
+
+有效采样：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_145009_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_145009_u_ila_core.csv
+```
+
+该次冷启动窗口中端点未收到任何TS1/TS2，故 `cfg_count/cpl_count=0`，不能进入配置空间
+分析；Core ILA的单个unsupported计数属于无有效TLP时的残留采样，不作为协议错误结论。
+
+历史记录已经确认：**XDMA Gen3 x1 曾在同一KCU105、同一主机和同一插槽上完成硬件
+验证**，因此主机、插槽、J74 x1配置、参考时钟和PCIe物理通道不再作为本项目的待验证
+假设，后续不重复下载XDMA做物理链路验证。
+
+本轮曾临时下载本地XDMA成品做物理对照，但两个候选工程（包括目录名为`x1`的工程）实际
+都包含/使用XDMA x4实例，Root Port报告：
+
+```text
+01:00.0 Xilinx 10ee:8034
+LnkSta: Speed 2.5GT/s, Width x4 (ok)
+```
+
+该次对照不增加任何新的有效结论，也**不能替代已有的XDMA Gen3 x1历史验收**；对照完成
+后已恢复自研K11调试镜像。
+
+当前结论进一步收敛为：
+
+1. 端点Receiver Detect、PHY时钟/复位释放、POLLING_ACTIVE状态和TS1内部发送均有实板证据；
+2. 冷启动、Secondary Bus Reset、Root Port D0和软件Retrain均未让Root Port向端点返回TS1；
+3. 物理插槽和主机链路已有XDMA Gen3 x1历史验收，不再重复验证；
+4. 下一步不应继续修改DLL/TLP/配置空间，而应制作一个最小PHY-TX诊断镜像或在现有镜像
+   增加GT TX reset-done、TX buffer status、TX electrical-idle和Root Port热插拔/PERST#电平
+   的探针，优先确认“端点TS1是否真正从GTHE3发出”。
+
+## 13. K11-B3.3 Detect/Polling 与主机电源状态复核（2026-08-11）
+
+为避免把短即时窗口误判为LTSSM卡死，增加了仅调试用的 `program-arm-detect-active`
+ILA入口，匹配 `dbg_pipe_top[32:27] = DETECT_ACTIVE`，不改变正式RTL和ILA探针位宽。
+该入口的下载、布防和硬件上传均成功；调试构建仍为0 Error、0 Critical Warning，负WNS只作
+诊断记录。
+
+有效采样文件：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_142846_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_143319_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_143727_u_ila_pipe.csv
+```
+
+其中 `20260811_142846` 的关键顺序为：
+
+| 采样点 | LTSSM | PHY状态 | TX行为 | RX行为 |
+|---:|---|---|---|---|
+| 3072 | DETECT_ACTIVE (`0x01`) | `RxStatus=0` | 电气空闲 | `RxValid=0, RxElecIdle=1` |
+| 3153 | DETECT_ACTIVE (`0x01`) | `RxStatus=3, phystatus=1` | 尚未发TS1 | `RxValid=0, RxElecIdle=1` |
+| 3154 | POLLING_ACTIVE (`0x02`) | Receiver Detect完成 | 开始发送TS1 | `RxValid=0, RxElecIdle=1` |
+| 3155以后 | POLLING_ACTIVE (`0x02`) | 正常 | 连续TS1：`F7BC/F7FF/0002/4A4A...`，`datak=3/1/0/0` | 没有收到TS1/TS2 |
+
+该结果证明端点的Receiver Detect、`DETECT_ACTIVE→POLLING_ACTIVE`状态转移和Gen1 TS1
+发送路径均工作；在完整4096点窗口中对端一直没有返回有效训练序列，因此不能再把当前
+现象归因于端点未发送TS1。
+
+主机Root Port `00:01.0`的配置状态同时读取为：
+
+```text
+PMCSR = 0x0103  -> D3hot
+LnkSta = 0x5811 -> Speed 2.5GT/s, Width x1, Train+, DLActive-
+```
+
+随后已在不修改Endpoint协议RTL的前提下执行：
+
+1. PMCSR低两位写0，恢复Root Port到D0（读回`0x0100`）；
+2. Secondary Bus Reset置位/清除；
+3. Link Control Retrain置位并轮询32次。
+
+本轮Root Port仍保持 `Train+ / DLActive-`，Linux仍未出现 `1234:e001`；D0恢复没有立即
+产生对端TS1。三次采样（`142846`、`143319`、`143727`）均保持同一端点行为：Receiver
+Detect成功、端点发TS1、RX没有TS1。`143319`和`143727`分别是在Secondary Bus Reset以及
+D0+Retrain后采集，说明简单软件复位不足以恢复主机训练发送状态。
+
+本轮结论：问题已从Endpoint LTSSM/TS1发送侧进一步收敛到**主机Root Port训练状态或
+板级PERST#/链路电源状态未真正复位**；尚无证据要求修改协议功能RTL。下一步应在一次真实
+冷启动或物理断电重新上电后，在端点ILA布防状态下采集Root Port由Detect到Polling的首次
+训练；若冷启动仍没有Root Port TS1，则转向KCU105插槽、J74 x1配置、PERST#电平和参考时钟
+链路的板级验证。
+
+## 11. K11-B4 PHY TX边界诊断镜像（2026-08-11）
+
+本阶段不重复验证板卡物理链路。此前同一块KCU105、同一插槽和同一Lane已使用官方
+XDMA Gen3 x1镜像完成硬件验证，证明REFCLK、PERST#、J74 x1、金手指、Root Port和
+Lane 0物理收发路径均可工作。本阶段探针只验证自研RTL与standalone `pcie_phy`的
+集成边界。
+
+新增PIPE域Probe6（低位到高位）如下：
+
+| 位 | 信号 | 诊断目的 |
+|---:|---|---|
+| 0 | PERST#同步采样 | 确认本次训练复位窗口 |
+| 1 | `pipe_rst_n` | 确认PHY接口域已释放复位 |
+| 2 | `phy_txdata_valid` | 确认MAC向PHY提交有效数据 |
+| 3 | `phy_txelecidle` | 确认MAC是否要求电气空闲 |
+| 4 | GT `txresetdone` | 排除GT TX复位未完成 |
+| 5 | GT `gtpowergood` | 确认GT电源状态 |
+| 6 | GT `qpll1lock` | 确认发送PLL锁定 |
+| 7 | GT `pciesynctxsyncdone` | 确认PCIe TX同步完成 |
+| 8 | GT `txelecidle_in` | 观察PHY送入GT的电气空闲控制 |
+| 9 | GT `pcierategen3` | 观察PHY速率控制状态 |
+
+诊断构建结果：
+
+- `K11B3_ILA_IMPL_PASS`；器件`xcku040-ffva1156-2-e`；GT位置
+  `GTHE3_CHANNEL_X0Y7/GTHE3_COMMON_X0Y1`；无PCIe Hard Block；
+- DRC：0 Error、0 Critical Warning；CDC无Critical路径，仅保留ILA/异步复位相关
+  Warning；
+- WNS=`0.000 ns`（调试镜像，允许负时序；本次物理优化后为零）；
+- bitstream：`fpga/kcu105/build_k11b2_ila/impl/k11b2_gen1_endpoint_ila.bit`；
+- 双ILA已成功下载并Arm，PIPE触发器为`DETECT_ACTIVE`，Core域使用TLP触发器对齐。
+
+这些探针不是对Xilinx PHY IP功能或KCU105物理通道的重新认证，而是区分以下四种集成
+故障：GT TX reset-done未完成、PHY复位/电气空闲控制错误、RTL虽产生TS1但PHY未接受，
+以及GT已离开空闲而问题应转移到Root Port训练接收侧。仅靠PHY接口侧采样不能证明串行
+引脚上已经出现有效波形；如仍需确认引脚活动，应使用GT近端环回或示波器/协议分析仪。
+
+当前硬件动作：ILA已Arm，等待一次主机冷启动产生`PERST#`训练窗口。远端主机可连接，
+但无密码方式的`sudo reboot`被拒绝；需要人工执行冷启动后再运行：
+
+```bash
+make -C /home/wx/Documents/PCIe/pcie_ep_kcu105 k11b2-ila-hw-capture-wait
+```
+
+采样后重点检查Probe6中`txresetdone/gtpowergood/qpll1lock/pciesynctxsyncdone`与
+`phy_txdata_valid/txelecidle`的先后关系，并与TS1 Ordered Set窗口对齐。

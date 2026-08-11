@@ -82,6 +82,18 @@ if {$ila_debug} {
     }
     return $result
   }
+  # K11-B4：直接从生成的 standalone PHY/GTHE3 层级引出只读诊断网。
+  # 这些网不进入正式协议逻辑，只用于确认 TX 复位、PLL/GT 状态和
+  # PHY 到 GT 的 Electrical Idle 控制是否一致。层级路径来自 K02 XCI
+  # 生成的固定网表；若 XCI 重新生成导致路径变化，应让构建明确失败。
+  proc phy_boundary_net {regexp_pattern} {
+    set result [get_nets -hierarchical -quiet -regexp $regexp_pattern]
+    if {[llength $result] != 1} {
+      error "K11-B4 PHY诊断网不存在或不唯一：$regexp_pattern，实际[llength $result]"
+    }
+    set_property MARK_DEBUG TRUE $result
+    return $result
+  }
   proc add_ila_probe {core_name probe_index nets} {
     if {$probe_index != 0} { create_debug_port $core_name probe }
     set port [get_debug_ports ${core_name}/probe${probe_index}]
@@ -108,6 +120,22 @@ if {$ila_debug} {
     [debug_bus_nets {.*dbg_ltssm_detail.*\[[0-9]+\]$} 256]
   add_ila_probe u_ila_pipe 5 \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_phy_rxidle_conflict]
+  # probe6 位序（由低到高对应列表顺序）：
+  # 同步后的PERST#、PIPE_RST_N、PHY TX_VALID、PHY TX_ELECIDLE、
+  # GT TXRESETDONE、GT POWERGOOD、QPLL1LOCK、PCIe TX sync done、
+  # GT 侧 TXELECIDLE 输入、GT PCIE RATE GEN3。
+  set phy_probe_nets [list \
+    [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_n_pipe] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/pipe_rst_n$}] \
+    [phy_boundary_net {^u_endpoint/phy_txdata_valid$}] \
+    [phy_boundary_net {^u_endpoint/phy_txelecidle$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/txresetdone_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/gtpowergood_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/qpll1lock_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pciesynctxsyncdone_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/txelecidle_in\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierategen3_out\[0\]$}]]
+  add_ila_probe u_ila_pipe 6 $phy_probe_nets
 
   create_debug_core u_ila_core ila
   set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
@@ -125,7 +153,7 @@ if {$ila_debug} {
   add_ila_probe u_ila_core 3 \
     [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
 
-  puts "K11B3_ILA_INSERT_PASS pipe_width=451 core_width=450 depth=4096"
+  puts "K11B4_ILA_INSERT_PASS pipe_width=461 core_width=450 depth=4096"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]

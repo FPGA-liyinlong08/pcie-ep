@@ -26,6 +26,8 @@
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
 	k11b2-ila-hw-capture-cfg-wait k11b2-ila-hw-capture-tx-wait \
+	k11b2-ila-hw-capture-cfg-complete-wait \
+	k11b2-ila-hw-program-arm-cfg-complete k11b2-ila-hw-program-arm-detect-active \
 	k11b2-ila-hw-program-arm-linkdown k11b2-ila-hw-capture-linkdown-wait \
 	k11b2-ila-hw-program-arm-rxidle-conflict k11b2-ila-hw-capture-rxidle-conflict-wait \
 	k11b2-ila-hw-capture-now k11b2-ila-hw-upload \
@@ -293,6 +295,21 @@ k11b2-ila-hw-capture-cfg-wait:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
 		-tclargs localhost:3122 capture-cfg-wait
+
+k11b2-ila-hw-capture-cfg-complete-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 capture-cfg-complete-wait
+
+k11b2-ila-hw-program-arm-cfg-complete:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 program-arm-cfg-complete
+
+k11b2-ila-hw-program-arm-detect-active:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 program-arm-detect-active
 
 k11b2-ila-hw-capture-tx-wait:
 	$(VIVADO) -mode batch -nojournal -nolog \

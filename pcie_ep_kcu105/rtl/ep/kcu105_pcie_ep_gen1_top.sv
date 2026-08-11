@@ -111,6 +111,18 @@ module kcu105_pcie_ep_gen1_top #(
         (* mark_debug = "true", keep = "true" *)
         wire dbg_phy_rxidle_conflict = dbg_operational_seen && link_up &&
                                        phy_rxelecidle && phy_rxvalid;
+        // PERST# 是异步输入；仅把两级同步后的电平送入 ILA，避免把
+        // 原始异步复位直接接到 TX/PIPE 时钟域调试核而制造 CDC-1。
+        (* mark_debug = "true", keep = "true" *)
+        reg [1:0] dbg_perst_sync;
+        always @(posedge phy_pclk or negedge pcie_perst_n) begin
+            if (!pcie_perst_n)
+                dbg_perst_sync <= 2'b00;
+            else
+                dbg_perst_sync <= {dbg_perst_sync[0], 1'b1};
+        end
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_perst_n_pipe = dbg_perst_sync[1];
         (* mark_debug = "true", keep = "true" *)
         wire [63:0] dbg_pipe_top = {
             13'd0,
