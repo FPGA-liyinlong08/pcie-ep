@@ -33,8 +33,8 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
 refresh_hw_device $ku040
 
 set ilas [get_hw_ilas -of_objects $ku040]
-if {[llength $ilas] != 2} {
-  error "K11-B3期望两个ILA，实际数量[llength $ilas]"
+if {[llength $ilas] ni {1 2}} {
+  error "K11-B3期望一个PIPE ILA或PIPE+Core两个ILA，实际数量[llength $ilas]"
 }
 foreach ila $ilas {
   set cell_name [get_property CELL_NAME $ila]

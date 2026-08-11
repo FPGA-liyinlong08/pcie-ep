@@ -1,0 +1,111 @@
+# K11 G3/G4 GT 接收边界验证报告
+
+日期：2026-08-11
+
+状态：**G3/G4完成；GT RX静态配置及动态控制未发现异常，链路仍停在Polling.Active**
+
+## 1. 验证目的
+
+G1修正P1 Receiver Detect完成后缺失的P1→P0独立`PhyStatus`握手，G2使用
+Gen1-only/CPLL PHY完成A/B后，实板仍不能枚举。本轮不重复检查已由官方XDMA Gen3 x1
+证明正确的板级Lane、引脚、极性、REFCLK、PERST#和Root Port，而是把观测点下沉到
+GTHE3边界：
+
+1. G3直接采集GT原始RX状态，区分GT没有收到电气活动与PHY后处理屏蔽数据；
+2. G4对比当前Standalone PHY与成功XDMA routed DCP的GTHE3属性及输入驱动；
+3. G4实板采集RX电源、CDR hold、速率、极性和8b/10b控制时序。
+
+## 2. 构建与采样
+
+为避免宽ILA造成时序和CDC污染，本轮加入`K11B2_ILA_PIPE_ONLY=1`诊断模式，只生成
+`u_ila_pipe`。跨100 MHz复位域的`GTRXRESET/RXUSERRDY`不直接接入250 MHz ILA，使用
+同一GT的`RXRESETDONE`确认最终复位完成结果。
+
+最终实现结果：
+
+```text
+ILA_PIPE_ONLY=1
+WNS=+0.004 ns
+WHS=+0.004 ns
+DRC Error=0
+CDC Critical=0
+GTHE3_CHANNEL=GTHE3_CHANNEL_X0Y7
+GTHE3_COMMON=GTHE3_COMMON_X0Y1
+```
+
+下载后在Detect.Active触发，按授权重启Root Port主机完成一次冷启动。原始采样：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_223515_u_ila_pipe.csv
+```
+
+## 3. G3：GT原始RX输出
+
+4096个采样点的统计：
+
+```text
+RXRESETDONE=1:       4096
+RXVALID=1:              0
+RXELECIDLE=0:           0
+RXSTATUS!=0:            1  # Receiver Detect完成拍，值为3
+PHY RXVALID=1:          0
+PHY RXDATA_VALID=1:     0
+PHY RXELECIDLE=0:       0
+PHY TX非ElectricalIdle: 804
+PHY TX非零数据:         804
+PHY TX DataK非零:       202
+```
+
+结论：不是Standalone PHY在GT之后丢弃了已接收的数据。GT接收器本身在训练窗口始终报告
+Electrical Idle，没有产生RXVALID；与此同时Endpoint TX边界连续提交训练序列。
+
+## 4. G4：GT静态配置对照
+
+`report_g4_gt_compare.tcl`打开当前Standalone与官方XDMA成功镜像的routed DCP。二者均使用
+`GTHE3_CHANNEL_X0Y7`。RX CDR、RX buffer、RX termination、Electrical Idle、8b/10b及
+模拟接收相关属性一致；复位、RX/TX user-ready、PowerDown、Rate、Electrical Idle和
+Receiver Detect输入也都由同类PHY/PIPE控制逻辑驱动。
+
+去除对象名称、文件路径等非功能属性后，仅剩两项与时钟结构对应的差异：
+
+```text
+PCIE_BUFG_DIV_CTRL: standalone=16'h1008, XDMA=16'h3508
+TX_PROGDIV_CFG:     standalone=8.000,    XDMA=4.000
+```
+
+这两项来自Standalone与XDMA不同的用户时钟/并行接口宽度，不构成RX模拟或终端配置差异。
+
+## 5. G4：GT动态RX控制
+
+关键状态时间线：
+
+| 样点 | LTSSM | PhyStatus/RxStatus | RXPD | RXCDRHOLD | RXRATE | RXPOLARITY | RX8B10BEN | RXELECIDLE/RXVALID |
+|---:|---|---|---:|---:|---:|---:|---:|---|
+| 0 | Detect.Quiet | 0/0 | 2 (P1) | 0 | 0 | 0 | 1 | 1/0 |
+| 3072 | Detect.Active | 0/0 | 2 (P1) | 0 | 0 | 0 | 1 | 1/0 |
+| 3154 | Detect.Active | 1/3 | 2 (P1) | 0 | 0 | 0 | 1 | 1/0 |
+| 3155 | PHY.PowerUp | 0/0 | 0 (P0) | 0 | 0 | 0 | 1 | 1/0 |
+| 3291 | PHY.PowerUp | 1/0 | 0 (P0) | 0 | 0 | 0 | 1 | 1/0 |
+| 3292 | Polling.Active | 0/0 | 0 (P0) | 0 | 0 | 0 | 1 | 1/0 |
+
+该序列符合UltraScale GTH Receiver Detect要求：在P1完成检测，再返回P0进行正常接收。
+进入Polling.Active时RX已在P0、CDR未Hold、Gen1速率、无极性反转且8b/10b已启用。
+
+## 6. 结论与下一步
+
+G3/G4排除：
+
+- GT RX复位未完成；
+- GT RX在接收数据但被Standalone PHY后处理屏蔽；
+- RX保持在低功耗、CDR被Hold、速率选择错误、极性反转或8b/10b未启用；
+- Standalone与成功XDMA在RX模拟/终端静态属性上存在关键差异。
+
+剩余现象是：Endpoint完成对Root Port的Receiver Detect并发送训练序列，但Endpoint GT未看到
+Root Port方向任何非Electrical Idle活动。仓库已有自研镜像曾在同板达到Gen1 x1 L0和
+`DLActive+`的记录，因此下一步执行旧成功基线（`f31412f`附近）与当前镜像的隔离构建、
+同板冷启动A/B：
+
+- 旧基线若恢复L0，则对该提交到当前版本做最小硬件回归二分；
+- 旧基线也停在Polling.Active，则优先判定问题与RTL提交无稳定相关性，转向Root Port首次
+  Detect/Polling时序和镜像加载时序，而不继续修改协议RTL。
+

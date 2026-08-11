@@ -2,6 +2,8 @@ set script_dir  [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
 set ila_debug   [expr {[info exists ::env(K11B2_ILA_DEBUG)] &&
                        $::env(K11B2_ILA_DEBUG) eq "1"}]
+set ila_pipe_only [expr {$ila_debug && [info exists ::env(K11B2_ILA_PIPE_ONLY)] &&
+                         $::env(K11B2_ILA_PIPE_ONLY) eq "1"}]
 set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
                         $::env(G2_GEN1_ONLY) eq "1"}]
 if {$ila_debug && $g2_gen1_only} {
@@ -103,6 +105,14 @@ if {$ila_debug} {
     set_property MARK_DEBUG TRUE $result
     return $result
   }
+  proc phy_boundary_bus {regexp_pattern expected_width} {
+    set result [lsort -dictionary [get_nets -hierarchical -quiet -regexp $regexp_pattern]]
+    if {[llength $result] != $expected_width} {
+      error "K11-G3 PHY诊断总线不存在或宽度错误：$regexp_pattern，实际[llength $result]，期望$expected_width"
+    }
+    set_property MARK_DEBUG TRUE $result
+    return $result
+  }
   proc add_ila_probe {core_name probe_index nets} {
     if {$probe_index != 0} { create_debug_port $core_name probe }
     set port [get_debug_ports ${core_name}/probe${probe_index}]
@@ -147,23 +157,54 @@ if {$ila_debug} {
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_phystatus_rst_fall_pipe]]
   add_ila_probe u_ila_pipe 6 $phy_probe_nets
 
-  create_debug_core u_ila_core ila
-  set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
-  set_property C_TRIGIN_EN false [get_debug_cores u_ila_core]
-  set_property C_TRIGOUT_EN false [get_debug_cores u_ila_core]
-  set_property C_INPUT_PIPE_STAGES 1 [get_debug_cores u_ila_core]
-  connect_debug_port u_ila_core/clk \
-    [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_clk]
-  add_ila_probe u_ila_core 0 \
-    [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_tlp_trigger]
-  add_ila_probe u_ila_core 1 \
-    [debug_bus_nets {.*dbg_core_stream.*\[[0-9]+\]$} 128]
-  add_ila_probe u_ila_core 2 \
-    [debug_bus_nets {.*dbg_core_detail.*\[[0-9]+\]$} 320]
-  add_ila_probe u_ila_core 3 \
-    [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
+  # G3：直接观察GTHE3解码输出，区分“GT本身仍判定Electrical Idle”与
+  # “standalone PHY在GT之后屏蔽了有效数据”。probe7从低到高依次为：
+  # RXRESETDONE、原始RXELECIDLE、原始RXVALID、原始RXSTATUS[2:0]。
+  # 上一轮已确认原始RXDATA/RXCTRL0全程为0，本轮移除这34位，
+  # 为接收控制探针释放布线余量。
+  set g3_gt_prefix {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/}
+  set g3_rx_probe_nets [list \
+    [phy_boundary_net [format {%srxresetdone_out\[0\]$} $g3_gt_prefix]] \
+    [phy_boundary_net [format {%srxelecidle_out\[0\]$} $g3_gt_prefix]] \
+    [phy_boundary_net [format {%srxvalid_out\[0\]$} $g3_gt_prefix]]]
+  set g3_rx_probe_nets [concat $g3_rx_probe_nets \
+    [phy_boundary_bus [format {%srxstatus_out\[[0-2]\]$} $g3_gt_prefix] 3]]
+  add_ila_probe u_ila_pipe 7 $g3_rx_probe_nets
 
-  puts "K11B4_ILA_INSERT_PASS pipe_width=462 core_width=450 depth=4096"
+  # G4：采集送入GTHE3的动态RX控制。probe8从低到高依次为：
+  # RXCDRHOLD、RXRATE[1:0]、RXPD[1:0]、RXPOLARITY、RX8B10BEN。
+  # GTRXRESET/RXUSERRDY来自100 MHz复位域，直接接入250 MHz ILA会形成CDC-1；
+  # RXRESETDONE已足够确认其最终复位/ready结果，因此不跨域采集这两位。
+  # 这些信号用于验证静态GT属性相同后，接收电源/CDR控制时序是否仍有差异。
+  set g4_rx_control_nets [list \
+    [phy_boundary_net [format {%srxcdrhold_in\[0\]$} $g3_gt_prefix]]]
+  set g4_rx_control_nets [concat $g4_rx_control_nets \
+    [phy_boundary_bus [format {%srxrate_in\[[0-1]\]$} $g3_gt_prefix] 2] \
+    [phy_boundary_bus [format {%srxpd_in\[[0-1]\]$} $g3_gt_prefix] 2] \
+    [list \
+      [phy_boundary_net [format {%srxpolarity_in\[0\]$} $g3_gt_prefix]] \
+      [phy_boundary_net [format {%srx8b10ben_in\[0\]$} $g3_gt_prefix]]]]
+  add_ila_probe u_ila_pipe 8 $g4_rx_control_nets
+
+  if {!$ila_pipe_only} {
+    create_debug_core u_ila_core ila
+    set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
+    set_property C_TRIGIN_EN false [get_debug_cores u_ila_core]
+    set_property C_TRIGOUT_EN false [get_debug_cores u_ila_core]
+    set_property C_INPUT_PIPE_STAGES 1 [get_debug_cores u_ila_core]
+    connect_debug_port u_ila_core/clk \
+      [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_clk]
+    add_ila_probe u_ila_core 0 \
+      [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_tlp_trigger]
+    add_ila_probe u_ila_core 1 \
+      [debug_bus_nets {.*dbg_core_stream.*\[[0-9]+\]$} 128]
+    add_ila_probe u_ila_core 2 \
+      [debug_bus_nets {.*dbg_core_detail.*\[[0-9]+\]$} 320]
+    add_ila_probe u_ila_core 3 \
+      [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
+  }
+
+  puts "K11G4_ILA_INSERT_PASS pipe_width=475 core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=4096"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]
@@ -287,6 +328,7 @@ puts $summary_file "BAR_HIERARCHY_COUNT=$bar_count"
 puts $summary_file "DEMO_HIERARCHY_COUNT=$demo_count"
 puts $summary_file "WNS=$wns"
 puts $summary_file "ILA_DEBUG=$ila_debug"
+puts $summary_file "ILA_PIPE_ONLY=$ila_pipe_only"
 puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
 puts $summary_file "PHY_MODULE=$phy_module"
 puts $summary_file "TIMING_POLICY=[expr {$ila_debug ? "DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED" : "WNS_GE_0_REQUIRED"}]"

@@ -27,6 +27,13 @@ def find_column(columns, suffix):
     return matches[0]
 
 
+def find_optional_column(columns, suffix):
+    matches = [index for name, index in columns.items() if suffix in name]
+    if len(matches) > 1:
+        raise RuntimeError(f"探针{suffix}匹配数量为{len(matches)}")
+    return matches[0] if matches else None
+
+
 def decode_pipe(path):
     columns, rows = read_capture(path)
     trigger_col = find_column(columns, "dbg_pipe_tlp_trigger")
@@ -37,6 +44,19 @@ def decode_pipe(path):
     conflict_matches = [index for name, index in columns.items()
                         if "dbg_phy_rxidle_conflict" in name]
     conflict_col = conflict_matches[0] if len(conflict_matches) == 1 else None
+    gt_rxresetdone_col = find_optional_column(columns, "rxresetdone_out[")
+    gt_rxelecidle_col = find_optional_column(columns, "rxelecidle_out[")
+    gt_rxvalid_col = find_optional_column(columns, "rxvalid_out[")
+    gt_rxstatus_col = find_optional_column(columns, "rxstatus_out[")
+    gt_rxdata_col = find_optional_column(columns, "rxdata_out[")
+    gt_rxctrl0_col = find_optional_column(columns, "rxctrl0_out[")
+    gt_gtrxreset_col = find_optional_column(columns, "gtrxreset_in[")
+    gt_rxuserrdy_col = find_optional_column(columns, "rxuserrdy_in[")
+    gt_rxcdrhold_col = find_optional_column(columns, "rxcdrhold_in[")
+    gt_rxrate_col = find_optional_column(columns, "rxrate_in[")
+    gt_rxpd_col = find_optional_column(columns, "rxpd_in[")
+    gt_rxpolarity_col = find_optional_column(columns, "rxpolarity_in[")
+    gt_rx8b10ben_col = find_optional_column(columns, "rx8b10ben_in[")
     decoded = []
     for row in rows:
         top = int(row[top_col], 16)
@@ -85,12 +105,27 @@ def decode_pipe(path):
             "os_training_control": bits(ltssm_detail, 77, 8),
             "phy_rxdata": bits(ltssm_detail, 45, 32),
             "phy_rxdatak": bits(ltssm_detail, 43, 2),
+            "phy_rxvalid": bits(ltssm_detail, 42),
+            "phy_rxdata_valid": bits(ltssm_detail, 41),
             "phy_rxelecidle": bits(ltssm_detail, 40),
             "phy_rxstatus": bits(ltssm_detail, 37, 3),
             "phy_phystatus": bits(ltssm_detail, 36),
             "phy_txdata": bits(ltssm_detail, 4, 32),
             "phy_txdatak": bits(ltssm_detail, 2, 2),
             "phy_txelecidle": bits(ltssm_detail, 0),
+            "gt_rxresetdone": int(row[gt_rxresetdone_col], 16) if gt_rxresetdone_col is not None else None,
+            "gt_rxelecidle": int(row[gt_rxelecidle_col], 16) if gt_rxelecidle_col is not None else None,
+            "gt_rxvalid": int(row[gt_rxvalid_col], 16) if gt_rxvalid_col is not None else None,
+            "gt_rxstatus": int(row[gt_rxstatus_col], 16) if gt_rxstatus_col is not None else None,
+            "gt_rxdata": int(row[gt_rxdata_col], 16) if gt_rxdata_col is not None else None,
+            "gt_rxctrl0": int(row[gt_rxctrl0_col], 16) if gt_rxctrl0_col is not None else None,
+            "gt_gtrxreset": int(row[gt_gtrxreset_col], 16) if gt_gtrxreset_col is not None else None,
+            "gt_rxuserrdy": int(row[gt_rxuserrdy_col], 16) if gt_rxuserrdy_col is not None else None,
+            "gt_rxcdrhold": int(row[gt_rxcdrhold_col], 16) if gt_rxcdrhold_col is not None else None,
+            "gt_rxrate": int(row[gt_rxrate_col], 16) if gt_rxrate_col is not None else None,
+            "gt_rxpd": int(row[gt_rxpd_col], 16) if gt_rxpd_col is not None else None,
+            "gt_rxpolarity": int(row[gt_rxpolarity_col], 16) if gt_rxpolarity_col is not None else None,
+            "gt_rx8b10ben": int(row[gt_rx8b10ben_col], 16) if gt_rx8b10ben_col is not None else None,
         })
     return decoded
 
@@ -141,15 +176,13 @@ def count(rows, predicate):
 
 
 def main():
-    if len(sys.argv) != 3:
-        raise SystemExit("用法：decode_k11b3_ila.py PIPE.csv CORE.csv")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("用法：decode_k11b3_ila.py PIPE.csv [CORE.csv]")
     pipe = decode_pipe(Path(sys.argv[1]))
-    core = decode_core(Path(sys.argv[2]))
+    core = decode_core(Path(sys.argv[2])) if len(sys.argv) == 3 else None
     pipe_trigger = [r["sample"] for r in pipe if r["trigger"]]
-    core_trigger = [r["sample"] for r in core if r["trigger"]]
     pipe_loss = [r["sample"] for r in pipe if r["link_loss_trigger"]]
     pipe_conflict = [r["sample"] for r in pipe if r["phy_rxidle_conflict"]]
-    core_loss = [r["sample"] for r in core if r["link_loss_trigger"]]
     print(f"PIPE samples={len(pipe)} trigger={pipe_trigger}")
     print(f"PIPE link_loss_trigger={pipe_loss}")
     print(f"PIPE phy_rxidle_conflict={pipe_conflict}")
@@ -196,12 +229,65 @@ def main():
         f"mac_tx_tlp_sop={count(pipe, lambda r: r['mac_tx_valid'] and r['mac_tx_ready'] and r['mac_tx_sop'] and not r['mac_tx_dllp'])}"
     )
     print(
+        "PIPE PHY RX "
+        f"valid_samples={count(pipe, lambda r: r['phy_rxvalid'])} "
+        f"data_valid_samples={count(pipe, lambda r: r['phy_rxdata_valid'])} "
+        f"nonidle_samples={count(pipe, lambda r: not r['phy_rxelecidle'])} "
+        f"nonzero_data_samples={count(pipe, lambda r: r['phy_rxdata'] != 0)}"
+    )
+    print(
+        "PIPE PHY TX "
+        f"active_samples={count(pipe, lambda r: not r['phy_txelecidle'])} "
+        f"nonzero_data_samples={count(pipe, lambda r: r['phy_txdata'] != 0)} "
+        f"datak_samples={count(pipe, lambda r: r['phy_txdatak'] != 0)}"
+    )
+    if pipe[0]["gt_rxresetdone"] is not None:
+        optional_counts = []
+        if pipe[0]["gt_rxdata"] is not None:
+            optional_counts.append(
+                f"nonzero_data_samples={count(pipe, lambda r: r['gt_rxdata'] != 0)}"
+            )
+        if pipe[0]["gt_rxctrl0"] is not None:
+            optional_counts.append(
+                f"nonzero_ctrl0_samples={count(pipe, lambda r: r['gt_rxctrl0'] != 0)}"
+            )
+        print(
+            "PIPE GT RX "
+            f"resetdone_samples={count(pipe, lambda r: r['gt_rxresetdone'])} "
+            f"valid_samples={count(pipe, lambda r: r['gt_rxvalid'])} "
+            f"nonidle_samples={count(pipe, lambda r: not r['gt_rxelecidle'])} "
+            f"nonzero_status_samples={count(pipe, lambda r: r['gt_rxstatus'] != 0)}"
+            f"{' ' if optional_counts else ''}{' '.join(optional_counts)}"
+        )
+    if pipe[0]["gt_rxcdrhold"] is not None:
+        gtrxreset = (
+            f"gtrxreset_high={count(pipe, lambda r: r['gt_gtrxreset'])} "
+            if pipe[0]["gt_gtrxreset"] is not None else ""
+        )
+        rxuserrdy = (
+            f"rxuserrdy_high={count(pipe, lambda r: r['gt_rxuserrdy'])} "
+            if pipe[0]["gt_rxuserrdy"] is not None else ""
+        )
+        print(
+            "PIPE GT RX control "
+            f"{gtrxreset}{rxuserrdy}"
+            f"rxcdrhold_high={count(pipe, lambda r: r['gt_rxcdrhold'])} "
+            f"rxrate_values={sorted(set(r['gt_rxrate'] for r in pipe))} "
+            f"rxpd_values={sorted(set(r['gt_rxpd'] for r in pipe))} "
+            f"rxpolarity_values={sorted(set(r['gt_rxpolarity'] for r in pipe))} "
+            f"rx8b10ben_values={sorted(set(r['gt_rx8b10ben'] for r in pipe))}"
+        )
+    print(
         "PIPE errors "
         f"lcrc={pipe[-1]['lcrc_count']} sequence={pipe[-1]['sequence_count']} "
         f"duplicate={pipe[-1]['duplicate_count']} buffer={pipe[-1]['buffer_count']} "
         f"fc={pipe[-1]['fc_error_nonzero']} bad_dllp_crc={pipe[-1]['bad_dllp_crc']} "
         f"malformed_dllp={pipe[-1]['malformed_dllp']}"
     )
+    if core is None:
+        return
+    core_trigger = [r["sample"] for r in core if r["trigger"]]
+    core_loss = [r["sample"] for r in core if r["link_loss_trigger"]]
     print(f"CORE samples={len(core)} trigger={core_trigger}")
     print(f"CORE link_loss_trigger={core_loss}")
     print(
