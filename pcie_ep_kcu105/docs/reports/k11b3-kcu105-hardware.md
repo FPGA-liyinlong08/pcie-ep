@@ -4,6 +4,10 @@
 
 状态：**官方XDMA Gen3 x1对照PASS；自研Endpoint的首次L0退出原因已由双ILA定点捕获，Linux最终枚举仍FAIL，协议RTL暂不修改**
 
+> 2026-08-11最终排查结论和后续边界已汇总到
+> `docs/reports/k11-20260811-debug-archive.md`。本文件保留按时间顺序的详细证据；各阶段
+> 中间提出的“下一步”建议若与归档冲突，以归档第6节为准。
+
 ## 1. 验证目的
 
 此前用于板级对照的已有XDMA bitstream实际配置为x4，不能严格排除KCU105 x1通道、
@@ -636,9 +640,9 @@ PIPE ILA 在 `DETECT_ACTIVE`→`POLLING_ACTIVE` 时触发，最终状态为
 `phy_txdata_valid=1`、`phy_txelecidle=0`，即 Endpoint 再次连续提交 TS1；整个窗口
 没有收到 Root Port TS1/TS2，DLL/TLP/配置请求计数仍为零，Core ILA 没有有效采样。
 
-本轮把“Endpoint 已离开电气空闲并发送 TS1”与“Root Port 没有返回训练序列”在同一
-次 D0+Retrain 操作中再次对齐。当前直接故障仍定位在 Root Port 的训练启动/接收路径
-或板级 PERST#/参考时钟实际条件，不能归因于 Endpoint GT reset-done、QPLL 锁定、
-PHY 状态复位释放或 Endpoint 主动发送 TLP。下一步应保留此寄存器快照，继续检查
-Root Port 所在插槽的 PERST# 释放时刻、参考时钟有效时刻与其 LTSSM 从 Detect.Active
-进入 Polling 的条件；不重复验证已经由官方 XDMA Gen3 x1 证明正常的物理链路。
+本轮把“Endpoint 已离开电气空闲并发送 TS1”与“Root Port 没有返回训练序列”在同一次
+D0+Retrain 操作中再次对齐。该现象不能归因于 Endpoint GT reset-done、QPLL 锁定、PHY
+状态复位释放或 Endpoint 主动发送 TLP。由于官方XDMA Gen3 x1已在同板、同机和同插槽
+通过，后续不再测量板级PERST#/REFCLK/TX波形，也不把Root Port硬件作为首要怀疑对象；
+排查方向转为自研LTSSM/MAC与standalone `pcie_phy`接口契约、TS1内容和发送节拍，详见
+`docs/reports/k11-20260811-debug-archive.md`第6节。
