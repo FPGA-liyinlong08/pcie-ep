@@ -487,3 +487,29 @@ make -C /home/wx/Documents/PCIe/pcie_ep_kcu105 k11b2-ila-hw-capture-wait
 - 主机：`192.168.11.126`；账户：`wx`；主机名：`wx-ubuntu`；
 - 已确认免密SSH可用（`BatchMode=yes`）；后续冷启动、日志采集和PCIe状态读取可自动执行；
 - 不在工程、脚本或报告中保存账户密码。
+
+### 11.2 首次GT TX边界采样（2026-08-11 15:46:52）
+
+在远端主机尚未冷启动的情况下，下载/Arm后的`DETECT_ACTIVE`窗口已经被PIPE ILA捕获，
+文件为：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_154652_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_154652_u_ila_core.csv
+```
+
+Probe6的稳定状态和第一次发送转换如下：
+
+| 采样范围 | `pipe_rst_n` | `phy_txdata_valid` | `phy_txelecidle` | `txresetdone` | `gtpowergood` | `qpll1lock` | `pciesynctxsyncdone` | `txelecidle_in` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0～3153 | 1 | 0 | 1 | 1 | 1 | 1 | 1 | 1 |
+| 3154以后 | 1 | 1 | 0 | 1 | 1 | 1 | 1 | 0 |
+
+结论：GT TX复位、GT电源、QPLL锁定和PCIe TX同步均已完成；在MAC开始提交发送数据的
+同一采样点，PHY和GT的Electrical Idle也同步解除。因此当前现象不能归因于
+`txresetdone=0`、PLL未锁定或PHY一直被电气空闲门控。该采样证明的是PHY接口边界状态，
+不能单独证明封装引脚上的串行波形；若冷启动后Root Port仍不发送TS1，故障范围应继续
+集中在Root Port训练状态/PERST#时序或串行接收侧，而不是重复验证standalone PHY IP。
+
+Core ILA本次没有有效数据（触发器在配置交互前发生），需在冷启动后重新布防链路退出触发器
+以取得Root Port TS1和最后一个配置请求的完整时序。
