@@ -8,7 +8,7 @@ set server_url localhost:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm capture-wait capture-cfg-wait capture-tx-wait capture-now status upload}} {
+if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict capture-wait capture-cfg-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now status upload}} {
   error "K11-B3 ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K11-B3 ILA bitstream不存在：$bit_path" }
@@ -26,7 +26,7 @@ set ku040 [lindex $ku040_devices 0]
 set_property PROBES.FILE $ltx_path $ku040
 set_property FULL_PROBES.FILE $ltx_path $ku040
 
-if {$action in {program-arm capture-wait capture-cfg-wait capture-tx-wait}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict capture-wait capture-cfg-wait capture-tx-wait}} {
   set_property PROGRAM.FILE $bit_path $ku040
   program_hw_devices $ku040
 }
@@ -46,10 +46,17 @@ foreach ila $ilas {
   }
 }
 
-if {$action in {program-arm capture-wait capture-cfg-wait capture-tx-wait capture-now}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict capture-wait capture-cfg-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now}} {
   foreach ila $ilas {
     set cell_name [get_property CELL_NAME $ila]
-    if {$action eq "capture-now"} {
+    if {$action in {program-arm-linkdown capture-linkdown-wait}} {
+      set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*link_loss_trigger*"}]
+    } elseif {$action in {program-arm-rxidle-conflict capture-rxidle-conflict-wait} && $cell_name eq "u_ila_pipe"} {
+      set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*phy_rxidle_conflict*"}]
+    } elseif {$action in {program-arm-rxidle-conflict capture-rxidle-conflict-wait} && $cell_name eq "u_ila_core"} {
+      # Core域没有RxElecIdle信号，使用同一次PHY链路退出的CDC脉冲对齐采样。
+      set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*link_loss_trigger*"}]
+    } elseif {$action eq "capture-now"} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*tlp_trigger*"}]
     } elseif {$action in {capture-cfg-wait capture-tx-wait} && $cell_name eq "u_ila_core"} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_core_detail*"}]
@@ -61,7 +68,9 @@ if {$action in {program-arm capture-wait capture-cfg-wait capture-tx-wait captur
     if {[llength $trigger_probes] != 1} {
       error "K11-B3 ILA触发探针不存在或不唯一：[get_property CELL_NAME $ila]"
     }
-    if {$action eq "capture-now"} {
+    if {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait}} {
+      set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
+    } elseif {$action eq "capture-now"} {
       set_property TRIGGER_COMPARE_VALUE eq1'bx [lindex $trigger_probes 0]
     } elseif {$action in {capture-cfg-wait capture-tx-wait} && $cell_name eq "u_ila_core"} {
       if {$action eq "capture-tx-wait"} {
@@ -83,14 +92,17 @@ if {$action in {program-arm capture-wait capture-cfg-wait capture-tx-wait captur
     } else {
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     }
-    set_property CONTROL.TRIGGER_POSITION 1024 $ila
-    run_hw_ila $ila
+    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait} ? 3072 : 1024}] $ila
+    if {$action ni {capture-linkdown-wait capture-rxidle-conflict-wait}} {
+      run_hw_ila $ila
+    }
     puts "K11B3_ILA_ARMED cell=[get_property CELL_NAME $ila] trigger=[get_property NAME [lindex $trigger_probes 0]]"
   }
-  puts "K11B3_ILA_PROGRAM_ARM_PASS bitstream=$bit_path"
-  if {$action in {capture-wait capture-cfg-wait capture-tx-wait capture-now}} {
+  puts "K11B3_ILA_PROGRAM_ARM_PASS bitstream=$bit_path mode=$action"
+    if {$action in {capture-wait capture-cfg-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now}} {
     set timeout_minutes [expr {$action eq "capture-now" ? 1 :
-                              ($action eq "capture-wait" ? 2 : 3)}]
+                              ($action eq "capture-wait" ? 2 :
+                              ($action in {capture-linkdown-wait capture-rxidle-conflict-wait} ? 5 : 3))}]
     puts "K11B3_ILA_WAITING timeout_minutes=$timeout_minutes mode=$action"
     wait_on_hw_ila -timeout $timeout_minutes $ilas
     puts "K11B3_ILA_TRIGGERED"

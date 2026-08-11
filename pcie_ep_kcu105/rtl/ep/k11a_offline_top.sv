@@ -15,6 +15,7 @@ module k11a_offline_top #(
     input  wire [1:0]   link_speed,
     input  wire [2:0]   link_width,
     input  wire         hot_reset,
+    input  wire         dbg_link_loss_trigger,
 
     input  wire         mac_rx_valid,
     input  wire [15:0]  mac_rx_data,
@@ -229,6 +230,8 @@ module k11a_offline_top #(
         wire dbg_core_clk = core_clk;
         (* mark_debug = "true", keep = "true" *)
         wire dbg_core_tlp_trigger = core_rx_valid && core_rx_ready && core_rx_sop;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_core_link_loss_trigger = dbg_link_loss_trigger;
         (* mark_debug = "true", keep = "true" *)
         wire [127:0] dbg_core_stream = {
             10'd0,

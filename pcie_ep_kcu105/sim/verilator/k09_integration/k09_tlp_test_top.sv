@@ -105,7 +105,8 @@ module k09_tlp_test_top #(
         // K11-B3三级诊断：在固定192-bit宽度内保留TX Completion首拍原文，
         // 同时采集codec分类和配置请求/响应握手。
         (* mark_debug = "true", keep = "true" *)
-        wire [191:0] dbg_core_detail = {
+    wire [319:0] dbg_core_detail = {
+            rx_tlp_data,
             8'd0,
             codec_malformed_count[7:0], codec_unsupported_count[7:0],
             codec_cfg_request_count[7:0],

@@ -26,7 +26,10 @@
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
 	k11b2-ila-hw-capture-cfg-wait k11b2-ila-hw-capture-tx-wait \
+	k11b2-ila-hw-program-arm-linkdown k11b2-ila-hw-capture-linkdown-wait \
+	k11b2-ila-hw-program-arm-rxidle-conflict k11b2-ila-hw-capture-rxidle-conflict-wait \
 	k11b2-ila-hw-capture-now k11b2-ila-hw-upload \
+	k11b3-trigger-sim k11b3-cdc-sim k11b3-diagnostic-sim \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -231,7 +234,8 @@ k11b2-lint:
 		rtl/common/pcie_reset_sync.sv rtl/common/pcie_gray_sync.sv \
 		rtl/common/pcie_async_pkt_fifo.sv rtl/common/pcie_async_event_fifo.sv \
 		rtl/common/pcie_tlp_async_bridge.sv rtl/common/pcie_cdc_snapshot.sv \
-		rtl/common/pcie_cdc_pulse.sv rtl/phy/kcu105_reset_ctrl.sv \
+		rtl/common/pcie_cdc_pulse.sv rtl/common/pcie_link_loss_trigger.sv \
+		rtl/phy/kcu105_reset_ctrl.sv \
 		rtl/phy/kcu105_refclk_reset.sv rtl/phy/kcu105_pcie_phy_wrapper.sv \
 		rtl/phy/pcie_gen12_scrambler.sv rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
@@ -270,6 +274,16 @@ k11b2-ila-hw-program-arm:
 		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
 		-tclargs localhost:3122 program-arm
 
+k11b2-ila-hw-program-arm-linkdown:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 program-arm-linkdown
+
+k11b2-ila-hw-program-arm-rxidle-conflict:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 program-arm-rxidle-conflict
+
 k11b2-ila-hw-capture-wait:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
@@ -285,6 +299,16 @@ k11b2-ila-hw-capture-tx-wait:
 		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
 		-tclargs localhost:3122 capture-tx-wait
 
+k11b2-ila-hw-capture-linkdown-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 capture-linkdown-wait
+
+k11b2-ila-hw-capture-rxidle-conflict-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
+		-tclargs localhost:3122 capture-rxidle-conflict-wait
+
 k11b2-ila-hw-capture-now:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
@@ -294,6 +318,21 @@ k11b2-ila-hw-upload:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_ila_hw.tcl \
 		-tclargs localhost:3122 upload
+
+k11b3-trigger-sim:
+	rm -f sim/verilator/k11b3/results.xml
+	$(MAKE) -C sim/verilator/k11b3 results.xml
+	! grep -q '<failure' sim/verilator/k11b3/results.xml
+	@echo "K11B3_TRIGGER_SIM_PASS"
+
+k11b3-cdc-sim:
+	rm -f sim/verilator/k11b3/results.xml
+	$(MAKE) -C sim/verilator/k11b3 -f Makefile.cdc results.xml
+	! grep -q '<failure' sim/verilator/k11b3/results.xml
+	@echo "K11B3_CDC_SIM_PASS"
+
+k11b3-diagnostic-sim: k11b3-trigger-sim k11b3-cdc-sim
+	@echo "K11B3_DIAGNOSTIC_SIM_PASS"
 
 k11b2-hw-probe:
 	$(VIVADO) -mode batch -nojournal -nolog \

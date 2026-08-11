@@ -7,7 +7,8 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer DETECT_TIMEOUT_CYCLES = 3_000_000,
     parameter integer TRAIN_TIMEOUT_CYCLES  = 6_000_000,
     parameter integer HOT_RESET_CYCLES      = 250_000,
-    parameter integer TX_BUFFER_BYTES       = 160
+    parameter integer TX_BUFFER_BYTES       = 160,
+    parameter integer K11B2_ILA_DEBUG      = 0
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -104,6 +105,10 @@ module pcie_ltssm_mac_gen1 #(
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
+    // standalone pcie_phy在真实板上可能在RxElecIdle置位后继续把最后一拍
+    // 标记为RxValid。只有没有有效接收字时，Electrical Idle才可用于L0退出。
+    // 这样既过滤PHY状态的重叠窗口，又保留真正RxValid=0的Electrical Idle检测。
+    wire rxelecidle_sample = phy_rxelecidle && !phy_rxvalid;
     wire rxelecidle_qualified = &rxelecidle_count;
 
     wire       os_ts1_valid;
@@ -128,6 +133,25 @@ module pcie_ltssm_mac_gen1 #(
     wire [31:0] os_tx_data;
     wire [1:0]  os_tx_datak;
     wire        os_tx_valid;
+
+    generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug_ltssm
+        // PIPE域原始PHY、Ordered Set解析及LTSSM上下文，专用于链路退出取证。
+        (* mark_debug = "true", keep = "true" *)
+        wire [255:0] dbg_ltssm_detail = {
+            75'd0,
+            link_disable, hot_reset_req, force_recovery,
+            tx_os_mode, tx_os_link, tx_os_link_pad, tx_os_lane,
+            tx_os_lane_pad, tx_os_training_control, os_tx_valid,
+            ltssm_state, state_timer[15:0], rxelecidle_count,
+            rxelecidle_qualified, os_ts1_valid, os_ts2_valid,
+            os_malformed, os_raw_idle_pair_valid, os_link_number,
+            os_link_is_pad, os_lane_number, os_lane_is_pad, os_n_fts,
+            os_rate_id, os_training_control,
+            phy_rxdata, phy_rxdatak, phy_rxvalid, phy_rxdata_valid,
+            phy_rxelecidle, phy_rxstatus, phy_phystatus,
+            phy_txdata, phy_txdatak, phy_txdata_valid, phy_txelecidle
+        };
+    end endgenerate
 
     wire [31:0] frame_tx_data;
     wire [1:0]  frame_tx_datak;
@@ -368,7 +392,7 @@ module pcie_ltssm_mac_gen1 #(
             rxelecidle_count    <= 3'd0;
         end else begin
             hot_reset_seen <= 1'b0;
-            if ((ltssm_state != STATE_L0) || !phy_rxelecidle)
+            if ((ltssm_state != STATE_L0) || !rxelecidle_sample)
                 rxelecidle_count <= 3'd0;
             else if (!rxelecidle_qualified)
                 rxelecidle_count <= rxelecidle_count + 1'b1;

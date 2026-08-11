@@ -30,14 +30,22 @@ def find_column(columns, suffix):
 def decode_pipe(path):
     columns, rows = read_capture(path)
     trigger_col = find_column(columns, "dbg_pipe_tlp_trigger")
+    link_loss_col = find_column(columns, "dbg_pipe_link_loss_trigger")
     top_col = find_column(columns, "dbg_pipe_top[")
     dll_col = find_column(columns, "dbg_pipe_dll[")
+    ltssm_col = find_column(columns, "dbg_ltssm_detail[")
+    conflict_matches = [index for name, index in columns.items()
+                        if "dbg_phy_rxidle_conflict" in name]
+    conflict_col = conflict_matches[0] if len(conflict_matches) == 1 else None
     decoded = []
     for row in rows:
         top = int(row[top_col], 16)
         dll = int(row[dll_col], 16)
+        ltssm_detail = int(row[ltssm_col], 16)
         decoded.append({
             "sample": int(row[0]), "trigger": int(row[trigger_col], 16),
+            "link_loss_trigger": int(row[link_loss_col], 16),
+            "phy_rxidle_conflict": int(row[conflict_col], 16) if conflict_col is not None else 0,
             "ltssm": bits(top, 27, 6), "link_up": bits(top, 36),
             "dll_active": bits(top, 35), "fc_state": bits(top, 33, 2),
             "mac_rx_valid": bits(top, 16), "mac_rx_sop": bits(top, 15),
@@ -63,6 +71,26 @@ def decode_pipe(path):
             "lcrc_nonzero": bits(dll, 109), "sequence_nonzero": bits(dll, 108),
             "fc_error_nonzero": bits(dll, 110), "bad_dllp_crc": bits(dll, 111),
             "malformed_dllp": bits(dll, 112),
+            "ltssm_detail": ltssm_detail,
+            "link_disable": bits(ltssm_detail, 180),
+            "hot_reset_req": bits(ltssm_detail, 179),
+            "force_recovery": bits(ltssm_detail, 178),
+            "os_ts1": bits(ltssm_detail, 122),
+            "os_ts2": bits(ltssm_detail, 121),
+            "os_malformed": bits(ltssm_detail, 120),
+            "os_idle": bits(ltssm_detail, 119),
+            "rxelecidle_qualified": bits(ltssm_detail, 123),
+            "os_link": bits(ltssm_detail, 111, 8),
+            "os_lane": bits(ltssm_detail, 102, 8),
+            "os_training_control": bits(ltssm_detail, 77, 8),
+            "phy_rxdata": bits(ltssm_detail, 45, 32),
+            "phy_rxdatak": bits(ltssm_detail, 43, 2),
+            "phy_rxelecidle": bits(ltssm_detail, 40),
+            "phy_rxstatus": bits(ltssm_detail, 37, 3),
+            "phy_phystatus": bits(ltssm_detail, 36),
+            "phy_txdata": bits(ltssm_detail, 4, 32),
+            "phy_txdatak": bits(ltssm_detail, 2, 2),
+            "phy_txelecidle": bits(ltssm_detail, 0),
         })
     return decoded
 
@@ -70,6 +98,7 @@ def decode_pipe(path):
 def decode_core(path):
     columns, rows = read_capture(path)
     trigger_col = find_column(columns, "dbg_core_tlp_trigger")
+    link_loss_col = find_column(columns, "dbg_core_link_loss_trigger")
     stream_col = find_column(columns, "dbg_core_stream[")
     detail_col = find_column(columns, "dbg_core_detail[")
     decoded = []
@@ -78,6 +107,7 @@ def decode_core(path):
         detail = int(row[detail_col], 16)
         decoded.append({
             "sample": int(row[0]), "trigger": int(row[trigger_col], 16),
+            "link_loss_trigger": int(row[link_loss_col], 16),
             "rx_valid": bits(stream, 113), "rx_ready": bits(stream, 112),
             "rx_sop": bits(stream, 111), "rx_eop": bits(stream, 110),
             "rx_error": bits(stream, 106, 4),
@@ -89,7 +119,9 @@ def decode_core(path):
             "mem_count": bits(stream, 40, 8), "cpl_count": bits(stream, 32, 8),
             "ur_count": bits(stream, 24, 8), "malformed_count": bits(stream, 16, 8),
             "unsupported_count": bits(stream, 8, 8), "cdc_errors": bits(stream, 0, 8),
-            "raw_data": bits(detail, 0, 128), "raw_keep": bits(detail, 128, 16),
+            "tx_raw_data": bits(detail, 0, 128),
+            "rx_raw_data": bits(detail, 192, 128),
+            "raw_keep": bits(detail, 128, 16),
             "detail_error": bits(detail, 144, 4),
             "detail_eop": bits(detail, 148), "detail_sop": bits(detail, 149),
             "detail_ready": bits(detail, 150), "detail_valid": bits(detail, 151),
@@ -115,7 +147,37 @@ def main():
     core = decode_core(Path(sys.argv[2]))
     pipe_trigger = [r["sample"] for r in pipe if r["trigger"]]
     core_trigger = [r["sample"] for r in core if r["trigger"]]
+    pipe_loss = [r["sample"] for r in pipe if r["link_loss_trigger"]]
+    pipe_conflict = [r["sample"] for r in pipe if r["phy_rxidle_conflict"]]
+    core_loss = [r["sample"] for r in core if r["link_loss_trigger"]]
     print(f"PIPE samples={len(pipe)} trigger={pipe_trigger}")
+    print(f"PIPE link_loss_trigger={pipe_loss}")
+    print(f"PIPE phy_rxidle_conflict={pipe_conflict}")
+    if pipe_loss:
+        loss_sample = pipe_loss[0]
+        transitions = [
+            (pipe[index]["sample"], pipe[index - 1]["ltssm"], pipe[index]["ltssm"])
+            for index in range(1, len(pipe))
+            if pipe[index]["ltssm"] != pipe[index - 1]["ltssm"]
+            and pipe[index]["sample"] <= loss_sample
+        ]
+        transition_sample, transition_before, transition_after = (
+            transitions[-1] if transitions else (loss_sample, pipe[loss_sample]["ltssm"], pipe[loss_sample]["ltssm"])
+        )
+        after = pipe[min(len(pipe) - 1, loss_sample)]
+        qualified = [
+            row["sample"] for row in pipe[:loss_sample]
+            if row["phy_rxelecidle"] and row["rxelecidle_qualified"]
+        ]
+        print(
+            "PIPE link_loss_cause "
+            f"sample={loss_sample} transition={transition_sample} "
+            f"state_before=0x{transition_before:02x} state_at=0x{transition_after:02x} "
+            f"rxelecidle_qualified_samples={qualified[-4:]} "
+            f"hot_reset_req={after['hot_reset_req']} "
+            f"force_recovery={after['force_recovery']} "
+            f"ts1={after['os_ts1']} ts2={after['os_ts2']}"
+        )
     print(
         "PIPE final "
         f"ltssm=0x{pipe[-1]['ltssm']:02x} link={pipe[-1]['link_up']} "
@@ -141,6 +203,7 @@ def main():
         f"malformed_dllp={pipe[-1]['malformed_dllp']}"
     )
     print(f"CORE samples={len(core)} trigger={core_trigger}")
+    print(f"CORE link_loss_trigger={core_loss}")
     print(
         "CORE final "
         f"cfg_count={core[-1]['cfg_count']} cpl_count={core[-1]['cpl_count']} "
@@ -162,7 +225,8 @@ def main():
         print(
             f"DETAIL_BEAT sample={row['sample']} sop={row['detail_sop']} "
             f"eop={row['detail_eop']} keep=0x{row['raw_keep']:04x} "
-            f"error=0x{row['detail_error']:x} data=0x{row['raw_data']:032x}"
+            f"error=0x{row['detail_error']:x} "
+            f"rx=0x{row['rx_raw_data']:032x} tx=0x{row['tx_raw_data']:032x}"
         )
     for row in rsps[:16]:
         print(

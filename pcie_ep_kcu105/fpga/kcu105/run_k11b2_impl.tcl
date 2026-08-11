@@ -38,6 +38,7 @@ set sv_files [list \
   rtl/phy/kcu105_pcie_phy_wrapper.sv rtl/phy/pcie_gen12_scrambler.sv \
   rtl/phy/pcie_gen1_rx_symbol_aligner.sv rtl/phy/pcie_gen1_os_rx.sv \
   rtl/phy/pcie_gen1_os_tx.sv rtl/phy/pcie_gen1_framer.sv \
+  rtl/common/pcie_link_loss_trigger.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
   rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
   rtl/dll/pcie_crc32_lcrc.sv rtl/dll/pcie_fc_local_credit_pool.sv \
@@ -101,6 +102,12 @@ if {$ila_debug} {
     [debug_bus_nets {.*dbg_pipe_top.*\[[0-9]+\]$} 64]
   add_ila_probe u_ila_pipe 2 \
     [debug_bus_nets {.*dbg_pipe_dll.*\[[0-9]+\]$} 128]
+  add_ila_probe u_ila_pipe 3 \
+    [debug_scalar_net u_endpoint/g_ila_debug/dbg_pipe_link_loss_trigger]
+  add_ila_probe u_ila_pipe 4 \
+    [debug_bus_nets {.*dbg_ltssm_detail.*\[[0-9]+\]$} 256]
+  add_ila_probe u_ila_pipe 5 \
+    [debug_scalar_net u_endpoint/g_ila_debug/dbg_phy_rxidle_conflict]
 
   create_debug_core u_ila_core ila
   set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
@@ -114,9 +121,11 @@ if {$ila_debug} {
   add_ila_probe u_ila_core 1 \
     [debug_bus_nets {.*dbg_core_stream.*\[[0-9]+\]$} 128]
   add_ila_probe u_ila_core 2 \
-    [debug_bus_nets {.*dbg_core_detail.*\[[0-9]+\]$} 192]
+    [debug_bus_nets {.*dbg_core_detail.*\[[0-9]+\]$} 320]
+  add_ila_probe u_ila_core 3 \
+    [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
 
-  puts "K11B3_ILA_INSERT_PASS pipe_width=193 core_width=321 depth=4096"
+  puts "K11B3_ILA_INSERT_PASS pipe_width=451 core_width=450 depth=4096"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]

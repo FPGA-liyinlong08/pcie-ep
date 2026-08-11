@@ -1,8 +1,8 @@
 # K11-B3 KCU105实板x1链路A/B验证报告
 
-日期：2026-08-10
+日期：2026-08-11
 
-状态：**官方XDMA Gen3 x1对照PASS；自研Endpoint曾短暂达到L0/DLL Active并完成配置交互，Linux最终枚举FAIL，问题暂停归档**
+状态：**官方XDMA Gen3 x1对照PASS；自研Endpoint的首次L0退出原因已由双ILA定点捕获，Linux最终枚举仍FAIL，协议RTL暂不修改**
 
 ## 1. 验证目的
 
@@ -94,12 +94,13 @@ DLL Active、RX TLP SOP/EOP、LCRC/sequence结果、配置请求握手、Complet
 - BAR0、MSE及配置空间状态；
 - Core域首个RX TLP首拍握手触发信号。
 
-两个ILA深度均为4096，触发位置为1024。构建和硬件操作入口为：
+两个ILA深度均为4096，K11-B3链路退出触发位置为3072。构建和硬件操作入口为：
 
 ```bash
 make k11b2-ila-lint
 make k11b2-ila-vivado
-make k11b2-ila-hw-capture-wait   # 保持Vivado连接，等待Root Port启动流量
+make k11b2-ila-hw-program-arm-linkdown
+make k11b2-ila-hw-capture-linkdown-wait   # 重启Root Port后只等待已Arm的ILA
 ```
 
 调试bitstream允许存在小幅负时序，只用于定位问题，不作为K11功能或时序验收证据；
@@ -158,7 +159,7 @@ TX Electrical Idle。测试明确检查TX序列中出现Rate ID `0x02`、Trainin
 - 新增`decode_k11b3_ila.py`，自动汇总LTSSM、DLL、TLP、配置请求和错误计数。
 
 最新普通调试构建DRC为0 Error、0 Critical Warning，WNS为`-0.116 ns`；按调试策略已上板，
-但不作为K11正式时序验收证据。最新双ILA构建DRC通过且WNS为`0.000 ns`。
+但不作为K11正式时序验收证据。最新双ILA构建DRC为0 Error、0 Critical Warning，WNS为`-0.042 ns`；该镜像仅用于定位。
 
 ## 7. 已取得的真实协议交互证据
 
@@ -192,9 +193,9 @@ LnkSta: Speed 2.5GT/s (downgraded), Width x1 (downgraded)
 Recovery/Hot Reset退出条件、训练序列细节或链路控制寄存器副作用，而不是板级lane、
 REFCLK、PERST#、基础LCRC/ACK或最初的配置Completion路径。
 
-问题在此暂停。恢复排查时应使用最新ILA镜像，以“配置请求或TX Completion”为触发条件
-重新冷启动抓取，重点比较最后一个成功配置请求、Hot Reset状态、TX TS1 Training Control、
-Recovery状态跳转及Root Port最后一个Ordered Set；不要先做无证据的协议RTL修改。
+问题在此暂停。恢复排查时应使用最新ILA镜像，以链路退出事件为触发条件重新冷启动抓取，
+重点比较最后一个成功配置请求、Hot Reset状态、TX TS1 Training Control、Recovery状态跳转
+及Root Port最后一个Ordered Set；不要先做无证据的协议RTL修改。
 
 ## 9. 暂停归档结论
 
@@ -203,3 +204,136 @@ Recovery状态跳转及Root Port最后一个Ordered Set；不要先做无证据�
 - K05 DLL Active和K08配置Completion具有真实交互证据；
 - Linux最终枚举和BAR访问尚未完成，K11保持未冻结；
 - 调试阶段允许负WNS，正式发布阶段仍必须重新完成WNS/WHS不小于0的时序门禁。
+
+## 10. K11-B3链路退出定点捕获结果（2026-08-11）
+
+本轮先建立并验证了链路退出事件检测器：仅在已经观察到`link_up && dll_active`后，
+第一次`!link_up || !dll_active`产生单周期脉冲；训练早期状态跳转不触发，PERST#后可重新
+触发。Verilator结果为触发器2/2、跨域1/1通过；K03、K08回归也通过。
+
+诊断镜像构建结果：合法布局布线完成，DRC为0 Error、0 Critical Warning，WNS为`-0.042 ns`
+（仅用于调试）。双ILA均已Arm，随后执行一次Linux冷启动。原始采样文件为：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_110502_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_110502_u_ila_core.csv
+```
+
+按`phy_pclk`采样点排序的关键窗口如下：
+
+| 采样点 | LTSSM | link/DLL | RxElecIdle | qualified | TS1/TS2 | HotReset/forceRecovery |
+|---:|---|---|---:|---:|---|---|
+| 3055–3062 | L0 (`0x0a`) | 1/1 | 0 | 0 | 0/0 | 0/0 |
+| 3063–3069 | L0 (`0x0a`) | 1/1 | 1 | 0 | 0/0 | 0/0 |
+| 3070 | L0 (`0x0a`) | 1/1 | 1 | 1 | 0/0 | 0/0 |
+| 3071 | Recovery.RcvrLock (`0x0b`) | 0/1 | 1 | 1 | 0/0 | 0/0 |
+| 3072 | Recovery.RcvrLock (`0x0b`) | 0/0 | 1 | 0 | 0/0 | 0/0 |
+
+`link_loss_trigger`在PIPE域和Core域均为采样点3072，说明跨域事件检测路径有效。触发前
+没有观测到TS1/TS2、Hot Reset或`force_recovery`，而`rxelecidle`连续7个采样后
+`rxelecidle_qualified`置位，随后LTSSM从L0进入Recovery.RcvrLock。这是本轮能够判定的
+直接退出原因：**qualified RxElecIdle，而非配置请求、Hot Reset或DLL LCRC/Sequence错误**。
+
+同时采样摘要为：`cfg_count=52`、`cpl_count=52`、`bdf=0a00`、LCRC/Sequence/Replay/CDC
+错误为0；Core触发窗口内没有新的TLP握手。主机冷启动后仅发现Root Port `00:01.0`，没有
+`1234:e001` Endpoint，和“链路退出后未完成枚举”的现象一致。
+
+当前证据仍不能区分两种更底层的来源：
+
+1. Root Port确实让链路进入持续Electrical Idle；
+2. standalone PHY在仍有RX数据活动时错误地报告`rxelecidle`。
+
+因此本轮不修改协议功能RTL。Core ILA在4096深度、3072触发位置的窗口内没有保留最后一个
+配置请求和Completion的原始128-bit首拍，只保留了计数器；这属于当前探针时间窗口的缺口，
+不能声称已经取得最后一包的payload证据。
+
+为仿真闭环，K03新增定向用例`l0_enters_recovery_after_sustained_rxelecidle`：在L0保持
+`phy_rxelecidle=1`连续7拍仍停留L0，第8拍进入Recovery.RcvrLock，且Hot Reset不置位。
+该用例把实板观察到的输入序列固化为可复现激励。下一轮若继续排查，应优先对比同一窗口的
+PHY原始`RxData/RxValid/RxElecIdle`行为，或调整Core域采样策略以捕获最后一笔配置TLP；在
+获得区分Root Port与PHY来源的证据前，不应改变LTSSM的Electrical Idle判定规则。
+
+## 11. K11-B3.1 RxElecIdle/RxValid矛盾复核（2026-08-11）
+
+为区分“Root Port真实进入Electrical Idle”和“standalone PHY状态输出不一致”，在新的诊断
+bitstream中加入仅调试用的`dbg_phy_rxidle_conflict`探针。它只在已经看到
+`link_up && dll_active`、且当前仍为`link_up`时置位，条件为：
+
+```text
+phy_rxelecidle && phy_rxvalid
+```
+
+该信号不参与LTSSM、DLL或TLP功能。调试bitstream完成合法布局布线，DRC为0 Error、0
+Critical Warning，WNS为`-0.263 ns`；负时序只按本轮ILA诊断政策允许，不作为发布镜像验收。
+
+本次使用新镜像执行JTAG下载、双ILA Arm、Linux冷启动和等待式采样。原始文件为：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_124436_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_124436_u_ila_core.csv
+```
+
+关键窗口（PIPE域）如下：
+
+| 采样点 | LTSSM | link/DLL | RxElecIdle | RxValid | RxData | RxDataK | qualified | conflict |
+|---:|---|---|---:|---:|---:|---:|---:|---:|
+| 3071 | L0 (`0x0a`) | 1/1 | 0 | 1 | `0x00004a4a` | `0x0` | 0 | 0 |
+| 3072–3079 | L0 (`0x0a`) | 1/1 | 1 | 1 | `0x000000bc`、`0x00002a00`、`0x0000000e`、`0x00004a4a`… | `0x1`、`0x0`… | 3079置1 | 1 |
+| 3080 | Recovery.RcvrLock (`0x0b`) | 0/1 | 1 | 1 | `0x00007cbc` | `0x3` | 1 | 0 |
+| 3081 | Recovery.RcvrLock (`0x0b`) | 0/0 | 1 | 1 | `0x00007c7c` | `0x3` | 0 | link_loss脉冲 |
+
+因此本次实板证据已经明确：**在LTSSM离开L0之前，standalone PHY同时报告
+`RxElecIdle=1`和`RxValid=1`，且`RxData/RxDataK`仍在变化；8个采样周期后才进入
+Recovery.RcvrLock。** 退出前没有TS1/TS2、Hot Reset、`force_recovery`或DLL错误；计数器仍为
+LCRC=0、Sequence=0、Replay=0、CDC=0。该结果重复并加强了上一轮的判断：直接触发条件是
+qualified RxElecIdle，但其更底层来源至少存在PHY/PIPE状态语义不一致，不能把该信号直接
+等价为“线路已无有效接收数据”。
+
+冷启动后的主机证据仍为仅发现Root Port `00:01.0`，没有`1234:e001` Endpoint；Root Port
+启动日志没有新增AER报错。旧的首次未门控探针采样不作为证据，本节只采用上述门控后的有效
+采样。
+
+下一步闭环输入序列已确定为：在L0/DLL Active下保持`RxValid=1`、`RxData`持续变化，同时
+将`RxElecIdle`连续置1至少8个`phy_pclk`周期；期望当前RTL在第8个周期进入Recovery.RcvrLock。
+该序列已由K03 directed test覆盖。**本轮不修改协议功能RTL**；下一次修改前应先在PHY
+行为模型中复现该矛盾，并单独验证standalone PHY文档对`RxElecIdle`和`RxValid`的优先级定义。
+
+## 12. K11-B3.2 RxValid门控修复与复核（2026-08-11）
+
+在完成B3.1实板取证后，按闭环计划修改Electrical Idle滤波条件：
+
+```text
+rxelecidle_sample = phy_rxelecidle && !phy_rxvalid
+```
+
+只有`rxelecidle_sample`连续8个PIPE周期才允许L0进入Recovery；L0中
+`RxElecIdle=1 && RxValid=1`的重叠窗口会清零滤波计数。训练阶段的Ordered Set、Gen1
+`RxValid`采样和CFG_IDLE检测逻辑未改动。
+
+软件仿真结果：
+
+- K03：9/9通过，包含“RxElecIdle/RxValid重叠不退出”和“RxValid撤销后8拍退出”两条路径；
+- K05：5/5通过，随机信用事件10000组；
+- K06：5/5核心用例及2/2仲裁用例通过，Sequence回绕10000包；
+- K08：单元6/6通过，随机配置事务100000组；K07+K08 TLP集成2/2通过；
+- K09/K10集成回归通过；K11-B3触发器2/2、CDC 1/1通过。
+
+修复后的ILA镜像已重新实现：DRC为0 Error、0 Critical Warning，WNS=`-0.041 ns`，仅按
+调试构建政策允许负时序。JTAG下载并再次Linux冷启动后，主机仍未枚举`1234:e001`。本次
+即时ILA采样为：
+
+```text
+fpga/kcu105/build_k11b2_ila/capture/20260811_131201_u_ila_pipe.csv
+fpga/kcu105/build_k11b2_ila/capture/20260811_131201_u_ila_core.csv
+```
+
+该样本没有触发`link_loss`，但PIPE域4096个采样全部停在`CFG_COMPLETE (0x08)`，
+`link_up=0`、`DLL Active=0`、`RxElecIdle=1`、`RxValid=0`；DLL摘要出现1次FC错误和1次
+malformed DLLP。Core域仍记录`cfg_count=52`、`cpl_count=52`，说明主机配置交互曾经发生，
+但本次启动没有形成可保持的L0。Root Port执行Secondary Bus Reset后仍未出现Endpoint，
+故本轮不能宣布枚举修复成功，也不能把`CFG_COMPLETE`样本误判为过滤逻辑已验证通过。
+
+当前判定：B3.1已明确原始退出原因，B3.2已完成最小门控修复及仿真闭环，但实板仍有
+“CFG_COMPLETE→CFG_IDLE/L0”训练或DLL错误路径未解决。下一步应针对CFG_COMPLETE之后的
+TS2/Idle接收、PHY `RxValid`语义和FC/malformed错误建立新的定点采样；在获得该证据前不再
+增加新的协议功能修改。

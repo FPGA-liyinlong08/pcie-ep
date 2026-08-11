@@ -389,6 +389,36 @@ async def l0_filters_rxelecidle_glitch_and_accepts_partner_recovery(dut):
 
 
 @cocotb.test()
+async def l0_enters_recovery_after_sustained_rxelecidle(dut):
+    """锁定实板输入：RxValid重叠时不退出，真正Electrical Idle连续8拍才退出。"""
+    await initialize(dut)
+    await train_to_l0(dut, validate_tx=False)
+
+    await writable_phase()
+    # K11-B3实板窗口：PHY同时报告RxElecIdle和RxValid，且RxData仍变化。
+    # 这不是有效Electrical Idle，不得触发Recovery。
+    dut.phy_rxelecidle.value = 1
+    dut.phy_rxvalid.value = 1
+    dut.phy_rxdata.value = 0x000000BC
+    await tick(dut, 8)
+    assert int(dut.ltssm_state.value) == L0
+    assert int(dut.rxelecidle_count.value) == 0
+
+    # 真正Electrical Idle：RxValid撤销后，连续7拍只累积滤波计数。
+    await writable_phase()
+    dut.phy_rxvalid.value = 0
+    await tick(dut, 7)
+    assert int(dut.ltssm_state.value) == L0
+    assert int(dut.rxelecidle_count.value) == 7
+    # 第8拍观察到qualified，下一状态必须是Recovery.RcvrLock。
+    await tick(dut)
+    assert int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK
+    assert int(dut.hot_reset_seen.value) == 0
+    await writable_phase()
+    dut.phy_rxelecidle.value = 0
+
+
+@cocotb.test()
 async def detect_errors_recovery_and_hot_reset(dut):
     await initialize(dut)
     await wait_state(dut, DETECT_ACTIVE)

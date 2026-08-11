@@ -67,6 +67,36 @@ module kcu105_pcie_ep_gen1_top #(
     wire [31:0] training_error_count, timeout_count, frame_error_count;
     reg [24:0] heartbeat_count;
 
+    wire dbg_operational_seen;
+    wire dbg_link_loss_seen;
+    wire dbg_link_loss_pipe;
+    wire dbg_link_loss_core;
+
+    generate if (K11B2_ILA_DEBUG != 0) begin : g_link_loss_debug
+        pcie_link_loss_trigger u_link_loss_trigger (
+            .clk              (phy_pclk),
+            .rst_n            (pipe_rst_n),
+            .link_up          (link_up),
+            .dll_active       (dll_active),
+            .operational_seen (dbg_operational_seen),
+            .link_loss_seen   (dbg_link_loss_seen),
+            .link_loss_pulse  (dbg_link_loss_pipe)
+        );
+        pcie_cdc_pulse u_link_loss_cdc (
+            .s_clk   (phy_pclk),
+            .s_rst_n (pipe_rst_n),
+            .s_pulse (dbg_link_loss_pipe),
+            .d_clk   (phy_coreclk),
+            .d_rst_n (core_rst_n),
+            .d_pulse (dbg_link_loss_core)
+        );
+    end else begin : g_link_loss_debug_disabled
+        assign dbg_operational_seen = 1'b0;
+        assign dbg_link_loss_seen   = 1'b0;
+        assign dbg_link_loss_pipe   = 1'b0;
+        assign dbg_link_loss_core   = 1'b0;
+    end endgenerate
+
     generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug
         // K11-B3事件级诊断总线。默认参数为0，正式构建完全裁掉。
         (* mark_debug = "true", keep = "true" *)
@@ -75,8 +105,16 @@ module kcu105_pcie_ep_gen1_top #(
         wire dbg_pipe_tlp_trigger = mac_rx_valid && mac_rx_sop &&
                                     !mac_rx_is_dllp;
         (* mark_debug = "true", keep = "true" *)
+        wire dbg_pipe_link_loss_trigger = dbg_link_loss_pipe;
+        // K11-B3.1：PHY在报告Electrical Idle时仍报告RxValid的矛盾事件。
+        // 仅用于取证，不参与LTSSM或协议功能判定。
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_phy_rxidle_conflict = dbg_operational_seen && link_up &&
+                                       phy_rxelecidle && phy_rxvalid;
+        (* mark_debug = "true", keep = "true" *)
         wire [63:0] dbg_pipe_top = {
-            16'd0,
+            13'd0,
+            dbg_link_loss_seen, dbg_operational_seen, dbg_link_loss_pipe,
             heartbeat_count[24],
             phy_rxdata_valid, phy_rxvalid, phy_rxelecidle, phy_rxstatus,
             phy_phystatus, phy_phystatus_rst,
@@ -125,7 +163,8 @@ module kcu105_pcie_ep_gen1_top #(
         .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES),
         .DETECT_TIMEOUT_CYCLES(DETECT_TIMEOUT_CYCLES),
         .TRAIN_TIMEOUT_CYCLES(TRAIN_TIMEOUT_CYCLES),
-        .HOT_RESET_CYCLES(HOT_RESET_CYCLES)
+        .HOT_RESET_CYCLES(HOT_RESET_CYCLES),
+        .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)
     ) u_ltssm_mac (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .phy_rxdata(phy_rxdata), .phy_rxdatak(phy_rxdatak),
@@ -164,6 +203,7 @@ module kcu105_pcie_ep_gen1_top #(
         .link_up(link_up), .ltssm_state(ltssm_state),
         .link_speed(negotiated_speed), .link_width(negotiated_width),
         .hot_reset(hot_reset_seen),
+        .dbg_link_loss_trigger(dbg_link_loss_core),
         .mac_rx_valid(mac_rx_valid), .mac_rx_data(mac_rx_data),
         .mac_rx_keep(mac_rx_keep), .mac_rx_sop(mac_rx_sop),
         .mac_rx_eop(mac_rx_eop), .mac_rx_is_dllp(mac_rx_is_dllp),
