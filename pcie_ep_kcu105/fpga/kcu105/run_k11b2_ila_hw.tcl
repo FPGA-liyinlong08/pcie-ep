@@ -8,7 +8,7 @@ set server_url localhost:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now status upload}} {
+if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active program-arm-perst program-arm-perst-release capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now status upload}} {
   error "K11-B3 ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K11-B3 ILA bitstream不存在：$bit_path" }
@@ -26,7 +26,7 @@ set ku040 [lindex $ku040_devices 0]
 set_property PROBES.FILE $ltx_path $ku040
 set_property FULL_PROBES.FILE $ltx_path $ku040
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active program-arm-perst program-arm-perst-release capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait}} {
   set_property PROGRAM.FILE $bit_path $ku040
   program_hw_devices $ku040
 }
@@ -46,10 +46,13 @@ foreach ila $ilas {
   }
 }
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active program-arm-perst program-arm-perst-release capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-now}} {
   foreach ila $ilas {
     set cell_name [get_property CELL_NAME $ila]
-    if {$action in {program-arm-linkdown capture-linkdown-wait}} {
+    if {$action in {program-arm-perst program-arm-perst-release} && $cell_name eq "u_ila_pipe"} {
+      # PIPE域捕获同步后的PERST#边沿；Core域保留TLP触发用于时间对齐。
+      set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_perst_n_pipe*"}]
+    } elseif {$action in {program-arm-linkdown capture-linkdown-wait}} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*link_loss_trigger*"}]
     } elseif {$action in {program-arm-rxidle-conflict capture-rxidle-conflict-wait} && $cell_name eq "u_ila_pipe"} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*phy_rxidle_conflict*"}]
@@ -74,7 +77,9 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
     if {[llength $trigger_probes] != 1} {
       error "K11-B3 ILA触发探针不存在或不唯一：[get_property CELL_NAME $ila]"
     }
-    if {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait}} {
+    if {$action in {program-arm-perst program-arm-perst-release} && $cell_name eq "u_ila_pipe"} {
+      set_property TRIGGER_COMPARE_VALUE [expr {$action eq "program-arm-perst" ? "eq1'b0" : "eq1'b1"}] [lindex $trigger_probes 0]
+    } elseif {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait}} {
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     } elseif {$action eq "capture-now"} {
       set_property TRIGGER_COMPARE_VALUE eq1'bx [lindex $trigger_probes 0]

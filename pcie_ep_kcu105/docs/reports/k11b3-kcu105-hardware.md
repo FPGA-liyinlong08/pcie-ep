@@ -551,3 +551,20 @@ DLActive-和Endpoint Polling.Active的单向训练状态**。
 下一步不修改协议RTL，转为对比Root Port训练控制寄存器和PERST#/参考时钟实际时序；如果
 需要继续在Endpoint侧取证，应将触发从`DETECT_ACTIVE`改为更长时间的`POLLING_ACTIVE`窗口，
 并加入原始`phy_txdata/phy_txdatak`探针，以核对TS1内容和发送周期。
+
+### 11.4 PERST#下降沿与PHY复位响应采样（2026-08-11 16:27:09）
+
+新增`program-arm-perst`入口，在PIPE域以同步后的`dbg_perst_n_pipe=0`触发。冷启动采样：
+
+| 采样点 | PERST#同步值 | `pipe_rst_n` | `phy_txdata_valid` | `phy_txelecidle` | `txresetdone` | `qpll1lock` | `pciesynctxsyncdone` |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0～1023 | 1 | 1 | 1 | 0 | 1 | 1 | 1 |
+| 1024（触发） | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| 1029 | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
+| 1030以后 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+
+这证明PERST#下降后，Endpoint接口先立即进入复位/电气空闲，随后GT TX reset-done和
+QPLL lock按PHY复位流程撤销；没有出现PERST#低电平期间继续提交TS1的异常。当前窗口
+只覆盖下降沿，尚未覆盖主机释放PERST#后的上升沿和复位释放延迟；下一步在主机仍保持
+PERST#低电平时Arm上升沿触发，再自动等待主机启动，以测量`PERST#↑ → pipe_rst_n↑ →
+txresetdone↑ → TS1`的相对顺序。
