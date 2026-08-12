@@ -20,6 +20,8 @@ sim/vcs/error.dat
 sim/vcs/rx.dat
 sim/vcs/tx.dat
 fpga/kcu105/build*/
+docs/debug/*/raw/
+docs/debug/*/*.tar.gz
 iter_*_CongestedCLBsAndNets.txt
 tight_setup_hold_pins.txt
 # K02 只版本管理可重建的 XCI；IP 输出产品由 Vivado 按需生成。

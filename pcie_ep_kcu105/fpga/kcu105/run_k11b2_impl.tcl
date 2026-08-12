@@ -155,7 +155,9 @@ if {$ila_debug} {
   }
 
   create_debug_core u_ila_pipe ila
-  set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_pipe]
+  # 1024 TS1 = 8192个125 MHz PIPE周期；这里保留更长的GT RX复位/CDR
+  # 取证窗口，确认RXRESETDONE不是仅仅晚于上一版131 us采集窗口。
+  set_property C_DATA_DEPTH 32768 [get_debug_cores u_ila_pipe]
   set_property C_TRIGIN_EN false [get_debug_cores u_ila_pipe]
   set_property C_TRIGOUT_EN false [get_debug_cores u_ila_pipe]
   set_property C_INPUT_PIPE_STAGES 1 [get_debug_cores u_ila_pipe]
@@ -221,7 +223,9 @@ if {$ila_debug} {
       [phy_boundary_net [format {%srxpolarity_in\[0\]$} $g3_gt_prefix]] \
       [phy_boundary_net [format {%srx8b10ben_in\[0\]$} $g3_gt_prefix]]]]
   add_ila_probe u_ila_pipe 8 $g4_rx_control_nets
-
+  # probe9：Polling.Active中已经完成发送的TS1数量（每个TS1=8个125 MHz pclk）。
+  add_ila_probe u_ila_pipe 9 \
+    [debug_bus_nets {.*dbg_polling_tx_ts1_count.*\[[0-9]+\]$} 11]
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
@@ -240,7 +244,7 @@ if {$ila_debug} {
       [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
   }
 
-  puts "K11G4_ILA_INSERT_PASS pipe_width=475 core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=4096"
+  puts "K11G4_ILA_INSERT_PASS pipe_width=475 core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=32768"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]
