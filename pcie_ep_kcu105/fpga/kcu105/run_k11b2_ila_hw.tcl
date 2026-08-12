@@ -7,18 +7,24 @@ set g9_wait_remote_detect [expr {[info exists ::env(G9_WAIT_REMOTE_DETECT)] &&
                                  $::env(G9_WAIT_REMOTE_DETECT) eq "1"}]
 set g10_cfg_complete [expr {[info exists ::env(G10_CFG_COMPLETE)] &&
                             $::env(G10_CFG_COMPLETE) eq "1"}]
+set g11_rx_parser [expr {[info exists ::env(G11_RX_PARSER)] &&
+                         $::env(G11_RX_PARSER) eq "1"}]
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
-if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect $g9_wait_remote_detect $g10_cfg_complete] 1]] > 1 &&
-    !($g9_wait_remote_detect && $g10_cfg_complete)} {
-  error "G7/G8/G9/G10不能同时启用（G10仅允许与G9组合）"
+if {$g11_rx_parser && !$g9_wait_remote_detect} {
+  error "G11 RX解析诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
-set build_name  [expr {$g7_rx_p0_quiet ? "build_g7_rxp0_ila" :
-                       ($g8_fast_detect ? "build_g8_fast_detect_ila" :
-                       ($g10_cfg_complete ? "build_g10_cfg_complete_ila" :
-                       ($g9_wait_remote_detect ? "build_g9_wait_remote_detect_ila" :
-                                         "build_k11b2_ila")))}]
+if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect] 1]] > 0 &&
+    [llength [lsearch -all -inline [list $g9_wait_remote_detect $g10_cfg_complete $g11_rx_parser] 1]] > 0} {
+  error "G7/G8不能与G9/G10/G11诊断组合"
+}
+set build_name "build_k11b2_ila"
+if {$g9_wait_remote_detect} { set build_name "build_g9_wait_remote_detect_ila" }
+if {$g10_cfg_complete} { set build_name "build_g10_cfg_complete_ila" }
+if {$g11_rx_parser} { set build_name "build_g11_rx_parser_ila" }
+if {$g8_fast_detect} { set build_name "build_g8_fast_detect_ila" }
+if {$g7_rx_p0_quiet} { set build_name "build_g7_rxp0_ila" }
 set impl_dir    [file join $script_dir $build_name impl]
 set capture_dir [file join $script_dir $build_name capture]
 set bit_path    [file join $impl_dir k11b2_gen1_endpoint_ila.bit]

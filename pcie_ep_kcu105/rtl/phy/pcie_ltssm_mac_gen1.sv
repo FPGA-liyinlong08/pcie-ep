@@ -239,6 +239,30 @@ module pcie_ltssm_mac_gen1 #(
             2'd0, dbg_l0_seen, dbg_cfg_idle_seen, dbg_cfg_complete_seen,
             ltssm_state, rx_ts_count, state_timer[15:0]
         };
+        // G11：从PHY原始输入到Ordered Set解析器的逐级数据链路。
+        // 低位到高位依次为OS脉冲、最终aligned、descrambled、raw aligned和PHY原始值。
+        (* mark_debug = "true", keep = "true" *)
+        wire [127:0] dbg_g11_rx = {
+            28'd0,
+            phy_rxdata,
+            phy_rxdatak,
+            phy_rxvalid,
+            phy_rxdata_valid,
+            phy_rxstatus,
+            rx_raw_aligned_valid,
+            rx_raw_aligned_data,
+            rx_raw_aligned_datak,
+            rx_descrambled_valid,
+            rx_descrambled_data,
+            rx_descrambled_datak,
+            rx_aligned_valid,
+            rx_aligned_data,
+            rx_aligned_datak,
+            os_ts1_valid,
+            os_ts2_valid,
+            os_malformed,
+            os_raw_idle_pair_valid
+        };
     end endgenerate
 
     wire [31:0] frame_tx_data;

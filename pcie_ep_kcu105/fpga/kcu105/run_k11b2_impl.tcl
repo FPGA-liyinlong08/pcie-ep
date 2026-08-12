@@ -14,11 +14,13 @@ set g9_wait_remote_detect [expr {[info exists ::env(G9_WAIT_REMOTE_DETECT)] &&
                                  $::env(G9_WAIT_REMOTE_DETECT) eq "1"}]
 set g10_cfg_complete [expr {[info exists ::env(G10_CFG_COMPLETE)] &&
                             $::env(G10_CFG_COMPLETE) eq "1"}]
+set g11_rx_parser [expr {[info exists ::env(G11_RX_PARSER)] &&
+                         $::env(G11_RX_PARSER) eq "1"}]
 set g9_wait_remote_detect_cycles 6250000
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_wait_remote_detect_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
 }
-if {$g9_wait_remote_detect || $g10_cfg_complete} {
+if {$g9_wait_remote_detect || $g10_cfg_complete || $g11_rx_parser} {
   # G9只需要PIPE域结果；省下Core ILA资源和等待一个永远不会触发的Core核。
   set ila_pipe_only 1
 }
@@ -40,24 +42,29 @@ if {$g10_cfg_complete && !$ila_debug} {
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
+if {$g11_rx_parser && !$g9_wait_remote_detect} {
+  error "G11 RX解析诊断必须保留G9 WAIT_REMOTE_DETECT基线"
+}
 if {$g9_wait_remote_detect && $g9_wait_remote_detect_cycles < 1} {
   error "G9_WAIT_REMOTE_DETECT_CYCLES必须大于0"
 }
-if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect $g9_wait_remote_detect $g10_cfg_complete] 1]] > 1 &&
-    !($g9_wait_remote_detect && $g10_cfg_complete)} {
-  error "G7/G8/G9/G10不能同时启用（G10仅允许与G9组合）"
+if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect] 1]] > 0 &&
+    [llength [lsearch -all -inline [list $g9_wait_remote_detect $g10_cfg_complete $g11_rx_parser] 1]] > 0} {
+  error "G7/G8不能与G9/G10/G11诊断组合"
 }
 set ila_resume  [expr {$ila_debug && [info exists ::env(K11B2_ILA_RESUME)] &&
                        $::env(K11B2_ILA_RESUME) eq "1"}]
 set phy_module  pcie_phy_x1_gen3
 set phy_ip_root [file join $script_dir \
                   [expr {$g2_gen1_only ? "ip_g2_gen1" : "ip"}]]
-set build_variant [expr {$g2_gen1_only ? "build_g2_gen1" :
-                         ($g7_rx_p0_quiet ? "build_g7_rxp0_ila" :
-                         ($g8_fast_detect ? "build_g8_fast_detect_ila" :
-                         ($g10_cfg_complete ? "build_g10_cfg_complete_ila" :
-                         ($g9_wait_remote_detect ? "build_g9_wait_remote_detect_ila" :
-                         ($ila_debug ? "build_k11b2_ila" : "build_k11b2")))))}]
+set build_variant "build_k11b2"
+if {$ila_debug} { set build_variant "build_k11b2_ila" }
+if {$g9_wait_remote_detect} { set build_variant "build_g9_wait_remote_detect_ila" }
+if {$g10_cfg_complete} { set build_variant "build_g10_cfg_complete_ila" }
+if {$g11_rx_parser} { set build_variant "build_g11_rx_parser_ila" }
+if {$g8_fast_detect} { set build_variant "build_g8_fast_detect_ila" }
+if {$g7_rx_p0_quiet} { set build_variant "build_g7_rxp0_ila" }
+if {$g2_gen1_only} { set build_variant "build_g2_gen1" }
 set build_dir   [file join $script_dir $build_variant impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
 set afifo_path  /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
@@ -189,7 +196,7 @@ if {$ila_debug} {
   create_debug_core u_ila_pipe ila
   # 1024 TS1 = 8192个125 MHz PIPE周期；这里保留更长的GT RX复位/CDR
   # 取证窗口，确认RXRESETDONE不是仅仅晚于上一版131 us采集窗口。
-  set ila_pipe_depth [expr {$g10_cfg_complete ? 8192 : 32768}]
+  set ila_pipe_depth [expr {$g11_rx_parser ? 4096 : ($g10_cfg_complete ? 8192 : 32768)}]
   set_property C_DATA_DEPTH $ila_pipe_depth [get_debug_cores u_ila_pipe]
   set_property C_TRIGIN_EN false [get_debug_cores u_ila_pipe]
   set_property C_TRIGOUT_EN false [get_debug_cores u_ila_pipe]
@@ -276,6 +283,8 @@ if {$ila_debug} {
     [debug_bus_nets {.*dbg_g10_fields.*\[[0-9]+\]$} 64]
   add_ila_probe u_ila_pipe 16 \
     [debug_bus_nets {.*dbg_g10_state.*\[[0-9]+\]$} 32]
+  add_ila_probe u_ila_pipe 17 \
+    [debug_bus_nets {.*dbg_g11_rx.*\[[0-9]+\]$} 128]
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
