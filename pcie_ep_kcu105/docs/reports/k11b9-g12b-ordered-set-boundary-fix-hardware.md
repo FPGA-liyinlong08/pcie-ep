@@ -54,3 +54,13 @@ sample 385: state=8, mode=2(TS2), complete=0, word=1, active=1
 ## 备注
 
 本次硬件结果证明 Ordered Set 边界修复已生效，并且 reboot 后端点可枚举。后续若要做严格 cold-boot 结论，还需对 KCU105 和 Root Port 做实际断电/上电测试，并单独记录电源时序。
+
+## 第二次 reboot 复核
+
+2026-08-12 21:21（Asia/Shanghai）再次对远端主机执行 reboot。SSH 恢复后 PCIe 仍成功枚举：
+
+```text
+01:00.0 Unassigned class [ff00]: Device [1234:e001] (rev 01)
+```
+
+该结果与前一次 reboot 一致，说明当前 G12-B bit 在连续两次 reboot/retraining 后均能保持端点枚举。BAR MMIO 访问仍需单独修复/验证：此前 `pci_bar_mmap_test` 读回 `0xffffffff`，因此不能把本次枚举成功等同于 BAR 访问成功。
