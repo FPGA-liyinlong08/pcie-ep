@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**计划 v1 已冻结；K00～K11-A PASS；K11-B1冻结，K11-B2全部非实板验证冻结；实板延期**
+状态：**计划 v1 已冻结；K00～K11 PASS；K11-PHASE-RELEASE-v1 已冻结；K12启动**
 
 ## 1. 阶段门
 
@@ -32,8 +32,8 @@
 | K09 | BAR0 命中、写拆分、读执行和 Completion | PASS；9项单模块回归、10万请求随机反压、K07+K08+K09真实TLP级枚举/MMIO、128 B/4 KiB拆分、错误转CA及250 MHz OOC均通过 |
 | K10 | 4 KiB Demo AXI4-Lite Slave | PASS；7项回归、10万随机请求、全部1008可写DWORD、16种WSTRB、K09集成、1×RAMB36E2及250 MHz routed OOC |
 | K11-A | Gen1离线全集成（MAC Packet边界以上） | PASS；DLL Active、Cfg、BAR、Demo、Hot Reset、双向CDC、KU040 routed OOC和定向CDC均通过 |
-| K11-B | Gen1真PHY/实板全集成 | B1已冻结；B2真实PHY InitFC/枚举/BAR、100组随机MMIO、LCRC/ACK注错、PERST#恢复及KU040实现PASS；仅KCU105实板延期 |
-| K12 | Recovery.Speed 与 EQ Phase 0～3 | 正常 EQ、拒绝、非法系数、超时、CDR 失锁和 Gen1 回退 |
+| K11-B | Gen1真PHY/实板全集成 | PASS / 阶段性release；真实PHY InitFC/枚举/BAR、随机MMIO、LCRC/ACK注错、PERST#恢复、无ILA正式时序及KCU105 reboot/MMIO通过；最终压力门保留K14 |
+| K12 | Recovery.Speed 与 EQ Phase 0～3 | 已启动；正常EQ、拒绝、非法系数、超时、CDR失锁和Gen1回退 |
 | K13 | Gen3 全集成 | VCS Gen1→Gen3；KCU105 Gen3 x1；枚举和 10 万 BAR 随机操作 |
 | K14 | 最终加固和发布冻结 | Hot Reset、remove/rescan、长时 MMIO、CDC/DRC/时序和 Linux 最终验收 |
 

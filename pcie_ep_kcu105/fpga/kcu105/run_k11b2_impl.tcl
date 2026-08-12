@@ -22,7 +22,8 @@ set g9_wait_remote_detect_cycles 6250000
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_wait_remote_detect_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
 }
-if {$g9_wait_remote_detect || $g10_cfg_complete || $g11_rx_parser || $g12_ordered_set} {
+if {$ila_debug &&
+    ($g9_wait_remote_detect || $g10_cfg_complete || $g11_rx_parser || $g12_ordered_set)} {
   # G9只需要PIPE域结果；省下Core ILA资源和等待一个永远不会触发的Core核。
   set ila_pipe_only 1
 }
@@ -35,11 +36,11 @@ if {$g7_rx_p0_quiet && !$ila_debug} {
 if {$g8_fast_detect && !$ila_debug} {
   error "G8快速首次Detect诊断必须启用K11B2_ILA_DEBUG"
 }
-if {$g9_wait_remote_detect && !$ila_debug} {
-  error "G9 WAIT_REMOTE_DETECT诊断必须启用K11B2_ILA_DEBUG"
-}
 if {$g10_cfg_complete && !$ila_debug} {
   error "G10 CFG_COMPLETE诊断必须启用K11B2_ILA_DEBUG"
+}
+if {$g11_rx_parser && !$ila_debug} {
+  error "G11 RX解析诊断必须启用K11B2_ILA_DEBUG"
 }
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
@@ -64,10 +65,18 @@ set phy_ip_root [file join $script_dir \
                   [expr {$g2_gen1_only ? "ip_g2_gen1" : "ip"}]]
 set build_variant "build_k11b2"
 if {$ila_debug} { set build_variant "build_k11b2_ila" }
-if {$g9_wait_remote_detect} { set build_variant "build_g9_wait_remote_detect_ila" }
+if {$g9_wait_remote_detect} {
+  set build_variant [expr {$ila_debug ?
+                          "build_g9_wait_remote_detect_ila" :
+                          "build_g9_wait_remote_detect_release"}]
+}
 if {$g10_cfg_complete} { set build_variant "build_g10_cfg_complete_ila" }
 if {$g11_rx_parser} { set build_variant "build_g11_rx_parser_ila" }
-if {$g12_ordered_set} { set build_variant "build_g12_ordered_set_ila" }
+if {$g12_ordered_set} {
+  set build_variant [expr {$ila_debug ?
+                          "build_g12_ordered_set_ila" :
+                          "build_g12_ordered_set_release"}]
+}
 if {$g8_fast_detect} { set build_variant "build_g8_fast_detect_ila" }
 if {$g7_rx_p0_quiet} { set build_variant "build_g7_rxp0_ila" }
 if {$g2_gen1_only} { set build_variant "build_g2_gen1" }
@@ -137,7 +146,14 @@ if {$ila_debug} {
   }
   write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
 } else {
-  synth_design -top $top_name -part $part_name
+  if {$g9_wait_remote_detect} {
+    # Release版保留已经过硬件验证的G9启动等待，只移除ILA/mark_debug。
+    synth_design -top $top_name -part $part_name \
+      -generic G9_WAIT_REMOTE_DETECT=1 \
+      -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles
+  } else {
+    synth_design -top $top_name -part $part_name
+  }
 }
 }
 

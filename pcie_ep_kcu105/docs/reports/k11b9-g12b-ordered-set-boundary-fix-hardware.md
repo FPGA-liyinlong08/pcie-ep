@@ -155,3 +155,41 @@ ur=0, ca=0, axi=0
 因此尚未获得可重复的失败样本，不应在没有证据的情况下修改 DLL 功能逻辑。
 当前动作是保留 `arm-rx-tlp` 无重烧抓取入口，等待下一次 BAR 失败时原地捕获；
 失败前不执行 remove/rescan，以免清掉关键 DLL/配置生命周期状态。
+
+## 无调试 release bit 验证
+
+为排除 ILA/`mark_debug` 对资源、布局和时序的影响，先归档当前 G12 诊断版，再生成
+保留 G9 `WAIT_REMOTE_DETECT` 和 G12 Ordered Set 边界修复、但设置
+`K11B2_ILA_DEBUG=0` 的 release 版本。
+
+诊断版归档：
+
+```text
+fpga/kcu105/archive/g12_debug_20260812_203305/
+debug bit SHA256=c591953399c9ceb1ab33b7676a082bd258769ab107244959162a0fdb368790d7
+debug ltx SHA256=79e3f09464b69e3a230c9550b47017495d38bfd01c439b4763f95acfc58d115d
+```
+
+Release 构建：
+
+```text
+fpga/kcu105/build_g12_ordered_set_release/impl/k11b2_gen1_endpoint.bit
+SHA256=026b92b3d2c8586cc5e7809b3c8a0f4d2ff97349e8ea09ff803a9f2899117628
+K11B2_IMPL_PASS
+ILA_DEBUG=0
+WNS=+0.019 ns
+DRC=0 errors
+```
+
+Vivado Hardware Manager 在烧写后明确报告该设计没有 supported debug core。远端主机
+reboot 后成功枚举：
+
+```text
+01:00.0 Unassigned class [ff00]: Device [1234:e001] (rev 01)
+Command before enable=0000
+BAR0=82800000
+```
+
+写 `Command=0006` 后连续执行 5 次 BAR mmap，结果 `5/5 PASS`；签名、版本和
+scratch 均正确，UR/CA/AXI 错误计数均为 0。本次启动周期没有新增 `PCIe Bus
+Error`、`Rollover`、`BadDLLP` 或 `BadTLP`。

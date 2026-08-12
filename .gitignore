@@ -1,3 +1,6 @@
 xpressrich5-axi_gen3_v230_b000_xilinx_eval.tar.gz
 prj_rich5_ep/
 xpressrich5-axi_gen3_v230_b000_xilinx_eval/
+
+# Locally preserved FPGA debug/release artifacts; Git tracks rebuild scripts and hashes.
+pcie_ep_kcu105/fpga/kcu105/archive/
