@@ -40,7 +40,7 @@ set server_url localhost:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
+if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
   error "K11-B3 ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K11-B3 ILA bitstream不存在：$bit_path" }
@@ -78,7 +78,7 @@ foreach ila $ilas {
   }
 }
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
   foreach ila $ilas {
     set cell_name [get_property CELL_NAME $ila]
     if {$action eq "program-arm-perst" && $cell_name eq "u_ila_pipe"} {
@@ -107,7 +107,7 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
     } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait} && $cell_name eq "u_ila_core"} {
       # Core域用Cfg请求原始详情对齐同一次启动。
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_core_detail*"}]
-    } elseif {$action eq "capture-now"} {
+    } elseif {$action in {capture-now arm-rx-tlp}} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*tlp_trigger*"}]
     } elseif {$action in {capture-cfg-wait capture-cfg-complete-wait program-arm-cfg-complete capture-tx-wait} && $cell_name eq "u_ila_core"} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_core_detail*"}]
@@ -127,6 +127,8 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     } elseif {$action eq "capture-now"} {
       set_property TRIGGER_COMPARE_VALUE eq1'bx [lindex $trigger_probes 0]
+    } elseif {$action eq "arm-rx-tlp"} {
+      set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active} && $cell_name eq "u_ila_pipe"} {
       set pattern [string repeat x 64]
       if {$action in {program-arm-detect-active arm-detect-active}} {

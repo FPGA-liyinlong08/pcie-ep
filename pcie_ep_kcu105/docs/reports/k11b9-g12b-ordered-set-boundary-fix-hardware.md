@@ -64,3 +64,94 @@ sample 385: state=8, mode=2(TS2), complete=0, word=1, active=1
 ```
 
 该结果与前一次 reboot 一致，说明当前 G12-B bit 在连续两次 reboot/retraining 后均能保持端点枚举。BAR MMIO 访问仍需单独修复/验证：此前 `pci_bar_mmap_test` 读回 `0xffffffff`，因此不能把本次枚举成功等同于 BAR 访问成功。
+
+## reboot 与 remove/rescan 的 BAR0 A/B 现象
+
+连续 reboot 后，Linux 均能枚举 `01:00.0 1234:e001`，BAR0 分配为
+`0x82800000`。Linux 初始 `Command=0000`；写成 `0006` 开启 Memory Space 与
+Bus Master 后，第一次 BAR 测试出现如下结果：
+
+```text
+BAR_MMAP signature=50434945 version=00010000 link=00000a01 before=00000000 scratch=ffffffff ur=ffffffff ca=ffffffff axi=ffffffff
+BAR_MMAP_FAIL
+```
+
+也就是说，最开始的只读寄存器和 scratch 初值能够正确返回；向 `BAR0+0x40`
+执行一次 Posted Write 后，scratch 以及后续错误计数读均变为 `0xffffffff`。
+Root Port 同期记录一个可纠正 Data Link Layer `Replay Number Rollover`：
+
+```text
+pcieport 0000:00:01.0: AER: Corrected error message received
+pcieport 0000:00:01.0: PCIe Bus Error: severity=Corrected, type=Data Link Layer
+[ 8] Rollover
+```
+
+不重新烧写 FPGA，仅执行下面的 Linux PCI 生命周期操作：
+
+```text
+echo 1 > /sys/bus/pci/devices/0000:01:00.0/remove
+echo 1 > /sys/bus/pci/rescan
+setpci -s 01:00.0 COMMAND.W=0006
+```
+
+端点重新枚举为相同的 `01:00.0 1234:e001`，随后同一个 C 程序通过：
+
+```text
+BAR_MMAP signature=50434945 version=00010000 link=00000a01 before=00000000 scratch=a5c37e19 ur=00000000 ca=00000000 axi=00000000
+BAR_MMAP_PASS
+```
+
+因此 BAR0 地址译码、AXI-Lite slave 和 Completion 基本功能已由正常样本证明；
+剩余问题集中在 reboot 首次枚举后的 DLL/事务状态生命周期。下一步对比 reboot
+首次 BAR 事务和 remove/rescan 后同一事务的 RX sequence、ACK/NAK、Replay、FC
+以及 Completion 发送状态。
+
+### 后续复现修正
+
+开始 DLL A/B 取证后，又执行了两次 reboot：一次在 BAR 测试前连接并 Arm ILA，
+另一次完全不连接 JTAG、SSH 恢复后立即测试。两次均未执行 remove/rescan，且 BAR
+测试都直接通过：
+
+```text
+BAR_MMAP signature=50434945 version=00010000 link=00000a01 before=00000000 scratch=a5c37e19 ur=00000000 ca=00000000 axi=00000000
+BAR_MMAP_PASS
+```
+
+所以现阶段不能把 remove/rescan 认定为必需修复条件。更准确的描述是：曾出现一次
+reboot 后可枚举、前几次 BAR read 正常，但一次 Posted Write 后后续 read 全为
+`0xffffffff`；remove/rescan 后恢复，而后续 reboot 暂未复现。该故障具有偶发性，
+也可能与烧写后首次主机生命周期、链路时序或 DLL Replay 状态有关。
+
+正常 ILA 基线：
+
+```text
+capture/20260812_222938_u_ila_pipe.csv
+FC_ACTIVE=1, replay_active=0, replay_fatal=0, replay_occupancy=0
+next_tx_seq=1245, next_rx_seq=1247, last_acked_seq=1244
+lcrc_error=0, sequence_error=0, NAK=0
+```
+
+另一个 reboot 后直接通过的样本为
+`capture/20260812_223226_u_ila_pipe.csv`。下一步改为连续 reboot+BAR 压力复现；
+若失败，保持现场不做 remove/rescan，立即抓取失败状态。
+
+### 连续 reboot + BAR 压力结果
+
+随后执行 3 轮连续 reboot。每轮 SSH 恢复后均先确认 `01:00.0 1234:e001`，设置
+`Command=0006`，再连续执行 5 次 `pci_bar_mmap_test`。结果为：
+
+```text
+reboot: 3/3 枚举成功
+BAR mmap: 15/15 PASS
+signature=50434945
+scratch=a5c37e19
+ur=0, ca=0, axi=0
+```
+
+第 3 轮结束后，Root Port 当前启动周期的 `dmesg` 中没有新的 `PCIe Bus Error`、
+`Rollover`、`BadDLLP` 或 `BadTLP`；Endpoint 保持 `Command=0006`、
+`BAR0=0x82800000`。
+
+因此尚未获得可重复的失败样本，不应在没有证据的情况下修改 DLL 功能逻辑。
+当前动作是保留 `arm-rx-tlp` 无重烧抓取入口，等待下一次 BAR 失败时原地捕获；
+失败前不执行 remove/rescan，以免清掉关键 DLL/配置生命周期状态。
