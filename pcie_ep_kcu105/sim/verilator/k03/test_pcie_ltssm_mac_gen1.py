@@ -266,7 +266,8 @@ async def train_to_l0(
         await writable_phase()
         assert int(dut.ltssm_state.value) == POLLING_ACTIVE
         assert int(dut.training_error_count.value) > before
-    await send_ts(dut, 1, 8)
+    # Polling.Active的RX条件先在8个TS1后满足，但TX仍必须完成1024个TS1。
+    await send_ts(dut, 1, 1024)
     await wait_state(dut, POLLING_CONFIG)
     if validate_tx:
         await capture_tx_ts(dut, 2)
@@ -395,7 +396,7 @@ async def gen1_ignores_gen3_rxdata_valid(dut):
     await initialize(dut)
     await wait_state(dut, DETECT_ACTIVE)
     await complete_receiver_detect(dut)
-    await send_ts(dut, 1, 8, data_valid=0)
+    await send_ts(dut, 1, 1024, data_valid=0)
     await wait_state(dut, POLLING_CONFIG)
 
 
@@ -405,8 +406,28 @@ async def gen1_accepts_com_in_high_symbol(dut):
     await initialize(dut)
     await wait_state(dut, DETECT_ACTIVE)
     await complete_receiver_detect(dut)
-    await send_ts_high_symbol_aligned(dut, 1, 8)
+    await send_ts_high_symbol_aligned(dut, 1, 1024)
     await wait_state(dut, POLLING_CONFIG)
+
+
+@cocotb.test()
+async def polling_active_accepts_mixed_ts1_ts2_after_tx_threshold(dut):
+    """Polling.Active的8个RX训练Ordered Set允许TS1/TS2混合，但仍需TX 1024 TS1。"""
+    await initialize(dut)
+    await wait_state(dut, DETECT_ACTIVE)
+    await complete_receiver_detect(dut)
+
+    for kind in (1, 2, 1, 2, 1, 2, 1, 2):
+        await send_ts(dut, kind, 1)
+    await tick(dut)
+    await writable_phase()
+    assert int(dut.ltssm_state.value) == POLLING_ACTIVE
+    assert int(dut.rx_ts_count.value) >= 8
+    assert int(dut.polling_tx_ts1_count.value) < 1024
+
+    await send_ts(dut, 1, 1016)
+    await wait_state(dut, POLLING_CONFIG)
+    assert int(dut.polling_tx_ts1_count.value) == 1024
 
 
 @cocotb.test()
@@ -475,7 +496,7 @@ async def detect_errors_recovery_and_hot_reset(dut):
     await wait_state(dut, DETECT_ACTIVE)
     await complete_receiver_detect(dut)
     await send_ts(dut, 1, 1, corrupt_index=9)
-    await tick(dut, 520)
+    await tick(dut, 10200)
     assert int(dut.timeout_count.value) >= 1
     await wait_state(dut, DETECT_QUIET)
 

@@ -139,12 +139,28 @@ module pcie_ltssm_mac_gen1 #(
     wire [31:0] os_tx_data;
     wire [1:0]  os_tx_datak;
     wire        os_tx_valid;
+    wire        os_tx_complete;
+    // Polling.Active中的TX只发送TS1；该事件对应一个完整的8拍TS1。
+    wire        os_tx_ts1_complete = os_tx_complete && (tx_os_mode == 2'd1);
+    reg  [10:0] polling_tx_ts1_count;
+    wire        polling_rx_os_valid = (os_ts1_valid || os_ts2_valid) &&
+                                      os_link_is_pad && os_lane_is_pad;
+    // 允许最后一个RX Ordered Set与最后一个TX TS1完成事件在同一拍汇合。
+    wire        polling_rx_ts_done = (rx_ts_count >= TS_REQUIRED) ||
+                                     (polling_rx_os_valid &&
+                                      (rx_ts_count >= TS_REQUIRED-1'b1));
+    wire        polling_tx_ts1_done = (polling_tx_ts1_count >= 11'd1024) ||
+                                      (os_tx_ts1_complete &&
+                                       (polling_tx_ts1_count >= 11'd1023));
 
     generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug_ltssm
         // PIPE域原始PHY、Ordered Set解析及LTSSM上下文，专用于链路退出取证。
         (* mark_debug = "true", keep = "true" *)
+        wire [10:0] dbg_polling_tx_ts1_count = polling_tx_ts1_count;
+        (* mark_debug = "true", keep = "true" *)
         wire [255:0] dbg_ltssm_detail = {
-            75'd0,
+            61'd0, polling_tx_ts1_count, os_tx_ts1_complete,
+            polling_tx_ts1_done, polling_rx_ts_done,
             link_disable, hot_reset_req, force_recovery,
             tx_os_mode, tx_os_link, tx_os_link_pad, tx_os_lane,
             tx_os_lane_pad, tx_os_training_control, os_tx_valid,
@@ -271,7 +287,8 @@ module pcie_ltssm_mac_gen1 #(
         .training_control (tx_os_training_control),
         .out_data         (os_tx_data),
         .out_datak        (os_tx_datak),
-        .out_valid        (os_tx_valid)
+        .out_valid        (os_tx_valid),
+        .os_complete      (os_tx_complete)
     );
 
     pcie_gen12_scrambler u_tx_scrambler (
@@ -395,6 +412,7 @@ module pcie_ltssm_mac_gen1 #(
             ltssm_state         <= DETECT_QUIET;
             state_timer         <= 32'd0;
             rx_ts_count         <= 5'd0;
+            polling_tx_ts1_count <= 11'd0;
             link_number         <= K_PAD;
             training_error_count <= 32'd0;
             timeout_count       <= 32'd0;
@@ -416,11 +434,13 @@ module pcie_ltssm_mac_gen1 #(
                 ltssm_state <= DETECT_QUIET;
                 state_timer <= 32'd0;
                 rx_ts_count <= 5'd0;
+                polling_tx_ts1_count <= 11'd0;
                 link_number <= K_PAD;
             end else begin
                 case (ltssm_state)
                     DETECT_QUIET: begin
                         rx_ts_count <= 5'd0;
+                        polling_tx_ts1_count <= 11'd0;
                         if (state_timer >= DETECT_QUIET_LIMIT) begin
                             ltssm_state <= DETECT_ACTIVE;
                             state_timer <= 32'd0;
@@ -429,6 +449,7 @@ module pcie_ltssm_mac_gen1 #(
                         end
                     end
                     DETECT_ACTIVE: begin
+                        polling_tx_ts1_count <= 11'd0;
                         if (phy_phystatus) begin
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
@@ -448,6 +469,7 @@ module pcie_ltssm_mac_gen1 #(
                     end
                     PHY_POWERUP: begin
                         rx_ts_count <= 5'd0;
+                        polling_tx_ts1_count <= 11'd0;
                         if (phy_phystatus) begin
                             ltssm_state <= POLLING_ACTIVE;
                             state_timer <= 32'd0;
@@ -461,20 +483,29 @@ module pcie_ltssm_mac_gen1 #(
                     end
                     POLLING_ACTIVE: begin
                         state_timer <= state_timer + 1'b1;
-                        if (os_ts1_valid && os_link_is_pad && os_lane_is_pad) begin
-                            if (rx_ts_count == TS_REQUIRED-1'b1) begin
+                        if (os_tx_ts1_complete && (polling_tx_ts1_count < 11'd1024))
+                            polling_tx_ts1_count <= polling_tx_ts1_count + 1'b1;
+
+                        if (polling_rx_os_valid) begin
+                            // Polling.Active要求连续8个TS1或TS2；计数饱和，
+                            // 使RX条件一旦满足即可等待TX条件，不必碰巧同拍汇合。
+                            if (rx_ts_count < TS_REQUIRED)
+                                rx_ts_count <= rx_ts_count + 1'b1;
+                            if (polling_rx_ts_done && polling_tx_ts1_done) begin
                                 ltssm_state <= POLLING_CONFIG;
                                 state_timer <= 32'd0;
                                 rx_ts_count <= 5'd0;
-                            end else rx_ts_count <= rx_ts_count + 1'b1;
-                        end else if (os_ts1_valid || os_ts2_valid) begin
+                            end
+                        end else if (os_ts1_valid || os_ts2_valid || os_malformed) begin
                             rx_ts_count <= 5'd0;
-                            training_error_count <= sat_inc32(training_error_count);
+                            if (os_ts1_valid || os_ts2_valid)
+                                training_error_count <= sat_inc32(training_error_count);
                         end
                         if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
+                            polling_tx_ts1_count <= 11'd0;
                             timeout_count <= sat_inc32(timeout_count);
                         end
                     end
@@ -687,6 +718,7 @@ module pcie_ltssm_mac_gen1 #(
                     end
                     HOT_RESET: begin
                         rx_ts_count <= 5'd0;
+                        polling_tx_ts1_count <= 11'd0;
                         if (state_timer >= HOT_RESET_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;
@@ -699,6 +731,7 @@ module pcie_ltssm_mac_gen1 #(
                         ltssm_state <= DETECT_QUIET;
                         state_timer <= 32'd0;
                         rx_ts_count <= 5'd0;
+                        polling_tx_ts1_count <= 11'd0;
                         link_number <= K_PAD;
                         training_error_count <= sat_inc32(training_error_count);
                     end
