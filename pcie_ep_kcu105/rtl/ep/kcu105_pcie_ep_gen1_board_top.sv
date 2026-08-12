@@ -5,6 +5,8 @@
 module kcu105_pcie_ep_gen1_board_top #(
     parameter integer K11B2_ILA_DEBUG = 0,
     parameter integer G7_RX_P0_QUIET  = 0,
+    parameter integer G9_WAIT_REMOTE_DETECT = 0,
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
     parameter integer DETECT_QUIET_CYCLES = 1_500_000
 ) (
     input  wire       pcie_refclk_p,
@@ -31,6 +33,8 @@ module kcu105_pcie_ep_gen1_board_top #(
     kcu105_pcie_ep_gen1_top #(
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
         .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
+        .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
+        .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
         .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),

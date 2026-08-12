@@ -10,6 +10,16 @@ set g7_rx_p0_quiet [expr {[info exists ::env(G7_RX_P0_QUIET)] &&
                           $::env(G7_RX_P0_QUIET) eq "1"}]
 set g8_fast_detect [expr {[info exists ::env(G8_FAST_DETECT)] &&
                           $::env(G8_FAST_DETECT) eq "1"}]
+set g9_wait_remote_detect [expr {[info exists ::env(G9_WAIT_REMOTE_DETECT)] &&
+                                 $::env(G9_WAIT_REMOTE_DETECT) eq "1"}]
+set g9_wait_remote_detect_cycles 6250000
+if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
+  set g9_wait_remote_detect_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
+}
+if {$g9_wait_remote_detect} {
+  # G9只需要PIPE域结果；省下Core ILA资源和等待一个永远不会触发的Core核。
+  set ila_pipe_only 1
+}
 if {$ila_debug && $g2_gen1_only} {
   error "G2 Gen1/CPLL诊断构建不支持ILA模式"
 }
@@ -19,8 +29,14 @@ if {$g7_rx_p0_quiet && !$ila_debug} {
 if {$g8_fast_detect && !$ila_debug} {
   error "G8快速首次Detect诊断必须启用K11B2_ILA_DEBUG"
 }
-if {$g7_rx_p0_quiet && $g8_fast_detect} {
-  error "G7与G8必须单变量A/B，不能同时启用"
+if {$g9_wait_remote_detect && !$ila_debug} {
+  error "G9 WAIT_REMOTE_DETECT诊断必须启用K11B2_ILA_DEBUG"
+}
+if {$g9_wait_remote_detect && $g9_wait_remote_detect_cycles < 1} {
+  error "G9_WAIT_REMOTE_DETECT_CYCLES必须大于0"
+}
+if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect $g9_wait_remote_detect] 1]] > 1} {
+  error "G7/G8/G9必须单变量A/B，不能同时启用"
 }
 set ila_resume  [expr {$ila_debug && [info exists ::env(K11B2_ILA_RESUME)] &&
                        $::env(K11B2_ILA_RESUME) eq "1"}]
@@ -31,7 +47,8 @@ set build_dir   [file join $script_dir \
                   [expr {$g2_gen1_only ? "build_g2_gen1" :
                          ($g7_rx_p0_quiet ? "build_g7_rxp0_ila" :
                          ($g8_fast_detect ? "build_g8_fast_detect_ila" :
-                         ($ila_debug ? "build_k11b2_ila" : "build_k11b2")))}] impl]
+                         ($g9_wait_remote_detect ? "build_g9_wait_remote_detect_ila" :
+                         ($ila_debug ? "build_k11b2_ila" : "build_k11b2"))))}] impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
 set afifo_path  /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
 set part_name   xcku040-ffva1156-2-e
@@ -87,6 +104,11 @@ if {$ila_debug} {
     # 250 MHz PIPE时钟下25,000周期约100 us，只验证首次Detect启动竞态。
     synth_design -top $top_name -part $part_name \
       -generic K11B2_ILA_DEBUG=1 -generic DETECT_QUIET_CYCLES=25000
+  } elseif {$g9_wait_remote_detect} {
+    synth_design -top $top_name -part $part_name \
+      -generic K11B2_ILA_DEBUG=1 \
+      -generic G9_WAIT_REMOTE_DETECT=1 \
+      -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles
   } else {
     synth_design -top $top_name -part $part_name -generic K11B2_ILA_DEBUG=1
   }
@@ -226,6 +248,16 @@ if {$ila_debug} {
   # probe9：Polling.Active中已经完成发送的TS1数量（每个TS1=8个125 MHz pclk）。
   add_ila_probe u_ila_pipe 9 \
     [debug_bus_nets {.*dbg_polling_tx_ts1_count.*\[[0-9]+\]$} 11]
+  # G9：低到高依次为RXELECIDLE、RXVALID、TXELECIDLE、TXDETECTRX、
+  # AS_MAC_IN_DETECT、PHY_POWERDOWN[1:0]、保留位。
+  add_ila_probe u_ila_pipe 10 \
+    [debug_bus_nets {.*dbg_g9_control.*\[[0-9]+\]$} 8]
+  add_ila_probe u_ila_pipe 11 \
+    [debug_scalar_net u_endpoint/u_ltssm_mac/g_ila_debug_ltssm/dbg_g9_active]
+  add_ila_probe u_ila_pipe 12 \
+    [debug_scalar_net u_endpoint/u_ltssm_mac/g_ila_debug_ltssm/dbg_g9_rxelecidle_low_seen]
+  add_ila_probe u_ila_pipe 13 \
+    [debug_scalar_net u_endpoint/u_ltssm_mac/g_ila_debug_ltssm/dbg_g9_timeout_seen]
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]

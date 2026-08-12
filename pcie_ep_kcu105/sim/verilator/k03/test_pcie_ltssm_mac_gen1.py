@@ -30,6 +30,9 @@ RECOVERY_RCVRCFG = 12
 RECOVERY_IDLE = 13
 HOT_RESET = 14
 PHY_POWERUP = 15
+WAIT_REMOTE_DETECT = 16
+G9_DETECT_TIMEOUT = 17
+G9_ENABLED = os.getenv("G9_WAIT_REMOTE_DETECT", "0") == "1"
 partner_rx_lfsr = 0xFFFF
 
 
@@ -140,7 +143,37 @@ async def complete_receiver_detect(dut):
     assert int(dut.phy_txelecidle.value) == 1
     assert int(dut.phy_txdata_valid.value) == 0
     await pulse_phystatus(dut, 0b000)
-    await wait_state(dut, POLLING_ACTIVE)
+    if G9_ENABLED:
+        await wait_state(dut, WAIT_REMOTE_DETECT)
+        assert int(dut.phy_powerdown.value) == 0b00
+        assert int(dut.phy_txdetectrx.value) == 0
+        assert int(dut.phy_txelecidle.value) == 1
+        assert int(dut.phy_txdata_valid.value) == 0
+        assert int(dut.as_mac_in_detect.value) == 1
+        # 模拟Root Port开始发送活动；G9应只因RXELECIDLE下降而离开等待态。
+        dut.phy_rxelecidle.value = 0
+        await wait_state(dut, POLLING_ACTIVE)
+    else:
+        await wait_state(dut, POLLING_ACTIVE)
+
+
+@cocotb.test()
+async def g9_timeout_latches_result(dut):
+    if not G9_ENABLED:
+        return
+    await initialize(dut)
+    await wait_state(dut, DETECT_ACTIVE)
+    await complete_receiver_detect_without_remote_activity(dut)
+
+
+async def complete_receiver_detect_without_remote_activity(dut):
+    """G9专用：完成本端Detect后保持RX Electrical Idle，验证超时锁存。"""
+    await pulse_phystatus(dut, 0b011)
+    await wait_state(dut, PHY_POWERUP)
+    await pulse_phystatus(dut, 0b000)
+    await wait_state(dut, WAIT_REMOTE_DETECT)
+    await wait_state(dut, G9_DETECT_TIMEOUT, timeout=128)
+    assert int(dut.timeout_count.value) >= 1
 
 
 def ts_symbols(kind, link=PAD, lane=PAD, nfts=0xFF, rate=0x02, control=0):

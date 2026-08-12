@@ -2,7 +2,7 @@
 `default_nettype none
 
 module pcie_ltssm_mac_gen1 #(
-    // 125 MHz 硬件默认值；仿真通过参数覆盖缩短。
+    // PIPE时钟硬件默认值；仿真通过参数覆盖缩短。
     parameter integer DETECT_QUIET_CYCLES   = 1_500_000,
     parameter integer DETECT_TIMEOUT_CYCLES = 3_000_000,
     parameter integer TRAIN_TIMEOUT_CYCLES  = 6_000_000,
@@ -11,7 +11,12 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer K11B2_ILA_DEBUG       = 0,
     // G7仅用于上板A/B：Detect.Quiet保持P0，让Root Port在首次Detect前
     // 有完整窗口观察Endpoint接收终端；Detect.Active仍切到P1执行本端Detect。
-    parameter integer G7_RX_P0_QUIET        = 0
+    parameter integer G7_RX_P0_QUIET        = 0,
+    // G9仅用于上板诊断：本端Receiver Detect成功并切到P0后，暂不发TS1，
+    // 保持Detect assist，等待Root Port的RX activity。默认关闭。
+    parameter integer G9_WAIT_REMOTE_DETECT = 0,
+    // 默认按250 MHz PIPE时钟等待25 ms；上板若确认phy_pclk不同，可由构建参数覆盖。
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -94,11 +99,15 @@ module pcie_ltssm_mac_gen1 #(
     // standalone PHY适配子状态：Receiver Detect在P1完成后，MAC先请求P0，
     // 并等待一次独立PhyStatus完成脉冲，之后才进入PCIe Polling.Active发TS1。
     localparam [5:0] PHY_POWERUP           = 6'd15;
+    localparam [5:0] WAIT_REMOTE_DETECT    = 6'd16;
+    localparam [5:0] G9_DETECT_TIMEOUT     = 6'd17;
 
     localparam [31:0] DETECT_QUIET_LIMIT   = DETECT_QUIET_CYCLES - 1;
     localparam [31:0] DETECT_TIMEOUT_LIMIT = DETECT_TIMEOUT_CYCLES - 1;
     localparam [31:0] TRAIN_TIMEOUT_LIMIT  = TRAIN_TIMEOUT_CYCLES - 1;
     localparam [31:0] HOT_RESET_LIMIT      = HOT_RESET_CYCLES - 1;
+    localparam [31:0] G9_WAIT_REMOTE_DETECT_LIMIT =
+        G9_WAIT_REMOTE_DETECT_CYCLES - 1;
     localparam [4:0]  TS_REQUIRED          = 5'd8;
     localparam [4:0]  TS_ACCEPT_REQUIRED   = 5'd2;
     // Gen1 16-bit PHY 每个 TS 占 8 个 pclk。Configuration 的 Accept/Complete
@@ -108,6 +117,9 @@ module pcie_ltssm_mac_gen1 #(
     localparam [7:0]  K_PAD                = 8'hf7;
 
     reg [31:0] state_timer;
+    // G9结果锁存：用于在25 ms级等待结束后，通过ILA触发取证。
+    reg        g9_rxelecidle_low_seen;
+    reg        g9_timeout_seen;
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
@@ -172,6 +184,19 @@ module pcie_ltssm_mac_gen1 #(
             phy_rxdata, phy_rxdatak, phy_rxvalid, phy_rxdata_valid,
             phy_rxelecidle, phy_rxstatus, phy_phystatus,
             phy_txdata, phy_txdatak, phy_txdata_valid, phy_txelecidle
+        };
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_g9_active = (ltssm_state == WAIT_REMOTE_DETECT);
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_g9_rxelecidle_low_seen = g9_rxelecidle_low_seen;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_g9_timeout_seen = g9_timeout_seen;
+        // bit0 RXELECIDLE, bit1 RXVALID, bit2 TXELECIDLE, bit3 TXDETECTRX,
+        // bit4 AS_MAC_IN_DETECT, bit[6:5] PHY_POWERDOWN, bit7 reserved.
+        (* mark_debug = "true", keep = "true" *)
+        wire [7:0] dbg_g9_control = {
+            1'b0, phy_powerdown, as_mac_in_detect, phy_txdetectrx,
+            phy_txelecidle, phy_rxvalid, phy_rxelecidle
         };
     end endgenerate
 
@@ -343,7 +368,8 @@ module pcie_ltssm_mac_gen1 #(
         tx_os_enable   = 1'b1;
         tx_os_training_control = 8'h00;
         case (ltssm_state)
-            DETECT_QUIET, DETECT_ACTIVE, PHY_POWERUP: begin
+            DETECT_QUIET, DETECT_ACTIVE, PHY_POWERUP,
+            WAIT_REMOTE_DETECT, G9_DETECT_TIMEOUT: begin
                 tx_os_enable   = 1'b0;
                 tx_os_link_pad = 1'b1;
                 tx_os_lane_pad = 1'b1;
@@ -382,7 +408,9 @@ module pcie_ltssm_mac_gen1 #(
     assign phy_txdetectrx     = (ltssm_state == DETECT_ACTIVE);
     assign phy_txelecidle     = (ltssm_state == DETECT_QUIET) ||
                                 (ltssm_state == DETECT_ACTIVE) ||
-                                (ltssm_state == PHY_POWERUP);
+                                (ltssm_state == PHY_POWERUP) ||
+                                (ltssm_state == WAIT_REMOTE_DETECT) ||
+                                (ltssm_state == G9_DETECT_TIMEOUT);
     assign phy_txcompliance   = 1'b0;
     assign phy_rxpolarity     = 1'b0;
     // Receiver Detect必须在P1执行；Detect成功后的PHY_POWERUP已请求P0，
@@ -400,7 +428,9 @@ module pcie_ltssm_mac_gen1 #(
     assign phy_rxeq_ctrl      = 2'b00;
     assign phy_rxeq_txpreset  = 4'd0;
     assign as_mac_in_detect   = (ltssm_state == DETECT_QUIET) ||
-                                (ltssm_state == DETECT_ACTIVE);
+                                (ltssm_state == DETECT_ACTIVE) ||
+                                (ltssm_state == WAIT_REMOTE_DETECT) ||
+                                (ltssm_state == G9_DETECT_TIMEOUT);
     assign as_cdr_hold_req    = 1'b0;
     assign link_up            = (ltssm_state == STATE_L0);
     assign negotiated_width   = (ltssm_state >= STATE_L0 &&
@@ -419,6 +449,8 @@ module pcie_ltssm_mac_gen1 #(
             frame_error_count   <= 32'd0;
             hot_reset_seen      <= 1'b0;
             rxelecidle_count    <= 3'd0;
+            g9_rxelecidle_low_seen <= 1'b0;
+            g9_timeout_seen        <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
             if ((ltssm_state != STATE_L0) || !rxelecidle_sample)
@@ -430,12 +462,17 @@ module pcie_ltssm_mac_gen1 #(
             if (os_malformed)
                 training_error_count <= sat_inc32(training_error_count);
 
+            if ((ltssm_state == WAIT_REMOTE_DETECT) && !phy_rxelecidle)
+                g9_rxelecidle_low_seen <= 1'b1;
+
             if (link_disable) begin
                 ltssm_state <= DETECT_QUIET;
                 state_timer <= 32'd0;
                 rx_ts_count <= 5'd0;
                 polling_tx_ts1_count <= 11'd0;
                 link_number <= K_PAD;
+                g9_rxelecidle_low_seen <= 1'b0;
+                g9_timeout_seen <= 1'b0;
             end else begin
                 case (ltssm_state)
                     DETECT_QUIET: begin
@@ -471,7 +508,8 @@ module pcie_ltssm_mac_gen1 #(
                         rx_ts_count <= 5'd0;
                         polling_tx_ts1_count <= 11'd0;
                         if (phy_phystatus) begin
-                            ltssm_state <= POLLING_ACTIVE;
+                            ltssm_state <= (G9_WAIT_REMOTE_DETECT != 0) ?
+                                            WAIT_REMOTE_DETECT : POLLING_ACTIVE;
                             state_timer <= 32'd0;
                         end else if (state_timer >= DETECT_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
@@ -480,6 +518,29 @@ module pcie_ltssm_mac_gen1 #(
                         end else begin
                             state_timer <= state_timer + 1'b1;
                         end
+                    end
+                    WAIT_REMOTE_DETECT: begin
+                        // G9诊断窗口：P0 + TX Electrical Idle + Detect assist，
+                        // 不执行本端Receiver Detect，也不发送TS1。
+                        rx_ts_count <= 5'd0;
+                        polling_tx_ts1_count <= 11'd0;
+                        if (!phy_rxelecidle) begin
+                            ltssm_state <= POLLING_ACTIVE;
+                            state_timer <= 32'd0;
+                        end else if (state_timer >= G9_WAIT_REMOTE_DETECT_LIMIT) begin
+                            ltssm_state <= G9_DETECT_TIMEOUT;
+                            state_timer <= 32'd0;
+                            g9_timeout_seen <= 1'b1;
+                            timeout_count <= sat_inc32(timeout_count);
+                        end else begin
+                            state_timer <= state_timer + 1'b1;
+                        end
+                    end
+                    G9_DETECT_TIMEOUT: begin
+                        // 诊断失败后停留，保持控制信号可被ILA观察；等待外部复位。
+                        rx_ts_count <= 5'd0;
+                        polling_tx_ts1_count <= 11'd0;
+                        state_timer <= state_timer;
                     end
                     POLLING_ACTIVE: begin
                         state_timer <= state_timer + 1'b1;

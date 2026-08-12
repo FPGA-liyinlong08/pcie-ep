@@ -8,7 +8,9 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer TRAIN_TIMEOUT_CYCLES  = 6_000_000,
     parameter integer HOT_RESET_CYCLES      = 250_000,
     parameter integer K11B2_ILA_DEBUG        = 0,
-    parameter integer G7_RX_P0_QUIET         = 0
+    parameter integer G7_RX_P0_QUIET         = 0,
+    parameter integer G9_WAIT_REMOTE_DETECT  = 0,
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000
 ) (
     input  wire        pcie_refclk_p,
     input  wire        pcie_refclk_n,
@@ -192,7 +194,9 @@ module kcu105_pcie_ep_gen1_top #(
         .TRAIN_TIMEOUT_CYCLES(TRAIN_TIMEOUT_CYCLES),
         .HOT_RESET_CYCLES(HOT_RESET_CYCLES),
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
-        .G7_RX_P0_QUIET(G7_RX_P0_QUIET)
+        .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
+        .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
+        .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES)
     ) u_ltssm_mac (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .phy_rxdata(phy_rxdata), .phy_rxdatak(phy_rxdatak),
