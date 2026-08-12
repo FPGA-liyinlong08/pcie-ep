@@ -5,13 +5,20 @@ set g8_fast_detect [expr {[info exists ::env(G8_FAST_DETECT)] &&
                           $::env(G8_FAST_DETECT) eq "1"}]
 set g9_wait_remote_detect [expr {[info exists ::env(G9_WAIT_REMOTE_DETECT)] &&
                                  $::env(G9_WAIT_REMOTE_DETECT) eq "1"}]
-if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect $g9_wait_remote_detect] 1]] > 1} {
-  error "G7/G8/G9不能同时启用"
+set g10_cfg_complete [expr {[info exists ::env(G10_CFG_COMPLETE)] &&
+                            $::env(G10_CFG_COMPLETE) eq "1"}]
+if {$g10_cfg_complete && !$g9_wait_remote_detect} {
+  error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
+}
+if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect $g9_wait_remote_detect $g10_cfg_complete] 1]] > 1 &&
+    !($g9_wait_remote_detect && $g10_cfg_complete)} {
+  error "G7/G8/G9/G10不能同时启用（G10仅允许与G9组合）"
 }
 set build_name  [expr {$g7_rx_p0_quiet ? "build_g7_rxp0_ila" :
                        ($g8_fast_detect ? "build_g8_fast_detect_ila" :
+                       ($g10_cfg_complete ? "build_g10_cfg_complete_ila" :
                        ($g9_wait_remote_detect ? "build_g9_wait_remote_detect_ila" :
-                                         "build_k11b2_ila"))}]
+                                         "build_k11b2_ila")))}]
 set impl_dir    [file join $script_dir $build_name impl]
 set capture_dir [file join $script_dir $build_name capture]
 set bit_path    [file join $impl_dir k11b2_gen1_endpoint_ila.bit]

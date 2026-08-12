@@ -120,6 +120,17 @@ module pcie_ltssm_mac_gen1 #(
     // G9结果锁存：用于在25 ms级等待结束后，通过ILA触发取证。
     reg        g9_rxelecidle_low_seen;
     reg        g9_timeout_seen;
+    // G10 CFG_COMPLETE取证计数器：统计收到的TS2及字段匹配结果。
+    reg [15:0] dbg_cfg_ts2_any_count;
+    reg [15:0] dbg_cfg_ts2_match_count;
+    reg [15:0] dbg_cfg_ts2_mismatch_count;
+    reg [15:0] dbg_cfg_ts2_link_pad_count;
+    reg [15:0] dbg_cfg_ts2_lane_pad_count;
+    reg [15:0] dbg_cfg_ts2_link_mismatch_count;
+    reg [15:0] dbg_cfg_ts2_lane_mismatch_count;
+    reg        dbg_cfg_complete_seen;
+    reg        dbg_cfg_idle_seen;
+    reg        dbg_l0_seen;
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
@@ -198,6 +209,36 @@ module pcie_ltssm_mac_gen1 #(
             1'b0, phy_powerdown, as_mac_in_detect, phy_txdetectrx,
             phy_txelecidle, phy_rxvalid, phy_rxelecidle
         };
+        // G10 counts: low-to-high fields are any, match, mismatch, link PAD,
+        // lane PAD, link mismatch, lane mismatch, then state-entry latches.
+        (* mark_debug = "true", keep = "true" *)
+        wire [127:0] dbg_g10_counts = {
+            13'd0, dbg_l0_seen, dbg_cfg_idle_seen, dbg_cfg_complete_seen,
+            dbg_cfg_ts2_lane_mismatch_count,
+            dbg_cfg_ts2_link_mismatch_count,
+            dbg_cfg_ts2_lane_pad_count,
+            dbg_cfg_ts2_link_pad_count,
+            dbg_cfg_ts2_mismatch_count,
+            dbg_cfg_ts2_match_count,
+            dbg_cfg_ts2_any_count
+        };
+        // G10 fields: current decoded TS2 fields and the captured link number.
+        (* mark_debug = "true", keep = "true" *)
+        wire [63:0] dbg_g10_fields = {
+            1'b0, phy_rxelecidle, phy_rxvalid, os_idle_pair_valid,
+            (ltssm_state == CFG_COMPLETE),
+            (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
+             (os_link_number == link_number) && (os_lane_number == 0)),
+            os_training_control, os_rate_id, os_n_fts,
+            os_malformed, os_ts1_valid, os_ts2_valid,
+            rx_ts_count, link_number, os_lane_is_pad, os_lane_number,
+            os_link_is_pad, os_link_number
+        };
+        (* mark_debug = "true", keep = "true" *)
+        wire [31:0] dbg_g10_state = {
+            2'd0, dbg_l0_seen, dbg_cfg_idle_seen, dbg_cfg_complete_seen,
+            ltssm_state, rx_ts_count, state_timer[15:0]
+        };
     end endgenerate
 
     wire [31:0] frame_tx_data;
@@ -238,6 +279,12 @@ module pcie_ltssm_mac_gen1 #(
     function automatic [31:0] sat_inc32(input [31:0] value);
         begin
             sat_inc32 = (&value) ? value : value + 1'b1;
+        end
+    endfunction
+
+    function automatic [15:0] sat_inc16(input [15:0] value);
+        begin
+            sat_inc16 = (&value) ? value : value + 1'b1;
         end
     endfunction
 
@@ -451,8 +498,24 @@ module pcie_ltssm_mac_gen1 #(
             rxelecidle_count    <= 3'd0;
             g9_rxelecidle_low_seen <= 1'b0;
             g9_timeout_seen        <= 1'b0;
+            dbg_cfg_ts2_any_count <= 16'd0;
+            dbg_cfg_ts2_match_count <= 16'd0;
+            dbg_cfg_ts2_mismatch_count <= 16'd0;
+            dbg_cfg_ts2_link_pad_count <= 16'd0;
+            dbg_cfg_ts2_lane_pad_count <= 16'd0;
+            dbg_cfg_ts2_link_mismatch_count <= 16'd0;
+            dbg_cfg_ts2_lane_mismatch_count <= 16'd0;
+            dbg_cfg_complete_seen <= 1'b0;
+            dbg_cfg_idle_seen <= 1'b0;
+            dbg_l0_seen <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
+            if (ltssm_state == CFG_COMPLETE)
+                dbg_cfg_complete_seen <= 1'b1;
+            if (ltssm_state == CFG_IDLE)
+                dbg_cfg_idle_seen <= 1'b1;
+            if (ltssm_state == STATE_L0)
+                dbg_l0_seen <= 1'b1;
             if ((ltssm_state != STATE_L0) || !rxelecidle_sample)
                 rxelecidle_count <= 3'd0;
             else if (!rxelecidle_qualified)
@@ -473,6 +536,16 @@ module pcie_ltssm_mac_gen1 #(
                 link_number <= K_PAD;
                 g9_rxelecidle_low_seen <= 1'b0;
                 g9_timeout_seen <= 1'b0;
+                dbg_cfg_ts2_any_count <= 16'd0;
+                dbg_cfg_ts2_match_count <= 16'd0;
+                dbg_cfg_ts2_mismatch_count <= 16'd0;
+                dbg_cfg_ts2_link_pad_count <= 16'd0;
+                dbg_cfg_ts2_lane_pad_count <= 16'd0;
+                dbg_cfg_ts2_link_mismatch_count <= 16'd0;
+                dbg_cfg_ts2_lane_mismatch_count <= 16'd0;
+                dbg_cfg_complete_seen <= 1'b0;
+                dbg_cfg_idle_seen <= 1'b0;
+                dbg_l0_seen <= 1'b0;
             end else begin
                 case (ltssm_state)
                     DETECT_QUIET: begin
@@ -677,11 +750,25 @@ module pcie_ltssm_mac_gen1 #(
                     end
                     CFG_COMPLETE: begin
                         state_timer <= state_timer + 1'b1;
+                        if (os_ts2_valid) begin
+                            dbg_cfg_ts2_any_count <= sat_inc16(dbg_cfg_ts2_any_count);
+                            if (os_link_is_pad)
+                                dbg_cfg_ts2_link_pad_count <= sat_inc16(dbg_cfg_ts2_link_pad_count);
+                            if (os_lane_is_pad)
+                                dbg_cfg_ts2_lane_pad_count <= sat_inc16(dbg_cfg_ts2_lane_pad_count);
+                            if (os_link_number != link_number)
+                                dbg_cfg_ts2_link_mismatch_count <= sat_inc16(dbg_cfg_ts2_link_mismatch_count);
+                            if (os_lane_number != 0)
+                                dbg_cfg_ts2_lane_mismatch_count <= sat_inc16(dbg_cfg_ts2_lane_mismatch_count);
+                        end
                         if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
+                            dbg_cfg_ts2_match_count <= sat_inc16(dbg_cfg_ts2_match_count);
                             if (rx_ts_count < TS_REQUIRED)
                                 rx_ts_count <= rx_ts_count + 1'b1;
                         end else if (os_ts1_valid || os_ts2_valid) begin
+                            if (os_ts2_valid)
+                                dbg_cfg_ts2_mismatch_count <= sat_inc16(dbg_cfg_ts2_mismatch_count);
                             rx_ts_count <= 5'd0;
                             training_error_count <= sat_inc32(training_error_count);
                         end
