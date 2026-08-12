@@ -16,11 +16,13 @@ set g10_cfg_complete [expr {[info exists ::env(G10_CFG_COMPLETE)] &&
                             $::env(G10_CFG_COMPLETE) eq "1"}]
 set g11_rx_parser [expr {[info exists ::env(G11_RX_PARSER)] &&
                          $::env(G11_RX_PARSER) eq "1"}]
+set g12_ordered_set [expr {[info exists ::env(G12_ORDERED_SET)] &&
+                           $::env(G12_ORDERED_SET) eq "1"}]
 set g9_wait_remote_detect_cycles 6250000
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_wait_remote_detect_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
 }
-if {$g9_wait_remote_detect || $g10_cfg_complete || $g11_rx_parser} {
+if {$g9_wait_remote_detect || $g10_cfg_complete || $g11_rx_parser || $g12_ordered_set} {
   # G9只需要PIPE域结果；省下Core ILA资源和等待一个永远不会触发的Core核。
   set ila_pipe_only 1
 }
@@ -45,11 +47,14 @@ if {$g10_cfg_complete && !$g9_wait_remote_detect} {
 if {$g11_rx_parser && !$g9_wait_remote_detect} {
   error "G11 RX解析诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
+if {$g12_ordered_set && !$g9_wait_remote_detect} {
+  error "G12 Ordered Set边界诊断必须保留G9 WAIT_REMOTE_DETECT基线"
+}
 if {$g9_wait_remote_detect && $g9_wait_remote_detect_cycles < 1} {
   error "G9_WAIT_REMOTE_DETECT_CYCLES必须大于0"
 }
 if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect] 1]] > 0 &&
-    [llength [lsearch -all -inline [list $g9_wait_remote_detect $g10_cfg_complete $g11_rx_parser] 1]] > 0} {
+    [llength [lsearch -all -inline [list $g9_wait_remote_detect $g10_cfg_complete $g11_rx_parser $g12_ordered_set] 1]] > 0} {
   error "G7/G8不能与G9/G10/G11诊断组合"
 }
 set ila_resume  [expr {$ila_debug && [info exists ::env(K11B2_ILA_RESUME)] &&
@@ -62,6 +67,7 @@ if {$ila_debug} { set build_variant "build_k11b2_ila" }
 if {$g9_wait_remote_detect} { set build_variant "build_g9_wait_remote_detect_ila" }
 if {$g10_cfg_complete} { set build_variant "build_g10_cfg_complete_ila" }
 if {$g11_rx_parser} { set build_variant "build_g11_rx_parser_ila" }
+if {$g12_ordered_set} { set build_variant "build_g12_ordered_set_ila" }
 if {$g8_fast_detect} { set build_variant "build_g8_fast_detect_ila" }
 if {$g7_rx_p0_quiet} { set build_variant "build_g7_rxp0_ila" }
 if {$g2_gen1_only} { set build_variant "build_g2_gen1" }
@@ -196,7 +202,7 @@ if {$ila_debug} {
   create_debug_core u_ila_pipe ila
   # 1024 TS1 = 8192个125 MHz PIPE周期；这里保留更长的GT RX复位/CDR
   # 取证窗口，确认RXRESETDONE不是仅仅晚于上一版131 us采集窗口。
-  set ila_pipe_depth [expr {$g11_rx_parser ? 4096 : ($g10_cfg_complete ? 8192 : 32768)}]
+  set ila_pipe_depth [expr {$g11_rx_parser || $g12_ordered_set ? 4096 : ($g10_cfg_complete ? 8192 : 32768)}]
   set_property C_DATA_DEPTH $ila_pipe_depth [get_debug_cores u_ila_pipe]
   set_property C_TRIGIN_EN false [get_debug_cores u_ila_pipe]
   set_property C_TRIGOUT_EN false [get_debug_cores u_ila_pipe]
@@ -285,6 +291,8 @@ if {$ila_debug} {
     [debug_bus_nets {.*dbg_g10_state.*\[[0-9]+\]$} 32]
   add_ila_probe u_ila_pipe 17 \
     [debug_bus_nets {.*dbg_g11_rx.*\[[0-9]+\]$} 128]
+  add_ila_probe u_ila_pipe 18 \
+    [debug_bus_nets {.*dbg_g12_tx.*\[[0-9]+\]$} 32]
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]

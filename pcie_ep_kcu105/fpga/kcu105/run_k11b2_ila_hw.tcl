@@ -9,20 +9,26 @@ set g10_cfg_complete [expr {[info exists ::env(G10_CFG_COMPLETE)] &&
                             $::env(G10_CFG_COMPLETE) eq "1"}]
 set g11_rx_parser [expr {[info exists ::env(G11_RX_PARSER)] &&
                          $::env(G11_RX_PARSER) eq "1"}]
+set g12_ordered_set [expr {[info exists ::env(G12_ORDERED_SET)] &&
+                           $::env(G12_ORDERED_SET) eq "1"}]
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
 if {$g11_rx_parser && !$g9_wait_remote_detect} {
   error "G11 RX解析诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
+if {$g12_ordered_set && !$g9_wait_remote_detect} {
+  error "G12 Ordered Set边界诊断必须保留G9 WAIT_REMOTE_DETECT基线"
+}
 if {[llength [lsearch -all -inline [list $g7_rx_p0_quiet $g8_fast_detect] 1]] > 0 &&
-    [llength [lsearch -all -inline [list $g9_wait_remote_detect $g10_cfg_complete $g11_rx_parser] 1]] > 0} {
+    [llength [lsearch -all -inline [list $g9_wait_remote_detect $g10_cfg_complete $g11_rx_parser $g12_ordered_set] 1]] > 0} {
   error "G7/G8不能与G9/G10/G11诊断组合"
 }
 set build_name "build_k11b2_ila"
 if {$g9_wait_remote_detect} { set build_name "build_g9_wait_remote_detect_ila" }
 if {$g10_cfg_complete} { set build_name "build_g10_cfg_complete_ila" }
 if {$g11_rx_parser} { set build_name "build_g11_rx_parser_ila" }
+if {$g12_ordered_set} { set build_name "build_g12_ordered_set_ila" }
 if {$g8_fast_detect} { set build_name "build_g8_fast_detect_ila" }
 if {$g7_rx_p0_quiet} { set build_name "build_g7_rxp0_ila" }
 set impl_dir    [file join $script_dir $build_name impl]
@@ -34,7 +40,7 @@ set server_url localhost:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
+if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
   error "K11-B3 ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K11-B3 ILA bitstream不存在：$bit_path" }
@@ -52,7 +58,7 @@ set ku040 [lindex $ku040_devices 0]
 set_property PROBES.FILE $ltx_path $ku040
 set_property FULL_PROBES.FILE $ltx_path $ku040
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-g9-rxidle-wait capture-g9-timeout-wait}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-g9-rxidle-wait capture-g9-timeout-wait}} {
   set_property PROGRAM.FILE $bit_path $ku040
   program_hw_devices $ku040
 }
@@ -72,7 +78,7 @@ foreach ila $ilas {
   }
 }
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
+if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
   foreach ila $ilas {
     set cell_name [get_property CELL_NAME $ila]
     if {$action eq "program-arm-perst" && $cell_name eq "u_ila_pipe"} {
@@ -95,7 +101,7 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_g9_rxelecidle_low_seen*"}]
     } elseif {$action in {program-arm-g9-timeout capture-g9-timeout-wait} && $cell_name eq "u_ila_pipe"} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_g9_timeout_seen*"}]
-    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} && $cell_name eq "u_ila_pipe"} {
+    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active} && $cell_name eq "u_ila_pipe"} {
       # 复用已有dbg_pipe_top，不修改RTL/ILA位宽；匹配LTSSM=CFG_COMPLETE(0x08)。
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_pipe_top*"}]
     } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait} && $cell_name eq "u_ila_core"} {
@@ -121,11 +127,17 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     } elseif {$action eq "capture-now"} {
       set_property TRIGGER_COMPARE_VALUE eq1'bx [lindex $trigger_probes 0]
-    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} && $cell_name eq "u_ila_pipe"} {
+    } elseif {$action in {program-arm-cfg-complete capture-cfg-complete-wait program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active} && $cell_name eq "u_ila_pipe"} {
       set pattern [string repeat x 64]
       if {$action in {program-arm-detect-active arm-detect-active}} {
         # dbg_pipe_top[32:27] = DETECT_ACTIVE (6'd1).
         foreach {bit_index bit_value} {27 1 28 0 29 0 30 0 31 0 32 0} {
+          set string_index [expr {63 - $bit_index}]
+          set pattern [string replace $pattern $string_index $string_index $bit_value]
+        }
+      } elseif {$action eq "program-arm-cfg-lanenum-accept"} {
+        # dbg_pipe_top[32:27] = CFG_LANENUM_ACCEPT (6'd7).
+        foreach {bit_index bit_value} {27 1 28 1 29 1 30 0 31 0 32 0} {
           set string_index [expr {63 - $bit_index}]
           set pattern [string replace $pattern $string_index $string_index $bit_value]
         }
@@ -156,7 +168,7 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
     } else {
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     }
-    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : 1024}] $ila
+    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : ($action eq "program-arm-cfg-lanenum-accept" ? 256 : 1024)}] $ila
     if {$action ni {capture-linkdown-wait capture-rxidle-conflict-wait capture-cfg-complete-wait}} {
       run_hw_ila $ila
     }

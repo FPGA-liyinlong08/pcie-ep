@@ -131,6 +131,8 @@ module pcie_ltssm_mac_gen1 #(
     reg        dbg_cfg_complete_seen;
     reg        dbg_cfg_idle_seen;
     reg        dbg_l0_seen;
+    // G12-B：CFG_LANENUM_ACCEPT满足接收/时序条件后，等待当前TS1完整结束。
+    reg        cfg_complete_pending;
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
@@ -152,6 +154,23 @@ module pcie_ltssm_mac_gen1 #(
     wire [7:0] os_rate_id;
     wire [7:0] os_training_control;
 
+    // PIPE/standalone PHY 的 RxDataValid 只用于 Gen3 128b/130b 数据块；
+    // Gen1/2 的 8b/10b Symbol 有效性由 RxValid 指示。K03 固定 Gen1，因此不能
+    // 用 phy_rxdata_valid 门控 Ordered Set，否则真实 PHY 会丢弃全部 TS1/TS2。
+    wire        rx_phy_word_valid = phy_rxvalid;
+    wire        rx_raw_aligned_valid;
+    wire [15:0] rx_raw_aligned_data;
+    wire [1:0]  rx_raw_aligned_datak;
+    wire        rx_descrambled_valid;
+    wire [15:0] rx_descrambled_data;
+    wire [1:0]  rx_descrambled_datak;
+    wire        rx_aligned_valid;
+    wire [15:0] rx_aligned_data;
+    wire [1:0]  rx_aligned_datak;
+    wire        os_idle_pair_valid = rx_aligned_valid &&
+                                     (rx_aligned_datak == 2'b00) &&
+                                     (rx_aligned_data == 16'h0000);
+
     reg  [1:0] tx_os_mode;
     reg  [7:0] tx_os_link;
     reg        tx_os_link_pad;
@@ -163,6 +182,8 @@ module pcie_ltssm_mac_gen1 #(
     wire [1:0]  os_tx_datak;
     wire        os_tx_valid;
     wire        os_tx_complete;
+    wire [2:0]  tx_os_word_index;
+    wire [2:0]  tx_os_active_word_index;
     // Polling.Active中的TX只发送TS1；该事件对应一个完整的8拍TS1。
     wire        os_tx_ts1_complete = os_tx_complete && (tx_os_mode == 2'd1);
     reg  [10:0] polling_tx_ts1_count;
@@ -239,6 +260,13 @@ module pcie_ltssm_mac_gen1 #(
             2'd0, dbg_l0_seen, dbg_cfg_idle_seen, dbg_cfg_complete_seen,
             ltssm_state, rx_ts_count, state_timer[15:0]
         };
+        // G12-A：Ordered Set发送边界取证。
+        // 低位到高位依次为LTSSM、TX mode、完成脉冲、原始/实际word index、TX valid。
+        (* mark_debug = "true", keep = "true" *)
+        wire [31:0] dbg_g12_tx = {
+            16'd0, os_tx_valid, tx_os_active_word_index, tx_os_word_index,
+            os_tx_complete, tx_os_mode, ltssm_state
+        };
         // G11：从PHY原始输入到Ordered Set解析器的逐级数据链路。
         // 低位到高位依次为OS脉冲、最终aligned、descrambled、raw aligned和PHY原始值。
         (* mark_debug = "true", keep = "true" *)
@@ -270,23 +298,6 @@ module pcie_ltssm_mac_gen1 #(
     wire        frame_tx_valid;
     wire        framer_error;
     wire        framer_enable = (ltssm_state == STATE_L0);
-    // PIPE/standalone PHY 的 RxDataValid 只用于 Gen3 128b/130b 数据块；
-    // Gen1/2 的 8b/10b Symbol 有效性由 RxValid 指示。K03 固定 Gen1，因此不能
-    // 用 phy_rxdata_valid 门控 Ordered Set，否则真实 PHY 会丢弃全部 TS1/TS2。
-    wire        rx_phy_word_valid = phy_rxvalid;
-    wire        rx_raw_aligned_valid;
-    wire [15:0] rx_raw_aligned_data;
-    wire [1:0]  rx_raw_aligned_datak;
-    wire        rx_descrambled_valid;
-    wire [15:0] rx_descrambled_data;
-    wire [1:0]  rx_descrambled_datak;
-    wire        rx_aligned_valid;
-    wire [15:0] rx_aligned_data;
-    wire [1:0]  rx_aligned_datak;
-    wire        os_idle_pair_valid = rx_aligned_valid &&
-                                     (rx_aligned_datak == 2'b00) &&
-                                     (rx_aligned_data == 16'h0000);
-
     wire [15:0] tx_plain_data = framer_enable ? frame_tx_data[15:0] :
                                                 os_tx_data[15:0];
     wire [1:0]  tx_plain_datak = framer_enable ? frame_tx_datak : os_tx_datak;
@@ -384,7 +395,9 @@ module pcie_ltssm_mac_gen1 #(
         .out_data         (os_tx_data),
         .out_datak        (os_tx_datak),
         .out_valid        (os_tx_valid),
-        .os_complete      (os_tx_complete)
+        .os_complete      (os_tx_complete),
+        .word_index_debug (tx_os_word_index),
+        .active_word_index_debug(tx_os_active_word_index)
     );
 
     pcie_gen12_scrambler u_tx_scrambler (
@@ -532,6 +545,7 @@ module pcie_ltssm_mac_gen1 #(
             dbg_cfg_complete_seen <= 1'b0;
             dbg_cfg_idle_seen <= 1'b0;
             dbg_l0_seen <= 1'b0;
+            cfg_complete_pending <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
             if (ltssm_state == CFG_COMPLETE)
@@ -724,6 +738,7 @@ module pcie_ltssm_mac_gen1 #(
                             ltssm_state <= CFG_LANENUM_WAIT;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
+                            cfg_complete_pending <= 1'b0;
                         end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;
@@ -738,6 +753,7 @@ module pcie_ltssm_mac_gen1 #(
                             ltssm_state <= CFG_LANENUM_ACCEPT;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
+                            cfg_complete_pending <= 1'b0;
                         end else if (os_ts1_valid || os_ts2_valid) begin
                             training_error_count <= sat_inc32(training_error_count);
                         end
@@ -760,19 +776,30 @@ module pcie_ltssm_mac_gen1 #(
                             rx_ts_count <= 5'd0;
                             training_error_count <= sat_inc32(training_error_count);
                         end
+                        // 接收门槛和最小时序满足后，不立即切换TX mode；先等待
+                        // 当前TS1的最后一个word，避免TS1/TS2在Ordered Set中间拼接。
                         if ((rx_ts_count >= TS_ACCEPT_REQUIRED) &&
                             (state_timer >= MIN_CONFIG_TX_LIMIT)) begin
+                            cfg_complete_pending <= 1'b1;
+                        end
+                        if ((cfg_complete_pending ||
+                             ((rx_ts_count >= TS_ACCEPT_REQUIRED) &&
+                              (state_timer >= MIN_CONFIG_TX_LIMIT))) &&
+                            os_tx_complete) begin
                             ltssm_state <= CFG_COMPLETE;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
+                            cfg_complete_pending <= 1'b0;
                         end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
                             ltssm_state <= DETECT_QUIET;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
                             timeout_count <= sat_inc32(timeout_count);
+                            cfg_complete_pending <= 1'b0;
                         end
                     end
                     CFG_COMPLETE: begin
+                        cfg_complete_pending <= 1'b0;
                         state_timer <= state_timer + 1'b1;
                         if (os_ts2_valid) begin
                             dbg_cfg_ts2_any_count <= sat_inc16(dbg_cfg_ts2_any_count);

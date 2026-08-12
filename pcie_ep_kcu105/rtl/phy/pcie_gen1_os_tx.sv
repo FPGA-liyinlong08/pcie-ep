@@ -19,7 +19,9 @@ module pcie_gen1_os_tx (
     output reg         out_valid,
     // 当前拍正在输出一个稳定模式下的第8个16-bit PIPE word；
     // 在该拍采样边沿，前一个完整 Ordered Set 已发送结束。
-    output wire        os_complete
+    output wire        os_complete,
+    output wire [2:0]  word_index_debug,
+    output wire [2:0]  active_word_index_debug
 );
     localparam [7:0] K_COM = 8'hbc;
     localparam [7:0] K_PAD = 8'hf7;
@@ -35,6 +37,8 @@ module pcie_gen1_os_tx (
     // mode切换的首拍强制输出word 0，不能把旧mode的word 7误报为完成。
     assign os_complete = enable && (mode != 2'd0) &&
                          (mode == previous_mode) && (word_index == 3'd7);
+    assign word_index_debug = word_index;
+    assign active_word_index_debug = active_index;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
