@@ -20,6 +20,8 @@ sim/vcs/error.dat
 sim/vcs/rx.dat
 sim/vcs/tx.dat
 fpga/kcu105/build*/
+# rx_detect=Falling_Edge 临时实验脚本及Vivado生成物
+fpga/kcu105/*rxdetect_falling*
 docs/debug/*/raw/
 docs/debug/*/*.tar.gz
 iter_*_CongestedCLBsAndNets.txt
