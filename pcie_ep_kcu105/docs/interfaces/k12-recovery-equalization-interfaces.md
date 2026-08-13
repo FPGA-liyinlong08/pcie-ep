@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 接口启动基线
 
-状态：**v0.1；K12-A冻结中**
+状态：**v0.1；K12-A CDC mailbox已实现，完整接口冻结中**
 
 ## 1. 约束和时钟域
 

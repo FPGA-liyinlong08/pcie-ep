@@ -54,8 +54,9 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
   reboot后成功枚举并连续5次BAR mmap通过；另有3轮reboot、15次BAR mmap压力通过。
   允许进入K12。严格断电cold boot、20次启动、100次PERST#/重训和长时MMIO保留给
   K14最终发布门，不把阶段性release表述为最终量产冻结。
-- K12：**已启动 / 架构与验证计划冻结中**；目标为Recovery.Speed、Gen1→Gen3
-  速率切换及Equalization Phase 0～3，先建立状态机和错误/回退门禁，再修改RTL。
+- K12：**已启动 / K12-A CDC mailbox PASS**；已完成Retrain和目标速率的原子
+  request/ack跨域验证，下一步建立Recovery.Speed状态机、行为PHY和错误/回退门禁，
+  再接入正式RTL。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。

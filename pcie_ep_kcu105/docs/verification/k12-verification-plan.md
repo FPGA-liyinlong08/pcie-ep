@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 验证计划
 
-状态：**v0.1 启动基线；测试平台先行**
+状态：**v0.1；K12-A CDC mailbox已执行PASS，Recovery/EQ测试平台继续建设**
 
 ## 1. 分层验证
 
@@ -11,6 +11,10 @@
 - 实板：K12只验证训练和安全回退；Gen3枚举/MMIO作为K13门禁。
 
 ## 2. 测试平台先行门
+
+K12-A已先完成request/ack mailbox的正向和负向自测：`K12_CHECKER_SELFTEST_PASS`、
+`K12A_CDC_MAILBOX_PASS`。当前只覆盖valid保持、payload原子性、busy/overflow和
+非法速率透传；以下Recovery/EQ六类Checker仍是后续K12-B～K12-D门禁。
 
 在RTL实现前，错误Stub必须至少被以下Checker检出：
 

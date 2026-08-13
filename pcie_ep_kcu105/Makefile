@@ -35,6 +35,7 @@
 	k11b2-ila-hw-program-arm-rxidle-conflict k11b2-ila-hw-capture-rxidle-conflict-wait \
 	k11b2-ila-hw-capture-now k11b2-ila-hw-upload \
 	k11b3-trigger-sim k11b3-cdc-sim k11b3-diagnostic-sim \
+	k12a-cdc-lint k12a-cdc k12a-checker-selftest k12a \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -263,6 +264,29 @@ k11b2-vcs-stress:
 
 k11b2-vivado:
 	./fpga/kcu105/run_k11b2_impl.sh
+
+k12a-cdc-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_retrain_cdc_mailbox \
+		rtl/common/pcie_retrain_cdc_mailbox.sv
+
+k12a-cdc:
+	@rm -f sim/verilator/k12a_cdc/results.xml
+	$(MAKE) -C sim/verilator/k12a_cdc \
+		COCOTB_RESULTS_FILE=results.xml results.xml
+	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k12a_cdc/results.xml; then \
+		echo "错误：K12-A CDC mailbox回归失败"; exit 1; \
+	fi
+	@grep -q 'valid_must_hold_until_accept' sim/verilator/k12a_cdc/results.xml
+	@grep -q 'payload_is_atomic_and_busy_command_is_reported' sim/verilator/k12a_cdc/results.xml
+	@grep -q 'illegal_speed_is_transferred_for_controller_rejection' sim/verilator/k12a_cdc/results.xml
+	@echo "K12A_CDC_MAILBOX_PASS"
+
+k12a-checker-selftest:
+	$(MAKE) -C sim/verilator/k12a_cdc checker-selftest
+
+k12a: k12a-checker-selftest k12a-cdc-lint k12a-cdc
+	@echo "K12A_PASS"
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh

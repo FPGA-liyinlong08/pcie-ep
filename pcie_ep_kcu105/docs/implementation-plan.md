@@ -33,7 +33,7 @@
 | K10 | 4 KiB Demo AXI4-Lite Slave | PASS；7项回归、10万随机请求、全部1008可写DWORD、16种WSTRB、K09集成、1×RAMB36E2及250 MHz routed OOC |
 | K11-A | Gen1离线全集成（MAC Packet边界以上） | PASS；DLL Active、Cfg、BAR、Demo、Hot Reset、双向CDC、KU040 routed OOC和定向CDC均通过 |
 | K11-B | Gen1真PHY/实板全集成 | PASS / 阶段性release；真实PHY InitFC/枚举/BAR、随机MMIO、LCRC/ACK注错、PERST#恢复、无ILA正式时序及KCU105 reboot/MMIO通过；最终压力门保留K14 |
-| K12 | Recovery.Speed 与 EQ Phase 0～3 | 已启动；正常EQ、拒绝、非法系数、超时、CDR失锁和Gen1回退 |
+| K12 | Recovery.Speed 与 EQ Phase 0～3 | 已启动；K12-A CDC mailbox PASS；正常EQ、拒绝、非法系数、超时、CDR失锁和Gen1回退待实现 |
 | K13 | Gen3 全集成 | VCS Gen1→Gen3；KCU105 Gen3 x1；枚举和 10 万 BAR 随机操作 |
 | K14 | 最终加固和发布冻结 | Hot Reset、remove/rescan、长时 MMIO、CDC/DRC/时序和 Linux 最终验收 |
 
