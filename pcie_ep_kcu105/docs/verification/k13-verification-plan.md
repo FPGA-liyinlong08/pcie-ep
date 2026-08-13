@@ -1,6 +1,6 @@
 # K13 Gen3 x1 全集成验证计划
 
-状态：**v0.3，在建；Recovery.Speed生产握手已回归通过，VCS/正式Vivado/Gen3实板出口未通过**
+状态：**v0.4，在建；VCS elaboration和Gen1配置/BAR基线通过，Gen3动态/正式Vivado/实板出口未通过**
 
 ## 1. 验证目标与判定原则
 
@@ -16,7 +16,7 @@ Gen1→Gen3 x1训练、EQ、L0、配置枚举和BAR事务，并能从全部错�
 |---|---|---|
 | Lint/行为仿真 | K13控制器展开、正常Gen3、CDR loss、非法TS、K12回归 | **部分PASS** |
 | 生产顶层仿真 | `K13_ENABLE=0/1`、真实LTSSM/TS边界、事务静默、回退 | **Recovery.Speed边界PASS；Gen3数据路径未完成** |
-| VCS真实PHY | Xilinx PHY + Root Port串行Gen1→Gen3、EQ和错误注入 | **elaboration受license阻塞** |
+| VCS真实PHY | Xilinx PHY + Root Port串行Gen1→Gen3、EQ和错误注入 | **elaboration/Gen1配置BAR PASS；Gen3动态未完成** |
 | Vivado | K13-enabled综合、CDC、DRC、route、非负WNS、bit/LTX | **诊断实现PASS；正式门未通过** |
 | KCU105实板 | Gen3 x1枚举、ILA、BAR随机压力、retrain和回退 | **枚举/BAR PASS；Gen3出口未通过** |
 
@@ -87,9 +87,20 @@ K13_CTRL_PASS
 - Gen3 L0后的配置读写和BAR TLP；
 - CDR loss、非法TS、Speed/EQ timeout的Gen1回退。
 
-本轮以`K13_ENABLE=1`重试后，VCS全部源文件编译完成，无新的RTL语法/端口错误；
-elaboration等待`VCSCompiler_Net` 90秒后超时。许可证阻塞解除并
-实际完成仿真前，不得写`K13_VCS_GEN3_PASS`。
+本轮确认原90秒超时是执行环境无法访问`27000@wx-linux`，不是席位耗尽。
+在可访问license server的环境中，357个模块完成elaboration/link并生成
+`simv`。隔离Xilinx示例自带的自动配置进程后，K13-enabled生产顶层完成：
+
+```text
+K13_VCS_CFG_CAP_PASS cap_ptr=40 max_speed=3 max_width=1
+K11B2_ENUM_PASS bdf=01a0 bar0=80000000
+K11B2_BAR_PASS signature=50434945 scratch=a5c37e19
+K11B2_VCS_REAL_PHY_PASS
+```
+
+这些标记只证明VCS平台、Gen1 DLL/配置/BAR和Gen3能力字段基线通过；尚未证明
+Gen1→Gen3 Retrain、Recovery.Speed和EQ Phase 0～3动态完成，因此仍不得写
+`K13_VCS_GEN3_PASS`。
 
 ## 7. Vivado实现门
 

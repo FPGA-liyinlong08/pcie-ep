@@ -17,6 +17,8 @@ phy_name="pcie_phy_x1_gen3"
 ip_dir="${project_dir}/fpga/kcu105/${phy_ip_root}/${phy_name}"
 license_timeout="${VCS_LICENSE_TIMEOUT:-300}"
 simulation_timeout="${K11B_SIM_TIMEOUT:-900}"
+license_server="${VCS_LICENSE_SERVER:-27000@wx-linux}"
+license_lmutil="${VCS_LICENSE_LMUTIL:-/home/questasim/linux_x86_64/lmutil}"
 b2_mode="${K11B2_MODE:-0}"
 b2_stress_mode="${K11B2_STRESS_MODE:-0}"
 k12e_mode="${K12E_VCS:-0}"
@@ -35,9 +37,27 @@ fi
 
 export VCS_HOME="${vcs_home}"
 export VCS_ARCH_OVERRIDE=linux
+export SNPSLMD_LICENSE_FILE="${SNPSLMD_LICENSE_FILE:-${license_server}}"
+if [[ ":${LM_LICENSE_FILE:-}:" != *":${license_server}:"* ]]; then
+    export LM_LICENSE_FILE="${license_server}${LM_LICENSE_FILE:+:${LM_LICENSE_FILE}}"
+fi
 
 cd "${script_dir}"
 ./check_env.sh
+mkdir -p build
+if [[ "${VCS_LICENSE_PREFLIGHT:-1}" == "1" && -x "${license_lmutil}" ]]; then
+    set +e
+    timeout --foreground 10 "${license_lmutil}" lmstat \
+        -f VCSCompiler_Net -c "${license_server}" \
+        > build/vcs_license_preflight.log 2>&1
+    license_preflight_status=$?
+    set -e
+    if [[ ${license_preflight_status} -ne 0 ]]; then
+        cat build/vcs_license_preflight.log >&2
+        echo "错误：无法访问Synopsys许可证服务 ${license_server}；请在允许访问FlexNet端口的环境运行，不要盲目增加-licqueue等待时间" >&2
+        exit 69
+    fi
+fi
 test -s "${ip_dir}/${phy_name}.xci"
 test -s "${ip_dir}/sim/${phy_name}.v"
 test -s "${rp_dir}/pcie3_uscale_rp_core_top.v"
@@ -46,7 +66,10 @@ test -s "${afifo}"
 
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/pcie_k11b_vcs.XXXXXX")"
 setup_file="${run_dir}/synopsys_sim.setup"
+rp_usrapp_tx="${run_dir}/pci_exp_usrapp_tx_k11b.v"
 mkdir -p build "${run_dir}/work" "${run_dir}/xil_defaultlib"
+python3 "${script_dir}/prepare_k11b_rp_usrapp.py" \
+    "${rp_dir}/pci_exp_usrapp_tx.v" "${rp_usrapp_tx}"
 printf 'WORK > DEFAULT\nDEFAULT : %s\nxil_defaultlib : %s\nOTHERS=%s/synopsys_sim.setup\n' \
     "${run_dir}/work" "${run_dir}/xil_defaultlib" "${simlib_dir}" \
     > "${setup_file}"
@@ -82,11 +105,12 @@ fi
     -l build/k11b_ep_phy_vlogan.log
 
 "${vcs_home}/bin/vlogan" -full64 +v2k -work xil_defaultlib \
+    +define+K11B_DISABLE_XILINX_AUTO_TEST \
     +incdir+"${rp_dir}" \
     "${rp_dir}/pci_exp_usrapp_cfg.v" \
     "${rp_dir}/pci_exp_usrapp_com.v" \
     "${rp_dir}/pci_exp_usrapp_rx.v" \
-    "${rp_dir}/pci_exp_usrapp_tx.v" \
+    "${rp_usrapp_tx}" \
     "${rp_dir}/pcie3_uscale_rp_core_top.v" \
     "${rp_dir}/pcie3_uscale_rp_top.v" \
     "${rp_dir}/xilinx_pcie_uscale_rp.v" \

@@ -64,8 +64,8 @@ Gen3 retrain 已闭环。
 
 ## 5. VCS / Vivado 门禁结果
 
-- VCS：源文件扩展和编译阶段通过；真实 VCS 在 elaboration 阶段因环境没有
-  `VCSCompiler_Net` license seat 阻塞，未宣称 VCS PASS。
+- VCS：源文件扩展和编译阶段通过；当时elaboration因执行环境无法访问
+  `VCSCompiler_Net`服务而阻塞，后续已按第12节复签解除。
 - Vivado 默认 `K13_ENABLE=0`：综合、place、route、DRC 均完成，DRC 为 0 Error；
   最终 timing gate 失败，`txoutclk_out[0]` 为 `WNS=-0.033 ns`、`TNS=-0.054 ns`、
   6 个 setup failing endpoints，hold 为 `WHS=+0.030 ns`。主要失败路径仍在现有
@@ -309,11 +309,43 @@ retrain_uses_ltssm_recovery_speed_boundary  PASS，1/1 Directed
 make k11b2-lint                              PASS，K13_ENABLE=0/1
 ```
 
-VCS以`K13_ENABLE=1`重试时，全部源文件已编译完成，没有新增RTL语法
-或端口错误；elaboration等待`VCSCompiler_Net` 90秒后仍因无license seat
-超时，因此不写`K13_VCS_GEN3_PASS`。
+VCS以`K13_ENABLE=1`首次重试时，全部源文件已编译完成，没有新增RTL语法
+或端口错误；elaboration等待`VCSCompiler_Net` 90秒后因执行环境网络隔离超时。
+该阻塞后续已按第12节解除，但Gen3动态训练仍未完成，因此不写
+`K13_VCS_GEN3_PASS`。
 
 本轮修正关闭了“L0旁路切速”这一已知控制缺陷，但仍未关闭Gen3协议面：
 生产收发路径仍是Gen1 8b/10b，尚缺Gen3 TS/EQ字段和128b/130b Sync Header/
 Start Block，CDR-loss也仍是PIPE代理而非GT原生反馈。下一个工作项是先在行为
 Partner/VCS闭环这些协议路径，通过后再生成包含新ILA字段的K13诊断bit。
+
+## 12. VCS license和配置/BAR基线复签（2026-08-13）
+
+`VCSCompiler_Net`排队的根因已确认为执行环境无法访问本机FlexNet端口；
+license server、`snpslmd`均为UP，Compiler/Runtime feature均为99席、0占用。详细
+排查和复用命令已记录到`docs/reports/vcs-license-status.md`，运行脚本也增加
+license环境自动设置和10秒preflight。
+
+第一次越过elaboration后的`Max Link Speed=0`/`BAR mask=0`并非同一个RTL故障：
+
+- Xilinx XDMA Root Port示例的自检硬编码读取其配套Endpoint的`0xd0`，而本
+  Endpoint的Capability Pointer为`0x40`、Link Capability为`0x4c`。
+- 示例`pci_exp_usrapp_tx.v`还有一个自动配置initial进程，与本工程的
+  `k11b2_transaction_test`同时驱动TX task并共用`DEFAULT_TAG/P_READ_DATA`，导致
+  Completion数据被竞争覆盖。
+
+执行脚本现在只屏蔽Xilinx示例的自动initial测试，保留全部公开transaction
+task；并按本Endpoint的Capability Pointer检查真实字段。复签结果：
+
+```text
+357 modules elaborated and linked
+K13_VCS_CFG_CAP_PASS cap_ptr=40 max_speed=3 max_width=1
+K11B2_ENUM_PASS bdf=01a0 bar0=80000000
+K11B2_BAR_PASS signature=50434945 scratch=a5c37e19
+K11B2_VCS_PASS
+K11B2_VCS_REAL_PHY_PASS
+```
+
+因此VCS elaboration、Gen1串行链路、Gen3/x1能力字段和配置/BAR基线已通过。
+该用例尚未发起并完成Gen1→Gen3 Retrain/EQ，所以不得将本节标记为
+`K13_VCS_GEN3_PASS`。

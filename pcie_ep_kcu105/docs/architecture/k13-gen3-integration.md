@@ -101,7 +101,7 @@ PHY命令必须保持到done或timeout，不能仅产生单拍。
 
 - `K13_ENABLE=1`真实Gen3 LTSSM/TS发送和128b/130b数据路径闭环；
 - 真实CDR-loss反馈；
-- VCS真实PHY/Root Port elaboration和Gen1→Gen3串行仿真；
+- VCS真实PHY/Root Port的Gen1→Gen3 Retrain/EQ动态串行仿真；
 - K13-enabled Vivado非负WNS、bit生成和ILA验证；
 - 实板`LnkSta Speed 8GT/s, Width x1`、10万次随机BAR操作和回退恢复。
 

@@ -272,6 +272,35 @@ module board;
                         $fatal(1);
                     end
 
+                    // Xilinx XDMA示例把Endpoint PCIe Capability硬编码在0xc0，
+                    // 本Endpoint的标准Capability Pointer为0x40。按本端链表读取，
+                    // 不使用示例环境针对其自带Endpoint的0xd0固定地址检查。
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_READ(
+                        RP.tx_usrapp.DEFAULT_TAG, 12'h034, 4'hf);
+                    RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                    if (RP.tx_usrapp.P_READ_DATA[7:0] !== 8'h40) begin
+                        $display("K11B2_VCS_FAIL reason=cap_pointer actual=%08x",
+                                 RP.tx_usrapp.P_READ_DATA);
+                        $fatal(1);
+                    end
+
+                    RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_READ(
+                        RP.tx_usrapp.DEFAULT_TAG, 12'h04c, 4'hf);
+                    RP.tx_usrapp.TSK_WAIT_FOR_READ_DATA;
+                    if ((RP.tx_usrapp.P_READ_DATA[3:0] !== 4'd3) ||
+                        (RP.tx_usrapp.P_READ_DATA[9:4] !== 6'd1)) begin
+                        $display("K11B2_VCS_FAIL reason=link_cap actual=%08x",
+                                 RP.tx_usrapp.P_READ_DATA);
+                        $fatal(1);
+                    end
+`ifdef K13_DUT
+                    $display("K13_VCS_CFG_CAP_PASS cap_ptr=40 max_speed=3 max_width=1");
+`else
+                    $display("K11B2_CFG_CAP_PASS cap_ptr=40 max_speed=3 max_width=1");
+`endif
+
                     RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
                     RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
                         RP.tx_usrapp.DEFAULT_TAG, 12'h010, 32'hffff_ffff, 4'hf);
