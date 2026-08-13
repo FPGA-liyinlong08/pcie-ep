@@ -4,10 +4,11 @@
 // K12-B：Recovery.Speed独立控制骨架。
 // 本模块只处理速率阶段和Gen1 fallback，不实现TS解析或EQ Phase 0～3。
 module pcie_recovery_speed_ctrl #(
-    parameter integer SPEED_TIMEOUT_CYCLES = 32
+    parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000
 ) (
     input wire clk, input wire rst_n, input wire link_up,
     input wire retrain_valid, input wire [1:0] retrain_target_speed,
+    input wire ltssm_speed_ready,
     output reg retrain_accept, input wire phy_phystatus,
     input wire phy_cdr_lost, input wire peer_speed_ok,
     input wire peer_speed_reject, output reg [2:0] state,
@@ -78,7 +79,22 @@ module pcie_recovery_speed_ctrl #(
                         end
                     end
                 end
-                ST_QUIESCE: begin timeout_count <= 32'd0; state <= ST_SPEED_WAIT; end
+                // PHY rate只能在生产LTSSM完成当前速率Recovery TS交换并进入
+                // Recovery.Speed后改变，禁止在L0或Recovery.RcvrLock中旁路切速。
+                ST_QUIESCE: begin
+                    if (phy_cdr_lost) begin
+                        cdr_loss_sticky <= 1'b1; fallback_taken_sticky <= 1'b1;
+                        timeout_count <= 32'd0; state <= ST_FALLBACK_WAIT;
+                    end else if (ltssm_speed_ready) begin
+                        timeout_count <= 32'd0;
+                        state <= ST_SPEED_WAIT;
+                    end else if (timeout_expired) begin
+                        speed_timeout_sticky <= 1'b1; fallback_taken_sticky <= 1'b1;
+                        timeout_count <= 32'd0; state <= ST_FALLBACK_WAIT;
+                    end else begin
+                        timeout_count <= timeout_count + 1'b1;
+                    end
+                end
                 ST_SPEED_WAIT: begin
                     if (phy_cdr_lost) begin
                         cdr_loss_sticky <= 1'b1; fallback_taken_sticky <= 1'b1;

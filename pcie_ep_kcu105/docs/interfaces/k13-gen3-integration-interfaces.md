@@ -1,14 +1,14 @@
 # K13 Gen3 x1 全集成接口契约
 
-状态：**v0.1，在建；控制器端口与生产顶层接线已实现，真实Gen3 PHY反馈契约待闭环**
+状态：**v0.2，在建；Retrain已接入生产Recovery.Speed边界，真实Gen3数据路径和PHY反馈待闭环**
 
 ## 1. 参数与时钟域
 
 | 参数 | 当前默认值 | 语义 |
 |---|---:|---|
 | `K13_ENABLE` | `0` | `0`为K11 Gen1静态旁路；`1`启用K13生产控制器 |
-| `K13_SPEED_TIMEOUT_CYCLES` | `32` | `phy_pclk`域Speed阶段超时 |
-| `K13_EQ_TIMEOUT_CYCLES` | `32` | `phy_pclk`域每个EQ阶段超时 |
+| `K13_SPEED_TIMEOUT_CYCLES` | `1_000_000` | `phy_pclk`域Recovery/Speed超时，250 MHz时约4 ms |
+| `K13_EQ_TIMEOUT_CYCLES` | `1_000_000` | `phy_pclk`域每个EQ阶段超时，250 MHz时约4 ms |
 
 `core_clk/core_rst_n`对应`phy_coreclk/core_rst_n`，只承载配置空间发出的Retrain
 命令；其余Speed、TS、EQ和PHY控制全部位于`phy_pclk/pipe_rst_n`域。跨域命令只能
@@ -25,6 +25,7 @@
 | `phy_cdr_lost` | 1 | `phy_pclk` | 真实CDR失锁；高电平中止训练并触发Gen1回退 |
 | `phy_txeq_done` | 1 | `phy_pclk` | 当前TX EQ命令完成 |
 | `phy_rxeq_done` | 1 | `phy_pclk` | 当前RX EQ命令完成 |
+| `ltssm_speed_ready` | 1 | `phy_pclk` | 生产LTSSM已进入`Recovery.Speed`，是唯一允许改变`phy_rate`的边界 |
 | `ts_valid` | 1 | `phy_pclk` | 当前有已解析训练序列候选 |
 | `ts_complete` | 1 | `phy_pclk` | 当前TS完整结束；accept只能在此边界产生 |
 | `ts_is_ts1/ts_is_ts2` | 各1 | `phy_pclk` | TS类型，必须恰有一个有效 |
@@ -38,8 +39,10 @@
 `ts_complete`。这要求Ordered Set解析器只在完整TS结束时产生有效脉冲；若未来改为
 多拍valid，必须拆分并重新验证`ts_complete`。
 
-Rate ID映射冻结为：`8'h02→Gen1`、`8'h04→Gen2`、`8'h08→Gen3`，其他值映射为
-非法`2'b11`并由TS guard拒绝。
+Rate ID按能力位图解析，不再要求exact one-hot：bit3优先映射Gen3，否则
+bit2映射Gen2，再否则bit1映射Gen1；无任一合法能力位时映射为
+非法`2'b11`。K13本端TX TS宣告`8'h0e`，TS guard还必须确认解析速率
+与当前Retrain target一致。
 
 ## 3. PHY控制输出
 
@@ -70,10 +73,16 @@ LTSSM输出。`mac_tx_valid`在`traffic_quiesce=1`时必须被抑制，同时不
 | `ts_accept/ts_reject` | 各1 | 完整TS边界上的单拍判定 |
 | `cdr_loss_sticky` | 1 | 观察到CDR失锁后保持至复位 |
 | `fallback_sticky` | 1 | 任一错误触发安全回退后保持至复位 |
+| `speed_timeout_sticky` | 1 | 等待LTSSM Speed边界或PHY `phystatus`超时后保持至复位 |
 | `illegal_ts_sticky` | 1 | malformed、非法Rate或Lane/Link不匹配的汇总 |
 
 `speed_state`当前编码沿用K12：`0=L0`、`1=QUIESCE`、`2=SPEED_WAIT`、
 `3=RECOVERY_IDLE`、`4=FALLBACK_WAIT`、`5=FALLBACK_IDLE`。
+
+生产LTSSM增加`RECOVERY_SPEED=18`和双向握手：`recovery_speed_ready`授权
+K13切速，`recovery_speed_done`通知PHY切速完成。LTSSM在旧速率完成
+`RcvrLock→RcvrCfg`后进入Speed，切速后回到`RcvrLock→RcvrCfg→Recovery.Idle`；
+K13未释放`force_recovery`前不得提前返回L0。
 
 ## 5. 复位和失败语义
 
@@ -85,9 +94,11 @@ LTSSM输出。`mac_tx_valid`在`traffic_quiesce=1`时必须被抑制，同时不
 
 ## 6. 当前接口缺口
 
-生产顶层当前把`k13_phy_cdr_lost`固定为0，尚未满足真实CDR-loss契约；冻结前必须
-接入K02 PHY可验证的失锁来源。生产LTSSM还必须提供真实Gen3 TS发送和128b/130b
+生产顶层当前以`RXELECIDLE && !RXVALID`的连续周期作为CDR-loss代理，
+尚未满足真实GT CDR-loss契约；冻结前必须接入K02 PHY可验证的失锁来源。
+生产LTSSM还必须提供真实Gen3 TS发送和128b/130b
 收发边界，不能仅用Gen1 Ordered Set接口推断Gen3已经闭环。
 
-K13开发bit必须明确记录`K13_ENABLE=1`。当前已烧写并通过reboot/BAR的
-`k11b2_gen1_endpoint_ila.bit`为`K13_ENABLE=0`，不属于本接口的Gen3实板验收物。
+K13开发bit必须明确记录`K13_ENABLE=1`。当前诊断bit虽已以
+`K13_ENABLE=1`实现和上板，但仅验证了Gen1枚举/BAR及失败Retrain现象，
+不属于本接口的Gen3实板验收物。

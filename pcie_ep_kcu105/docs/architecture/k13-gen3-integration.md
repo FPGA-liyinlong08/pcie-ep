@@ -1,6 +1,6 @@
 # K13 Gen3 x1 全集成架构基线
 
-状态：**v0.1，在建；K13-CTRL 与生产顶层边界接线已完成，Gen3 x1 全集成未冻结**
+状态：**v0.2，在建；Retrain/Recovery.Speed生产接线已修正，Gen3 x1全集成未冻结**
 
 ## 1. 阶段目标
 
@@ -34,6 +34,12 @@ pcie_retrain_cdc_mailbox
 顶层只允许K13控制器在Recovery或EQ活动期间接管PHY控制。正常Gen1路径仍由生产
 LTSSM驱动；事务发送在`traffic_quiesce=1`期间停止提交。协商速率只有在控制器给出
 有效结果后才覆盖生产LTSSM的Gen1默认值。
+
+Retrain不再允许旁路控制器在L0直接改变PHY rate。生产LTSSM必须先经过
+`Recovery.RcvrLock→Recovery.RcvrCfg`，再用`recovery_speed_ready`授权
+`pcie_recovery_speed_ctrl`进入Electrical Idle/切速。`recovery_speed_done`后重新执行
+`RcvrLock→RcvrCfg`，并在K13 Speed/EQ释放前保持`Recovery.Idle`。这一顺序
+消除了已观察到的“LTSSM仍为L0时PHY被单独切到Gen3”矛盾。
 
 ## 3. 静态旁路与回退
 
@@ -70,8 +76,9 @@ Gen3 x1 Endpoint。
 K13复用K02已冻结的`phy_phystatus`、`phy_txeq_done`和`phy_rxeq_done`完成握手。
 PHY命令必须保持到done或timeout，不能仅产生单拍。
 
-当前K02 wrapper没有向生产顶层提供独立的真实CDR-loss信号，现有接线将
-`k13_phy_cdr_lost`固定为0。这只适用于控制接线和Gen1回归，不满足K13冻结条件。
+当前K02 wrapper没有向生产顶层提供独立的真实CDR-loss信号，现有接线使用
+`RXELECIDLE && !RXVALID`连续8个`phy_pclk`周期的PIPE代理。这只适用于控制
+接线和Gen1回归，不满足K13冻结条件。
 冻结前必须从真实PHY可观测反馈构造并验证CDR-loss输入，且证明失锁时能够中止EQ、
 回退Gen1并重新训练。
 
@@ -84,6 +91,11 @@ PHY命令必须保持到done或timeout，不能仅产生单拍。
 - `K13_ENABLE=0/1`生产顶层静态generate接线；
 - K13控制器lint和3项cocotb场景；K12集成回归继续通过；
 - `K13_ENABLE=0`的Gen1 x1 ILA诊断bit完成烧写、reboot、枚举和BAR验证。
+- 标准Retrain失败定位为L0旁路切速和32周期超时；硬件默认超时已改为
+  1,000,000个`phy_pclk`周期，生产LTSSM已加入显式`Recovery.Speed`握手。
+- TS Rate ID已按能力位图解析，K13 TX宣告Gen1/2/3的`8'h0e`；K13 ILA已加入
+  Speed/EQ/timeout/fallback/TS/CDR观测位。
+- K03 LTSSM原有12项回归及新增`Recovery.Speed`边界Directed用例通过；K13控制回归3/3通过。
 
 尚未完成：
 

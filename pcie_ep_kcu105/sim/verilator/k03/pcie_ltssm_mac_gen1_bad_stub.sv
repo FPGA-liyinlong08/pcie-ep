@@ -31,6 +31,8 @@ module pcie_ltssm_mac_gen1 #(
     output wire [1:0] rx_pkt_keep, output wire rx_pkt_sop, output wire rx_pkt_eop,
     output wire rx_pkt_is_dllp, output wire [3:0] rx_pkt_error,
     input wire link_disable, input wire hot_reset_req, input wire force_recovery,
+    input wire speed_retrain_active, input wire recovery_speed_done,
+    output wire recovery_speed_ready,
     output reg [5:0] ltssm_state, output wire link_up,
     output wire [2:0] negotiated_width, output wire [1:0] negotiated_speed,
     output wire [7:0] link_number, output wire [4:0] rx_ts_count,
@@ -65,9 +67,11 @@ module pcie_ltssm_mac_gen1 #(
     assign negotiated_speed = 0; assign link_number = 8'hf7; assign rx_ts_count = 0;
     assign training_error_count = 0; assign timeout_count = 0;
     assign frame_error_count = 0; assign hot_reset_seen = 0;
+    assign recovery_speed_ready = 0;
     wire _unused = &{1'b0, phy_rxdata, phy_rxdatak, phy_rxdata_valid, phy_rxvalid,
         phy_rxelecidle, tx_pkt_valid, tx_pkt_data, tx_pkt_keep, tx_pkt_sop, tx_pkt_eop,
         tx_pkt_is_dllp, tx_pkt_bad, link_disable, hot_reset_req, force_recovery,
+        speed_retrain_active, recovery_speed_done,
         DETECT_TIMEOUT_CYCLES[0], TRAIN_TIMEOUT_CYCLES[0], HOT_RESET_CYCLES[0],
         TX_BUFFER_BYTES[0]};
 endmodule

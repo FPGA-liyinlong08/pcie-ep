@@ -71,6 +71,9 @@ module pcie_ltssm_mac_gen1 #(
     input  wire        link_disable,
     input  wire        hot_reset_req,
     input  wire        force_recovery,
+    input  wire        speed_retrain_active,
+    input  wire        recovery_speed_done,
+    output wire        recovery_speed_ready,
     output reg  [5:0]  ltssm_state,
     output wire        link_up,
     output wire [2:0]  negotiated_width,
@@ -110,6 +113,7 @@ module pcie_ltssm_mac_gen1 #(
     localparam [5:0] PHY_POWERUP           = 6'd15;
     localparam [5:0] WAIT_REMOTE_DETECT    = 6'd16;
     localparam [5:0] G9_DETECT_TIMEOUT     = 6'd17;
+    localparam [5:0] RECOVERY_SPEED        = 6'd18;
 
     localparam [31:0] DETECT_QUIET_LIMIT   = DETECT_QUIET_CYCLES - 1;
     localparam [31:0] DETECT_TIMEOUT_LIMIT = DETECT_TIMEOUT_CYCLES - 1;
@@ -142,6 +146,9 @@ module pcie_ltssm_mac_gen1 #(
     reg        dbg_l0_seen;
     // G12-B：CFG_LANENUM_ACCEPT满足接收/时序条件后，等待当前TS1完整结束。
     reg        cfg_complete_pending;
+    // 一次Recovery内只允许执行一次速率切换；PhyStatus完成后重新经过
+    // RcvrLock/RcvrCfg，再进入Recovery.Idle/EQ。
+    reg        recovery_speed_changed;
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
@@ -389,8 +396,8 @@ module pcie_ltssm_mac_gen1 #(
         .lane_number      (tx_os_lane),
         .lane_is_pad      (tx_os_lane_pad),
         .n_fts            (8'hff),
-        // K03/K11-B固定Gen1，只宣告2.5 GT/s支持（Rate ID bit1）。
-        // Gen2/Gen3能力在K12升速阶段再打开，避免Root进入Recovery.Speed。
+        // TX_RATE_ID是TS Rate ID能力位图：K03/K11-B仅置bit1，
+        // K13置bit[3:1]以宣告Gen1/2/3能力。
         .rate_id          (TX_RATE_ID),
         .training_control (tx_os_training_control),
         .out_data         (os_tx_data),
@@ -481,6 +488,9 @@ module pcie_ltssm_mac_gen1 #(
             end
             CFG_LANENUM_ACCEPT, RECOVERY_RCVRLOCK: tx_os_mode = 2'd1;
             CFG_COMPLETE, RECOVERY_RCVRCFG:       tx_os_mode = 2'd2;
+            RECOVERY_SPEED: begin
+                tx_os_enable = 1'b0;
+            end
             default:                              tx_os_mode = 2'd0;
         endcase
     end
@@ -518,9 +528,11 @@ module pcie_ltssm_mac_gen1 #(
                                 (ltssm_state == G9_DETECT_TIMEOUT);
     assign as_cdr_hold_req    = 1'b0;
     assign link_up            = (ltssm_state == STATE_L0);
-    assign negotiated_width   = (ltssm_state >= STATE_L0 &&
-                                 ltssm_state <= RECOVERY_IDLE) ? 3'd1 : 3'd0;
+    assign negotiated_width   = ((ltssm_state >= STATE_L0 &&
+                                  ltssm_state <= RECOVERY_IDLE) ||
+                                 (ltssm_state == RECOVERY_SPEED)) ? 3'd1 : 3'd0;
     assign negotiated_speed   = 2'b00;
+    assign recovery_speed_ready = (ltssm_state == RECOVERY_SPEED);
 
     always @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) begin
@@ -547,6 +559,7 @@ module pcie_ltssm_mac_gen1 #(
             dbg_cfg_idle_seen <= 1'b0;
             dbg_l0_seen <= 1'b0;
             cfg_complete_pending <= 1'b0;
+            recovery_speed_changed <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
             if (ltssm_state == CFG_COMPLETE)
@@ -585,6 +598,7 @@ module pcie_ltssm_mac_gen1 #(
                 dbg_cfg_complete_seen <= 1'b0;
                 dbg_cfg_idle_seen <= 1'b0;
                 dbg_l0_seen <= 1'b0;
+                recovery_speed_changed <= 1'b0;
             end else begin
                 case (ltssm_state)
                     DETECT_QUIET: begin
@@ -855,6 +869,7 @@ module pcie_ltssm_mac_gen1 #(
                     STATE_L0: begin
                         state_timer <= 32'd0;
                         rx_ts_count <= 5'd0;
+                        recovery_speed_changed <= 1'b0;
                         if (hot_reset_req ||
                             ((os_ts1_valid || os_ts2_valid) &&
                              os_training_control[0])) begin
@@ -888,7 +903,10 @@ module pcie_ltssm_mac_gen1 #(
                         if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
-                                ltssm_state <= RECOVERY_IDLE;
+                                if (speed_retrain_active && !recovery_speed_changed)
+                                    ltssm_state <= RECOVERY_SPEED;
+                                else
+                                    ltssm_state <= RECOVERY_IDLE;
                                 state_timer <= 32'd0;
                                 rx_ts_count <= 5'd0;
                             end else rx_ts_count <= rx_ts_count + 1'b1;
@@ -900,9 +918,24 @@ module pcie_ltssm_mac_gen1 #(
                             timeout_count <= sat_inc32(timeout_count);
                         end
                     end
+                    RECOVERY_SPEED: begin
+                        state_timer <= state_timer + 1'b1;
+                        rx_ts_count <= 5'd0;
+                        if (recovery_speed_done) begin
+                            recovery_speed_changed <= 1'b1;
+                            ltssm_state <= RECOVERY_RCVRLOCK;
+                            state_timer <= 32'd0;
+                        end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
+                            ltssm_state <= DETECT_QUIET;
+                            state_timer <= 32'd0;
+                            timeout_count <= sat_inc32(timeout_count);
+                        end
+                    end
                     RECOVERY_IDLE: begin
                         state_timer <= state_timer + 1'b1;
-                        if (os_idle_pair_valid) begin
+                        // K13 Speed/EQ控制未释放前保持Recovery，避免PHY已切速而
+                        // 生产LTSSM提前回L0并恢复Gen1事务。
+                        if (!force_recovery && os_idle_pair_valid) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
                                 ltssm_state <= STATE_L0;
                                 state_timer <= 32'd0;

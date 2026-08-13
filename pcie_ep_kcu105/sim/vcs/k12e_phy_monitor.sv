@@ -33,6 +33,7 @@ module k12e_phy_monitor (
     pcie_recovery_speed_ctrl u_shadow_speed (
         .clk(clk), .rst_n(rst_n), .link_up(link_up),
         .retrain_valid(1'b0), .retrain_target_speed(2'b00),
+        .ltssm_speed_ready(1'b1),
         .retrain_accept(shadow_retrain_accept), .phy_phystatus(phy_phystatus),
         .phy_cdr_lost(1'b0), .peer_speed_ok(1'b0), .peer_speed_reject(1'b0),
         .state(speed_state), .phy_rate(shadow_rate), .phy_txelecidle(),

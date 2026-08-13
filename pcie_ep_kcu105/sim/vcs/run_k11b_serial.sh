@@ -20,6 +20,7 @@ simulation_timeout="${K11B_SIM_TIMEOUT:-900}"
 b2_mode="${K11B2_MODE:-0}"
 b2_stress_mode="${K11B2_STRESS_MODE:-0}"
 k12e_mode="${K12E_VCS:-0}"
+k13_enable="${K13_ENABLE:-0}"
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 if [[ "${b2_mode}" == "1" ]]; then
@@ -27,6 +28,9 @@ if [[ "${b2_mode}" == "1" ]]; then
 fi
 if [[ "${k12e_mode}" == "1" ]]; then
     tb_defines+=(+define+K12E_VCS)
+fi
+if [[ "${k13_enable}" == "1" ]]; then
+    tb_defines+=(+define+K13_DUT)
 fi
 
 export VCS_HOME="${vcs_home}"

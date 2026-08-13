@@ -9,8 +9,8 @@ module kcu105_pcie_ep_gen1_board_top #(
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
     parameter integer DETECT_QUIET_CYCLES = 1_500_000,
     parameter integer K13_ENABLE = 0,
-    parameter integer K13_SPEED_TIMEOUT_CYCLES = 32,
-    parameter integer K13_EQ_TIMEOUT_CYCLES = 32
+    parameter integer K13_SPEED_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer K13_EQ_TIMEOUT_CYCLES = 1_000_000
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,

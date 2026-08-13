@@ -18,6 +18,7 @@ async def reset_dut(dut):
     dut.link_up.value = 0
     dut.retrain_valid.value = 0
     dut.retrain_target_speed.value = 0
+    dut.ltssm_speed_ready.value = 1
     dut.phy_phystatus.value = 0
     dut.phy_cdr_lost.value = 0
     dut.peer_speed_ok.value = 0
@@ -66,6 +67,25 @@ async def normal_gen1_to_gen3_speed_handshake(dut):
     assert int(dut.negotiated_speed.value) == 2
     assert int(dut.phy_rate.value) == 2
     assert int(dut.traffic_quiesce.value) == 0
+
+
+@cocotb.test()
+async def rate_waits_for_ltssm_recovery_speed(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset_dut(dut)
+    dut.ltssm_speed_ready.value = 0
+    await issue_retrain(dut, 2)
+    assert int(dut.state.value) == ST_QUIESCE
+    await advance(dut, 2)
+    assert int(dut.state.value) == ST_QUIESCE
+    assert int(dut.phy_rate.value) == 0
+    assert int(dut.phy_txelecidle.value) == 0
+    assert int(dut.traffic_quiesce.value) == 1
+    dut.ltssm_speed_ready.value = 1
+    await advance(dut)
+    assert int(dut.state.value) == ST_SPEED_WAIT
+    assert int(dut.phy_rate.value) == 2
+    assert int(dut.phy_txelecidle.value) == 1
 
 
 @cocotb.test()

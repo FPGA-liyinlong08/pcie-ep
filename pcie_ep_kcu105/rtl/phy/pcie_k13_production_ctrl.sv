@@ -5,14 +5,16 @@
 // K13_ENABLE=0时，所有控制输出保持K11 Gen1安全值；启用后才接受Retrain。
 module pcie_k13_production_ctrl #(
     parameter integer K13_ENABLE = 0,
-    parameter integer SPEED_TIMEOUT_CYCLES = 32,
-    parameter integer EQ_TIMEOUT_CYCLES = 32
+    // 250 MHz PIPE下分别为4 ms；行为仿真继续通过参数覆盖缩短。
+    parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer EQ_TIMEOUT_CYCLES = 1_000_000
 ) (
     input wire       core_clk,
     input wire       core_rst_n,
     input wire       phy_clk,
     input wire       phy_rst_n,
     input wire       link_up,
+    input wire       ltssm_speed_ready,
     input wire       retrain_pulse,
     input wire [1:0] target_speed,
     input wire       phy_phystatus,
@@ -47,6 +49,7 @@ module pcie_k13_production_ctrl #(
     output wire       ts_accept,
     output wire       ts_reject,
     output wire       cdr_loss_sticky,
+    output wire       speed_timeout_sticky,
     output wire       fallback_sticky,
     output wire       illegal_ts_sticky
 );
@@ -78,6 +81,7 @@ module pcie_k13_production_ctrl #(
             .ts_valid(ts_valid), .ts_complete(ts_complete),
             .ts_is_ts1(ts_is_ts1), .ts_is_ts2(ts_is_ts2),
             .ts_lane(ts_lane), .ts_link(ts_link), .ts_rate(ts_rate),
+            .expected_rate(mailbox_target),
             .ts_eq_request(ts_eq_request), .expected_lane(expected_lane),
             .expected_link(expected_link), .ts_accept(ts_accept_w),
             .ts_reject(ts_reject_w), .malformed_sticky(ts_malformed),
@@ -90,6 +94,7 @@ module pcie_k13_production_ctrl #(
         ) u_speed (
             .clk(phy_clk), .rst_n(phy_rst_n), .link_up(link_up),
             .retrain_valid(mailbox_valid), .retrain_target_speed(mailbox_target),
+            .ltssm_speed_ready(ltssm_speed_ready),
             .retrain_accept(mailbox_accept), .phy_phystatus(phy_phystatus),
             .phy_cdr_lost(phy_cdr_lost), .peer_speed_ok(ts_accept_w),
             .peer_speed_reject(ts_reject_w), .state(speed_state_w),
@@ -176,6 +181,7 @@ module pcie_k13_production_ctrl #(
     assign ts_accept = ts_accept_w;
     assign ts_reject = ts_reject_w;
     assign cdr_loss_sticky = speed_cdr_loss;
+    assign speed_timeout_sticky = speed_timeout;
     assign fallback_sticky = speed_fallback;
     assign illegal_ts_sticky = ts_malformed || ts_illegal_rate ||
                                 ts_lane_link_mismatch;

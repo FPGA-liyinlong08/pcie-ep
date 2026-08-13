@@ -25,11 +25,14 @@ module k13_production_ctrl_test_top (
     wire ctrl_ts_accept;
     wire ctrl_recovery_active;
     wire ctrl_eq_done, ctrl_eq_failed;
+    wire ltssm_speed_ready = ctrl_recovery_active &&
+                             (speed_state == 3'd1) && (os_count == 2'd3);
 
     pcie_k13_production_ctrl #(.K13_ENABLE(1), .SPEED_TIMEOUT_CYCLES(8),
                                .EQ_TIMEOUT_CYCLES(8)) dut (
         .core_clk(core_clk), .core_rst_n(core_rst_n),
         .phy_clk(phy_clk), .phy_rst_n(phy_rst_n), .link_up(link_up),
+        .ltssm_speed_ready(ltssm_speed_ready),
         .retrain_pulse(retrain_pulse), .target_speed(target_speed),
         .phy_phystatus(phystatus_r), .phy_cdr_lost(force_cdr_lost),
         .phy_txeq_done(tx_done_r), .phy_rxeq_done(rx_done_r),
@@ -45,7 +48,8 @@ module k13_production_ctrl_test_top (
         .negotiated_speed(negotiated_speed), .speed_state(speed_state),
         .eq_active(eq_active), .eq_done(ctrl_eq_done), .eq_failed(ctrl_eq_failed),
         .eq_phase(eq_phase), .ts_accept(ctrl_ts_accept), .ts_reject(ts_reject),
-        .cdr_loss_sticky(cdr_loss_sticky), .fallback_sticky(fallback_sticky),
+        .cdr_loss_sticky(cdr_loss_sticky), .speed_timeout_sticky(),
+        .fallback_sticky(fallback_sticky),
         .illegal_ts_sticky()
     );
 

@@ -3,6 +3,7 @@ module pcie_recovery_speed_ctrl #(
 ) (
     input wire clk, input wire rst_n, input wire link_up,
     input wire retrain_valid, input wire [1:0] retrain_target_speed,
+    input wire ltssm_speed_ready,
     output reg retrain_accept, input wire phy_phystatus,
     input wire phy_cdr_lost, input wire peer_speed_ok, input wire peer_speed_reject,
     output reg [2:0] state, output reg [1:0] phy_rate,

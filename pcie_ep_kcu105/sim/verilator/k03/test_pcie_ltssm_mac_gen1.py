@@ -32,6 +32,7 @@ HOT_RESET = 14
 PHY_POWERUP = 15
 WAIT_REMOTE_DETECT = 16
 G9_DETECT_TIMEOUT = 17
+RECOVERY_SPEED = 18
 G9_ENABLED = os.getenv("G9_WAIT_REMOTE_DETECT", "0") == "1"
 partner_rx_lfsr = 0xFFFF
 
@@ -87,6 +88,8 @@ def drive_defaults(dut):
     dut.link_disable.value = 0
     dut.hot_reset_req.value = 0
     dut.force_recovery.value = 0
+    dut.speed_retrain_active.value = 0
+    dut.recovery_speed_done.value = 0
 
 
 async def tick(dut, count=1):
@@ -511,6 +514,49 @@ async def l0_enters_recovery_after_sustained_rxelecidle(dut):
     assert int(dut.hot_reset_seen.value) == 0
     await writable_phase()
     dut.phy_rxelecidle.value = 0
+
+
+@cocotb.test()
+async def retrain_uses_ltssm_recovery_speed_boundary(dut):
+    """升速必须由生产LTSSM在Recovery.Speed边界授权，完成后再训练新速率。"""
+    await initialize(dut)
+    await train_to_l0(dut, validate_tx=False)
+
+    await writable_phase()
+    dut.speed_retrain_active.value = 1
+    dut.force_recovery.value = 1
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+    await send_ts(dut, 1, 8, link=0, lane=0)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 8, link=0, lane=0)
+    await wait_state(dut, RECOVERY_SPEED)
+
+    assert int(dut.recovery_speed_ready.value) == 1
+    assert int(dut.phy_txdata_valid.value) == 0
+    assert int(dut.negotiated_width.value) == 1
+    await tick(dut, 4)
+    assert int(dut.ltssm_state.value) == RECOVERY_SPEED
+
+    await writable_phase()
+    dut.recovery_speed_done.value = 1
+    await tick(dut)
+    await writable_phase()
+    dut.recovery_speed_done.value = 0
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+
+    await send_ts(dut, 1, 8, link=0, lane=0)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 8, link=0, lane=0)
+    await wait_state(dut, RECOVERY_IDLE)
+
+    # K13控制器仍占用Recovery时，Logical Idle不得令LTSSM提前回L0。
+    await send_idle(dut, 8)
+    assert int(dut.ltssm_state.value) == RECOVERY_IDLE
+    await writable_phase()
+    dut.force_recovery.value = 0
+    dut.speed_retrain_active.value = 0
+    await send_idle(dut, 8)
+    await wait_state(dut, L0)
 
 
 @cocotb.test()

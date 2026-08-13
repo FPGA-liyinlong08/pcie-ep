@@ -1,6 +1,6 @@
 # K13 Gen3 x1 全集成验证计划
 
-状态：**v0.2，在建；K13-CTRL通过，K13诊断实现和Gen1实板可用性通过，VCS/正式Vivado/Gen3实板出口未通过**
+状态：**v0.3，在建；Recovery.Speed生产握手已回归通过，VCS/正式Vivado/Gen3实板出口未通过**
 
 ## 1. 验证目标与判定原则
 
@@ -15,7 +15,7 @@ Gen1→Gen3 x1训练、EQ、L0、配置枚举和BAR事务，并能从全部错�
 | 层级 | 必需内容 | 当前状态 |
 |---|---|---|
 | Lint/行为仿真 | K13控制器展开、正常Gen3、CDR loss、非法TS、K12回归 | **部分PASS** |
-| 生产顶层仿真 | `K13_ENABLE=0/1`、真实LTSSM/TS边界、事务静默、回退 | **未完成** |
+| 生产顶层仿真 | `K13_ENABLE=0/1`、真实LTSSM/TS边界、事务静默、回退 | **Recovery.Speed边界PASS；Gen3数据路径未完成** |
 | VCS真实PHY | Xilinx PHY + Root Port串行Gen1→Gen3、EQ和错误注入 | **elaboration受license阻塞** |
 | Vivado | K13-enabled综合、CDC、DRC、route、非负WNS、bit/LTX | **诊断实现PASS；正式门未通过** |
 | KCU105实板 | Gen3 x1枚举、ILA、BAR随机压力、retrain和回退 | **枚举/BAR PASS；Gen3出口未通过** |
@@ -37,6 +37,10 @@ make -C pcie_ep_kcu105 k12-integration
 - `production_cdr_loss_fallback`：注入CDR loss，sticky和Gen1 fallback成立；
 - `production_bad_ts_rejects`：非法TS被拒绝并回退Gen1；
 - K12 integration 7项回归继续PASS。
+- K03 LTSSM原有12项回归通过，新增
+  `retrain_uses_ltssm_recovery_speed_boundary` Directed用例通过；证明只有
+  `Recovery.Speed`可授权切速，且K13未释放前`Recovery.Idle`不会提前回L0。
+- K12-B Speed回归6/6通过，包含`ltssm_speed_ready=0`时禁止改变rate的用例。
 
 固定标记为：
 
@@ -83,7 +87,8 @@ K13_CTRL_PASS
 - Gen3 L0后的配置读写和BAR TLP；
 - CDR loss、非法TS、Speed/EQ timeout的Gen1回退。
 
-当前VCS编译已到elaboration，但`VCSCompiler_Net` license不可用；许可证阻塞解除并
+本轮以`K13_ENABLE=1`重试后，VCS全部源文件编译完成，无新的RTL语法/端口错误；
+elaboration等待`VCSCompiler_Net` 90秒后超时。许可证阻塞解除并
 实际完成仿真前，不得写`K13_VCS_GEN3_PASS`。
 
 ## 7. Vivado实现门

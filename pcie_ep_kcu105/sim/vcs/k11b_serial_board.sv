@@ -595,11 +595,20 @@ module k11b_endpoint_compat #(
     wire [31:0] bar0_base;
     wire [7:0] cdc_errors;
 
+`ifdef K13_DUT
+    localparam integer K13_ENABLED = 1;
+`else
+    localparam integer K13_ENABLED = 0;
+`endif
+
     kcu105_pcie_ep_gen1_top #(
         .DETECT_QUIET_CYCLES   (DETECT_QUIET_CYCLES),
         .DETECT_TIMEOUT_CYCLES (DETECT_TIMEOUT_CYCLES),
         .TRAIN_TIMEOUT_CYCLES  (TRAIN_TIMEOUT_CYCLES),
-        .HOT_RESET_CYCLES      (HOT_RESET_CYCLES)
+        .HOT_RESET_CYCLES      (HOT_RESET_CYCLES),
+        .K13_ENABLE            (K13_ENABLED),
+        .K13_SPEED_TIMEOUT_CYCLES(4096),
+        .K13_EQ_TIMEOUT_CYCLES (4096)
     ) DUT (
         .pcie_refclk_p(pcie_refclk_p), .pcie_refclk_n(pcie_refclk_n),
         .pcie_perst_n(pcie_perst_n), .pcie_rxp(pcie_rxp), .pcie_rxn(pcie_rxn),

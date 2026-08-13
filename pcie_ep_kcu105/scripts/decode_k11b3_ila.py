@@ -67,6 +67,15 @@ def decode_pipe(path):
             "link_loss_trigger": int(row[link_loss_col], 16),
             "phy_rxidle_conflict": int(row[conflict_col], 16) if conflict_col is not None else 0,
             "ltssm": bits(top, 27, 6), "link_up": bits(top, 36),
+            "k13_speed_state": bits(top, 61, 3),
+            "k13_eq_phase": bits(top, 58, 3),
+            "k13_recovery_active": bits(top, 57),
+            "k13_eq_active": bits(top, 56),
+            "k13_fallback": bits(top, 55),
+            "k13_speed_timeout": bits(top, 54),
+            "k13_ts_accept": bits(top, 53),
+            "k13_ts_reject": bits(top, 52),
+            "k13_cdr_loss": bits(top, 51),
             "dll_active": bits(top, 35), "fc_state": bits(top, 33, 2),
             "mac_rx_valid": bits(top, 16), "mac_rx_sop": bits(top, 15),
             "mac_rx_eop": bits(top, 14), "mac_rx_dllp": bits(top, 13),
@@ -224,6 +233,18 @@ def main():
         f"last_acked=0x{pipe[-1]['last_acked_seq']:03x} "
         f"replay_occ={pipe[-1]['replay_occupancy']} ack_tx={pipe[-1]['ack_count']} "
         f"nak_tx={pipe[-1]['nak_count']}"
+    )
+    print(
+        "PIPE K13 "
+        f"speed_states={sorted(set(r['k13_speed_state'] for r in pipe))} "
+        f"eq_phases={sorted(set(r['k13_eq_phase'] for r in pipe))} "
+        f"recovery_samples={count(pipe, lambda r: r['k13_recovery_active'])} "
+        f"eq_active_samples={count(pipe, lambda r: r['k13_eq_active'])} "
+        f"ts_accept={count(pipe, lambda r: r['k13_ts_accept'])} "
+        f"ts_reject={count(pipe, lambda r: r['k13_ts_reject'])} "
+        f"fallback={max(r['k13_fallback'] for r in pipe)} "
+        f"speed_timeout={max(r['k13_speed_timeout'] for r in pipe)} "
+        f"cdr_loss={max(r['k13_cdr_loss'] for r in pipe)}"
     )
     print(
         "PIPE events "

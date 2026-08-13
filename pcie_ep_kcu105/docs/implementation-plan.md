@@ -34,7 +34,7 @@
 | K11-A | Gen1离线全集成（MAC Packet边界以上） | PASS；DLL Active、Cfg、BAR、Demo、Hot Reset、双向CDC、KU040 routed OOC和定向CDC均通过 |
 | K11-B | Gen1真PHY/实板全集成 | PASS / 阶段性release；真实PHY InitFC/枚举/BAR、随机MMIO、LCRC/ACK注错、PERST#恢复、无ILA正式时序及KCU105 reboot/MMIO通过；最终压力门保留K14 |
 | K12 | Recovery.Speed 与 EQ Phase 0～3 | K12-A～E PASS；真实Gen3生产驱动接线转入K13 |
-| K13 | Gen3 全集成 | 在建基线见架构、接口和验证计划；控制器、生产顶层边界接线和静态旁路完成，K13-CTRL/K12/lint通过。仍需真实Gen3 LTSSM/TS TX、CDR-loss、VCS elaboration、Vivado时序/bit、KCU105 Gen3 x1枚举和10万次BAR随机操作 |
+| K13 | Gen3 全集成 | 在建基线见架构、接口和验证计划；标准Retrain已接入生产`Recovery.Speed`握手，超时/Rate ID/ILA可观测性已修正，K03/K12/K13/lint通过。仍需真实Gen3 TS/EQ字段和128b/130b路径、GT CDR-loss、VCS elaboration、Vivado时序/bit、KCU105 Gen3 x1枚举和10万次BAR随机操作 |
 | K14 | 最终加固和发布冻结 | Hot Reset、remove/rescan、长时 MMIO、CDC/DRC/时序和 Linux 最终验收 |
 
 ## 3. 固定验证分层

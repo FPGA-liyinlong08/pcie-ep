@@ -12,8 +12,8 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer G9_WAIT_REMOTE_DETECT  = 0,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
     parameter integer K13_ENABLE             = 0,
-    parameter integer K13_SPEED_TIMEOUT_CYCLES = 32,
-    parameter integer K13_EQ_TIMEOUT_CYCLES    = 32
+    parameter integer K13_SPEED_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer K13_EQ_TIMEOUT_CYCLES    = 1_000_000
 ) (
     input  wire        pcie_refclk_p,
     input  wire        pcie_refclk_n,
@@ -91,7 +91,9 @@ module kcu105_pcie_ep_gen1_top #(
     wire [2:0] k13_speed_state, k13_eq_phase;
     wire k13_eq_active, k13_eq_done, k13_eq_failed;
     wire k13_ts_accept, k13_ts_reject, k13_cdr_loss_sticky;
-    wire k13_fallback_sticky, k13_illegal_ts_sticky;
+    wire k13_fallback_sticky, k13_illegal_ts_sticky, k13_speed_timeout_sticky;
+    wire ltssm_recovery_speed_ready;
+    wire k13_recovery_speed_done = (k13_speed_state == 3'd3);
     wire [1:0] ltssm_negotiated_speed;
     reg [24:0] heartbeat_count;
 
@@ -167,7 +169,10 @@ module kcu105_pcie_ep_gen1_top #(
         wire dbg_phystatus_rst_fall_pipe = dbg_phystatus_rst_d && !phy_phystatus_rst;
         (* mark_debug = "true", keep = "true" *)
         wire [63:0] dbg_pipe_top = {
-            13'd0,
+            k13_speed_state, k13_eq_phase,
+            k13_recovery_active, k13_eq_active,
+            k13_fallback_sticky, k13_speed_timeout_sticky,
+            k13_ts_accept, k13_ts_reject, k13_cdr_loss_sticky,
             dbg_link_loss_seen, dbg_operational_seen, dbg_link_loss_pipe,
             heartbeat_count[24],
             phy_rxdata_valid, phy_rxvalid, phy_rxelecidle, phy_rxstatus,
@@ -197,12 +202,15 @@ module kcu105_pcie_ep_gen1_top #(
 
     function [1:0] decode_k13_ts_rate(input [7:0] raw_rate_id);
         begin
-            case (raw_rate_id)
-                8'h02: decode_k13_ts_rate = 2'b00;
-                8'h04: decode_k13_ts_rate = 2'b01;
-                8'h08: decode_k13_ts_rate = 2'b10;
-                default: decode_k13_ts_rate = 2'b11;
-            endcase
+            // Rate ID是能力位图，不是one-hot枚举；选择对端宣告的最高速率。
+            if (raw_rate_id[3])
+                decode_k13_ts_rate = 2'b10;
+            else if (raw_rate_id[2])
+                decode_k13_ts_rate = 2'b01;
+            else if (raw_rate_id[1])
+                decode_k13_ts_rate = 2'b00;
+            else
+                decode_k13_ts_rate = 2'b11;
         end
     endfunction
     assign k13_ts_rate = decode_k13_ts_rate(os_rate_id);
@@ -214,7 +222,8 @@ module kcu105_pcie_ep_gen1_top #(
     ) u_k13_production_ctrl (
         .core_clk(phy_coreclk), .core_rst_n(core_rst_n),
         .phy_clk(phy_pclk), .phy_rst_n(pipe_rst_n),
-        .link_up(link_up), .retrain_pulse(core_retrain_link_pulse),
+        .link_up(link_up), .ltssm_speed_ready(ltssm_recovery_speed_ready),
+        .retrain_pulse(core_retrain_link_pulse),
         .target_speed(core_target_link_speed),
         .phy_phystatus(phy_phystatus), .phy_cdr_lost(k13_phy_cdr_lost),
         .phy_txeq_done(phy_txeq_done), .phy_rxeq_done(phy_rxeq_done),
@@ -231,7 +240,9 @@ module kcu105_pcie_ep_gen1_top #(
         .negotiated_speed(k13_negotiated_speed), .speed_state(k13_speed_state),
         .eq_active(k13_eq_active), .eq_done(k13_eq_done), .eq_failed(k13_eq_failed),
         .eq_phase(k13_eq_phase), .ts_accept(k13_ts_accept), .ts_reject(k13_ts_reject),
-        .cdr_loss_sticky(k13_cdr_loss_sticky), .fallback_sticky(k13_fallback_sticky),
+        .cdr_loss_sticky(k13_cdr_loss_sticky),
+        .speed_timeout_sticky(k13_speed_timeout_sticky),
+        .fallback_sticky(k13_fallback_sticky),
         .illegal_ts_sticky(k13_illegal_ts_sticky)
     );
 
@@ -284,6 +295,7 @@ module kcu105_pcie_ep_gen1_top #(
         assign k13_ts_accept = 1'b0;
         assign k13_ts_reject = 1'b0;
         assign k13_cdr_loss_sticky = 1'b0;
+        assign k13_speed_timeout_sticky = 1'b0;
         assign k13_fallback_sticky = 1'b0;
         assign k13_illegal_ts_sticky = 1'b0;
     end endgenerate
@@ -326,7 +338,7 @@ module kcu105_pcie_ep_gen1_top #(
         .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
-        .TX_RATE_ID((K13_ENABLE != 0) ? 8'h08 : 8'h02)
+        .TX_RATE_ID((K13_ENABLE != 0) ? 8'h0e : 8'h02)
     ) u_ltssm_mac (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .phy_rxdata(phy_rxdata), .phy_rxdatak(phy_rxdatak),
@@ -351,7 +363,11 @@ module kcu105_pcie_ep_gen1_top #(
         .rx_pkt_keep(mac_rx_keep), .rx_pkt_sop(mac_rx_sop),
         .rx_pkt_eop(mac_rx_eop), .rx_pkt_is_dllp(mac_rx_is_dllp),
         .rx_pkt_error(mac_rx_error), .link_disable(1'b0),
-        .hot_reset_req(1'b0), .force_recovery(recovery_req),
+        .hot_reset_req(1'b0),
+        .force_recovery(recovery_req || ((K13_ENABLE != 0) && k13_recovery_active)),
+        .speed_retrain_active((K13_ENABLE != 0) && k13_recovery_active),
+        .recovery_speed_done((K13_ENABLE != 0) && k13_recovery_speed_done),
+        .recovery_speed_ready(ltssm_recovery_speed_ready),
         .ltssm_state(ltssm_state), .link_up(link_up),
         .negotiated_width(negotiated_width), .negotiated_speed(ltssm_negotiated_speed),
         .link_number(link_number), .rx_ts_count(rx_ts_count),

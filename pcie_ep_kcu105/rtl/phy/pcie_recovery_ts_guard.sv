@@ -13,6 +13,7 @@ module pcie_recovery_ts_guard (
     input wire [2:0] ts_lane,
     input wire [7:0] ts_link,
     input wire [1:0] ts_rate,
+    input wire [1:0] expected_rate,
     input wire       ts_eq_request,
     input wire [2:0] expected_lane,
     input wire [7:0] expected_link,
@@ -23,7 +24,7 @@ module pcie_recovery_ts_guard (
     output reg       lane_link_mismatch_sticky
 );
     wire type_legal = ts_is_ts1 ^ ts_is_ts2;
-    wire rate_legal = ts_rate != 2'b11;
+    wire rate_legal = (ts_rate != 2'b11) && (ts_rate == expected_rate);
     wire lane_link_legal = (ts_lane == expected_lane) &&
                            (ts_link == expected_link);
     wire eq_legal = !ts_eq_request || (ts_rate == 2'b10);

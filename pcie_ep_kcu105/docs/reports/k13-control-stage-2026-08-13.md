@@ -278,3 +278,42 @@ LTSSM 仍保持 `L0` 观测值，Gen3 速率只维持约3个采样周期即失�
 Gen1。当前 EQ 未完成的直接故障点是 Recovery.Speed、生产 LTSSM 和 PHY 数据有效
 切换没有形成闭环；尚不能归因于某个 EQ Phase 的 Preset/Coefficient 或 EQ done
 失败，因为训练尚未稳定进入 EQ Phase 0。该现象进一步确认 K13 还不能冻结。
+
+## 11. Retrain/Recovery.Speed生产接线修正（2026-08-13）
+
+针对第10节“LTSSM始终为L0，PHY rate单独短暂变为Gen3”的实板证据，
+本轮先修正控制链，不直接生成新bit：
+
+- 生产LTSSM增加`RECOVERY_SPEED=18`，Retrain必须依次经过旧速率
+  `RcvrLock→RcvrCfg`、`Recovery.Speed`、PHY切速、新速率
+  `RcvrLock→RcvrCfg→Recovery.Idle`，然后才能返回L0。
+- `pcie_recovery_speed_ctrl`在`ltssm_speed_ready=1`前保持Gen1 rate，不得在L0
+  旁路切速；PHY切速完成通过`recovery_speed_done`回送LTSSM。
+- 硬件Speed/EQ超时由32个周期改为1,000,000个`phy_pclk`周期，
+  250 MHz时约4 ms；行为测试仍以参数覆盖使用短超时。
+- TS Rate ID由exact one-hot改为能力位图解析，K13 TX由`8'h08`改为
+  宣告Gen1/2/3的`8'h0e`；TS guard要求解析速率与Retrain target一致。
+- 现有64-bit PIPE ILA复用原保留位，加入`speed_state`、`eq_phase`、
+  recovery/EQ active、fallback、speed timeout、TS accept/reject和CDR-loss；解码脚本
+  同步更新。
+
+执行结果：
+
+```text
+make k13                                      PASS，3/3
+make k12b-speed                              PASS，6/6
+make k12-integration                         PASS，7/7
+make k03-lint                                PASS
+make k03-verilator                           PASS，12/12 + 100次随机训练
+retrain_uses_ltssm_recovery_speed_boundary  PASS，1/1 Directed
+make k11b2-lint                              PASS，K13_ENABLE=0/1
+```
+
+VCS以`K13_ENABLE=1`重试时，全部源文件已编译完成，没有新增RTL语法
+或端口错误；elaboration等待`VCSCompiler_Net` 90秒后仍因无license seat
+超时，因此不写`K13_VCS_GEN3_PASS`。
+
+本轮修正关闭了“L0旁路切速”这一已知控制缺陷，但仍未关闭Gen3协议面：
+生产收发路径仍是Gen1 8b/10b，尚缺Gen3 TS/EQ字段和128b/130b Sync Header/
+Start Block，CDR-loss也仍是PIPE代理而非GT原生反馈。下一个工作项是先在行为
+Partner/VCS闭环这些协议路径，通过后再生成包含新ILA字段的K13诊断bit。
