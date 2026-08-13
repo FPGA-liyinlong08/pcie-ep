@@ -1,6 +1,6 @@
 # K13 Gen3 x1 全集成验证计划
 
-状态：**v0.1，在建；K13-CTRL行为门通过，VCS/Vivado/Gen3实板出口未通过**
+状态：**v0.2，在建；K13-CTRL通过，K13诊断实现和Gen1实板可用性通过，VCS/正式Vivado/Gen3实板出口未通过**
 
 ## 1. 验证目标与判定原则
 
@@ -17,8 +17,8 @@ Gen1→Gen3 x1训练、EQ、L0、配置枚举和BAR事务，并能从全部错�
 | Lint/行为仿真 | K13控制器展开、正常Gen3、CDR loss、非法TS、K12回归 | **部分PASS** |
 | 生产顶层仿真 | `K13_ENABLE=0/1`、真实LTSSM/TS边界、事务静默、回退 | **未完成** |
 | VCS真实PHY | Xilinx PHY + Root Port串行Gen1→Gen3、EQ和错误注入 | **elaboration受license阻塞** |
-| Vivado | K13-enabled综合、CDC、DRC、route、非负WNS、bit/LTX | **未完成** |
-| KCU105实板 | Gen3 x1枚举、ILA、BAR随机压力、retrain和回退 | **未完成** |
+| Vivado | K13-enabled综合、CDC、DRC、route、非负WNS、bit/LTX | **诊断实现PASS；正式门未通过** |
+| KCU105实板 | Gen3 x1枚举、ILA、BAR随机压力、retrain和回退 | **枚举/BAR PASS；Gen3出口未通过** |
 
 ## 3. 已执行的K13-CTRL门
 
@@ -99,6 +99,12 @@ K13-enabled构建必须明确传入`K13_ENABLE=1`，并在独立目录输出bit�
 
 允许负WNS生成的诊断bit只能标记`DIAGNOSTIC_ONLY`，不能通过K13实现门。
 
+本轮K13诊断实现结果：`K13_ENABLE=1` 的综合、opt、place、route、DRC和bitgen
+均成功，输出 `K13_ILA_IMPL_PASS`；实现目录为
+`fpga/kcu105/build_k13_gen3_ila/impl`，WNS=`-0.113 ns`，DRC为0 Error，
+unrouted nets为0。由于仍有负setup时序，该结果只作为诊断实现，不写入
+`K13_IMPL_PASS`。
+
 ## 8. KCU105 Gen3 x1实板门
 
 烧写K13-enabled bit后，在Linux Root Port执行并保存：
@@ -112,6 +118,19 @@ K13-enabled构建必须明确传入`K13_ENABLE=1`，并在独立目录输出bit�
 
 `/dev/mem`直访物理BAR可以作为辅助诊断，但必须另外证明PCI Command的Memory
 Space已开启并走标准PCI设备访问路径。
+
+本轮实板结果（2026-08-13）：K13 bit 已通过本机JTAG烧写到KU040，远端主机
+reboot 后重新枚举为`01:00.0 1234:e001`；设置`COMMAND=0006`后标准BAR访问
+通过，写吞吐39.74 MB/s、读吞吐4.19 MB/s。但真实链路为
+`2.5GT/s (downgraded), Width x1`，`EqualizationComplete`及Phase 1～3均未完成，
+因此不能标记`K13_HW_GEN3_X1_PASS`或`K13_BAR_100K_PASS`。
+
+ILA采样文件为
+`fpga/kcu105/build_k13_gen3_ila/capture/20260813_151042_u_ila_pipe.csv`：
+最终`ltssm=0x0a (L0)`、`link=1`、`dll_active=1`，未见link-loss或RxIdle冲突，
+`rxrate_values=[0]`，说明当前链路仍停留在Gen1。当前CDR-loss检测使用
+`RXELECIDLE && !RXVALID`连续8个`phy_pclk`周期的PIPE代理，不是真实GT
+`rxcdrlock`，因此不能关闭真实PHY feedback门。
 
 ## 9. K13冻结标记
 
@@ -127,4 +146,6 @@ K13_FALLBACK_RECOVERY_PASS
 K13_PASS
 ```
 
-当前只有`K13_CTRL_PASS`成立；阶段状态保持`K13-IN-PROGRESS`，不得进入K14。
+当前成立的标记为`K13_CTRL_PASS`和`K13_ILA_IMPL_PASS`；后者是诊断标记，不等价于
+`K13_IMPL_PASS`。阶段状态保持`K13-IN-PROGRESS`，不得冻结为K13 release，也不得
+进入K14。
