@@ -28,12 +28,13 @@ module k13_production_ctrl_test_top (
     wire ltssm_speed_ready = ctrl_recovery_active &&
                              (speed_state == 3'd1) && (os_count == 2'd3);
 
-    pcie_k13_production_ctrl #(.K13_ENABLE(1), .SPEED_TIMEOUT_CYCLES(8),
+    pcie_k13_production_ctrl #(.K13_ENABLE(1), .SPEED_TIMEOUT_CYCLES(32),
                                .EQ_TIMEOUT_CYCLES(8)) dut (
         .core_clk(core_clk), .core_rst_n(core_rst_n),
         .phy_clk(phy_clk), .phy_rst_n(phy_rst_n), .link_up(link_up),
         .ltssm_speed_ready(ltssm_speed_ready),
         .retrain_pulse(retrain_pulse), .target_speed(target_speed),
+        .partner_retrain_valid(1'b0), .partner_target_speed(2'b00),
         .phy_phystatus(phystatus_r), .phy_cdr_lost(force_cdr_lost),
         .phy_txeq_done(tx_done_r), .phy_rxeq_done(rx_done_r),
         .ts_valid(ts_valid_r), .ts_complete(ts_complete_r),

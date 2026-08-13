@@ -1,6 +1,6 @@
 # K13 Gen3 x1 全集成架构基线
 
-状态：**v0.2，在建；Retrain/Recovery.Speed生产接线已修正，Gen3 x1全集成未冻结**
+状态：**v0.5，在建；Recovery.Speed实板切速已观测，Root Port Gen3能力已由XDMA同板对照确认，Gen3 x1全集成未冻结**
 
 ## 1. 阶段目标
 
@@ -60,13 +60,14 @@ K13沿用G12验证过的完整Ordered Set边界：只有`ts_valid && ts_complete
 Lane、Link和Rate全部合法时，控制器才能接受对端训练信息。状态、发送模式和PHY
 速率不能在一个TS中途切换。
 
-当前生产LTSSM/MAC的发送和接收主路径仍以Gen1 8b/10b Ordered Set为基础；K13
-尚需完成并验证：
+当前生产顶层已经按PHY rate在Gen1 8b/10b与Gen3 Ordered Set路径间切换；独立
+Gen3行为Partner已验证Recovery期间的EIEOS、TS1/TS2接收边界和EQ Phase 0～3
+握手。Recovery训练从EIEOS直接进入TS，EIEOS在开始及每32个TS重复并复位
+scrambler；SDS只允许在Recovery.Idle开始Data Stream时发送。K13仍需完成并验证：
 
 - Gen3 128b/130b Sync Header、Block起点和数据有效边界；
-- Recovery期间Gen3 TS1/TS2发送字段及完整边界；
-- Root Port请求升速后的真实Recovery.Speed与EQ Phase 0～3交互；
 - Gen3 L0进入后DLL重新初始化和TLP/DLLP恢复。
+- 真实串行PHY/Root Port上的Recovery.Speed、Gen3 TS和EQ交互。
 
 在这些路径闭环之前，即使底层IP名称为`pcie_phy_x1_gen3`，生成的bit也不能标记为
 Gen3 x1 Endpoint。
@@ -96,14 +97,29 @@ PHY命令必须保持到done或timeout，不能仅产生单拍。
 - TS Rate ID已按能力位图解析，K13 TX宣告Gen1/2/3的`8'h0e`；K13 ILA已加入
   Speed/EQ/timeout/fallback/TS/CDR观测位。
 - K03 LTSSM原有12项回归及新增`Recovery.Speed`边界Directed用例通过；K13控制回归3/3通过。
+- 生产LTSSM、K13控制器、Gen1/Gen3 Ordered Set模块和独立PIPE行为Partner的联合
+  回归通过：从Gen1 L0触发真实Retrain mailbox，经过Recovery.Speed切换到Gen3，
+  接收独立TS1/TS2并完成EQ Phase `0→1→2→3→4`，最终到达Recovery.Idle。
+- Vivado 2021.2官方PCIe PHY示例和本工程双PHY XSIM诊断都无法在Gen3输出
+  `RXVALID/DATA_VALID`，因此旧工具链串行安全模型不能作为Gen3 RX正确性判据。
+- 已修正Gen3训练发送器错误的`EIEOS→SDS→TS`顺序，并增加独立TX前缀断言；
+  新诊断bit实板观测到Recovery.Speed、GT Gen3 rate和PhyStatus完成应答。
 
 尚未完成：
 
-- `K13_ENABLE=1`真实Gen3 LTSSM/TS发送和128b/130b数据路径闭环；
+- Gen3 L0的128b/130b事务数据路径闭环；
 - 真实CDR-loss反馈；
-- VCS真实PHY/Root Port的Gen1→Gen3 Retrain/EQ动态串行仿真；
+- 可提供Gen3 RX的更新串行仿真环境，或由实板ILA替代旧VCS/XSIM模型门；
 - K13-enabled Vivado非负WNS、bit生成和ILA验证；
 - 实板`LnkSta Speed 8GT/s, Width x1`、10万次随机BAR操作和回退恢复。
+- 官方XDMA在同板同插槽已达到8GT/s x1且EQ Phase 1～3完成，证明当前Root Port
+  可以作为Gen3 Partner；此前5GT/s能力快照与该事实矛盾，必须重新固定BDF和capability
+  offset，不能再用它解释K13失败。
+- ILA解析出的对端TS1 Rate ID `0x8e`与Root Port能力寄存器矛盾，需增加原始TS
+  symbol及收发方向观测，排除字段偏移、解扰边界或误采本端TX。
+- 当前EQ状态机仍把Phase 1驱动为`phy_rxeq_ctrl=2'b01`，并从Rate ID位而非真实
+  TS EQ Control/Data启动EQ；行为Partner的Phase推进不能替代角色正确的Gen3
+  Equalization协议验证。
 
 ## 7. 冻结出口
 

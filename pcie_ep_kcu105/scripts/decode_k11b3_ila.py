@@ -41,6 +41,7 @@ def decode_pipe(path):
     top_col = find_column(columns, "dbg_pipe_top[")
     dll_col = find_column(columns, "dbg_pipe_dll[")
     ltssm_col = find_column(columns, "dbg_ltssm_detail[")
+    g12_tx_col = find_optional_column(columns, "dbg_g12_tx[")
     conflict_matches = [index for name, index in columns.items()
                         if "dbg_phy_rxidle_conflict" in name]
     conflict_col = conflict_matches[0] if len(conflict_matches) == 1 else None
@@ -62,6 +63,7 @@ def decode_pipe(path):
         top = int(row[top_col], 16)
         dll = int(row[dll_col], 16)
         ltssm_detail = int(row[ltssm_col], 16)
+        g12_tx = int(row[g12_tx_col], 16) if g12_tx_col is not None else 0
         decoded.append({
             "sample": int(row[0]), "trigger": int(row[trigger_col], 16),
             "link_loss_trigger": int(row[link_loss_col], 16),
@@ -115,7 +117,10 @@ def decode_pipe(path):
             "rxelecidle_qualified": bits(ltssm_detail, 123),
             "os_link": bits(ltssm_detail, 111, 8),
             "os_lane": bits(ltssm_detail, 102, 8),
+            "os_rate_id": bits(ltssm_detail, 85, 8),
             "os_training_control": bits(ltssm_detail, 77, 8),
+            "gen3_os_eq_control": bits(g12_tx, 0, 8),
+            "gen3_os_eq_data": bits(g12_tx, 8, 24),
             "phy_rxdata": bits(ltssm_detail, 45, 32),
             "phy_rxdatak": bits(ltssm_detail, 43, 2),
             "phy_rxvalid": bits(ltssm_detail, 42),
@@ -188,6 +193,11 @@ def count(rows, predicate):
     return sum(1 for row in rows if predicate(row))
 
 
+def transition_points(rows, key):
+    return [(row["sample"], row[key]) for index, row in enumerate(rows)
+            if index == 0 or row[key] != rows[index - 1][key]]
+
+
 def main():
     if len(sys.argv) not in (2, 3):
         raise SystemExit("用法：decode_k11b3_ila.py PIPE.csv [CORE.csv]")
@@ -245,6 +255,28 @@ def main():
         f"fallback={max(r['k13_fallback'] for r in pipe)} "
         f"speed_timeout={max(r['k13_speed_timeout'] for r in pipe)} "
         f"cdr_loss={max(r['k13_cdr_loss'] for r in pipe)}"
+    )
+    print(
+        "PIPE K13 transitions "
+        f"speed={transition_points(pipe, 'k13_speed_state')} "
+        f"eq={transition_points(pipe, 'k13_eq_phase')} "
+        f"ltssm={transition_points(pipe, 'ltssm')} "
+        f"phystatus={transition_points(pipe, 'phy_phystatus')} "
+        f"gt_rxrate={transition_points(pipe, 'gt_rxrate')}"
+    )
+    # dbg_g12_tx只在Gen3速率下复用为K13 EQ字段；Gen1/Gen2时仍承载旧G12诊断位。
+    # 只解码RXRATE=Gen3的样本，避免把旧诊断总线误报为动态EQ字段。
+    gen3_pipe = [row for row in pipe if row["gt_rxrate"] == 2]
+    print(
+        "PIPE K13 Gen3 TS EQ "
+        f"samples={len(gen3_pipe)} "
+        f"control={transition_points(gen3_pipe, 'gen3_os_eq_control')} "
+        f"data={transition_points(gen3_pipe, 'gen3_os_eq_data')}"
+    )
+    print(
+        "PIPE K13 TS events "
+        f"accept={[(r['sample'], hex(r['os_rate_id'])) for r in pipe if r['k13_ts_accept']]} "
+        f"reject={[(r['sample'], hex(r['os_rate_id'])) for r in pipe if r['k13_ts_reject']]}"
     )
     print(
         "PIPE events "

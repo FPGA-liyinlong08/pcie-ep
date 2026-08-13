@@ -74,6 +74,9 @@ def drive_defaults(dut):
     dut.phy_rxdata.value = 0
     dut.phy_rxdatak.value = 0
     dut.phy_rxdata_valid.value = 0
+    dut.phy_rxstart_block.value = 0
+    dut.phy_rxsync_header.value = 0
+    dut.active_phy_rate.value = 0
     dut.phy_rxvalid.value = 0
     dut.phy_phystatus.value = 0
     dut.phy_rxelecidle.value = 1

@@ -40,7 +40,7 @@
 	k12c-eq-lint k12c-eq k12c-checker-selftest k12c \
 	k12-integration-lint k12-integration-sim k12-integration-checker-selftest k12-integration \
 	k12de-vcs-serial k12de \
-	k13-ctrl-lint k13-ctrl-sim k13 \
+	k13-ctrl-lint k13-ctrl-sim k13-integration-lint k13-integration-sim k13 \
 	ku040-hw-probe ku040-hw-program \
 	remote-check remote-reboot remote-wait remote-lspci remote-cycle \
 	xdma-x1-demo xdma-x1-hw-program clean
@@ -209,6 +209,9 @@ k03-lint:
 		rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv \
 		rtl/phy/pcie_gen1_os_tx.sv \
+		rtl/phy/pcie_gen3_scrambler32.sv \
+		rtl/phy/pcie_gen3_os_rx.sv \
+		rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
@@ -223,6 +226,9 @@ k03-lint:
 		rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv \
 		rtl/phy/pcie_gen1_os_tx.sv \
+		rtl/phy/pcie_gen3_scrambler32.sv \
+		rtl/phy/pcie_gen3_os_rx.sv \
+		rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv \
 		rtl/phy/kcu105_pcie_gen1_top.sv
@@ -254,6 +260,7 @@ k11b2-lint:
 		rtl/phy/kcu105_refclk_reset.sv rtl/phy/kcu105_pcie_phy_wrapper.sv \
 		rtl/phy/pcie_gen12_scrambler.sv rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
+		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_ltssm_mac_gen1.sv \
 		rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
@@ -400,8 +407,37 @@ k13-ctrl-sim:
 	@grep -q 'production_bad_ts_rejects' sim/verilator/k13_ctrl/results.xml
 	@echo "K13_CTRL_SIM_PASS"
 
-k13: k13-ctrl-lint k13-ctrl-sim
-	@echo "K13_CTRL_PASS"
+k13-integration-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module k13_ltssm_partner_top \
+		rtl/common/pcie_retrain_cdc_mailbox.sv \
+		rtl/phy/pcie_recovery_speed_ctrl.sv \
+		rtl/phy/pcie_equalization_ctrl.sv \
+		rtl/phy/pcie_recovery_ts_guard.sv \
+		rtl/phy/pcie_k13_production_ctrl.sv \
+		rtl/phy/pcie_gen12_scrambler.sv \
+		rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
+		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
+		rtl/phy/pcie_gen3_scrambler32.sv \
+		rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
+		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_ltssm_mac_gen1.sv \
+		sim/verilator/k13_integration/k13_ltssm_partner_top.sv
+
+k13-integration-sim:
+	@rm -f sim/verilator/k13_integration/results.xml
+	$(MAKE) -C sim/verilator/k13_integration \
+		SIM_BUILD=sim_build COCOTB_RESULTS_FILE=results.xml results.xml
+	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k13_integration/results.xml; then \
+		echo "错误：K13 LTSSM/PHY Partner联合回归失败"; exit 1; \
+	fi
+	@grep -q 'production_ltssm_gen1_to_gen3_eq_closed_loop' \
+		sim/verilator/k13_integration/results.xml
+	@grep -q 'partner_initiated_speed_change_closes_recovery_and_eq' \
+		sim/verilator/k13_integration/results.xml
+	@echo "K13_LTSSM_PARTNER_INTEGRATION_PASS"
+
+k13: k13-ctrl-lint k13-ctrl-sim k13-integration-lint k13-integration-sim
+	@echo "K13_CTRL_AND_LTSSM_INTEGRATION_PASS"
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh

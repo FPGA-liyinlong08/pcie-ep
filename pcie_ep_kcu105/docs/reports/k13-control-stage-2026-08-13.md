@@ -1,6 +1,6 @@
 # K13 控制阶段记录（2026-08-13）
 
-状态：**K13-CTRL PASS；生产顶层边界接线完成；K13 全集成未完成**
+状态：**K13控制/生产边界子阶段通过；Root Port Gen3能力已由XDMA同板对照确认；K13全集成未完成**
 
 ## 1. 本次完成内容
 
@@ -349,3 +349,134 @@ K11B2_VCS_REAL_PHY_PASS
 因此VCS elaboration、Gen1串行链路、Gen3/x1能力字段和配置/BAR基线已通过。
 该用例尚未发起并完成Gen1→Gen3 Retrain/EQ，所以不得将本节标记为
 `K13_VCS_GEN3_PASS`。
+
+## 13. Gen1→Gen3生产动态闭环与串行模型边界（2026-08-13）
+
+本轮新增`sim/verilator/k13_integration`，没有以控制器Stub替代生产路径。联合顶层
+实例化真实`pcie_ltssm_mac_gen1`、`pcie_k13_production_ctrl`、Gen1/Gen3
+Ordered Set模块，并用一套独立`pcie_gen3_os_tx`作为PIPE行为PHY Partner。测试从
+Gen1 L0发出实际core-domain Retrain mailbox，驱动旧速率Recovery TS、PHY
+`phystatus`、TX/RX EQ done和新速率Gen3 Ordered Set。第14节修正后，独立TX
+前缀断言要求`EIEOS→TS1/TS2`，不再接受旧测试中的训练前SDS。结果为：
+
+```text
+production_ltssm_gen1_to_gen3_eq_closed_loop passed
+K13_LTSSM_PARTNER_INTEGRATION_PASS
+K13_CTRL_AND_LTSSM_INTEGRATION_PASS
+```
+
+波形断言确认LTSSM经过`Recovery.RcvrLock→Recovery.RcvrCfg→Recovery.Speed`，
+PHY rate只在Speed边界变为`2'b10`；切速后重新训练并独立解析Gen3 TS1/TS2，EQ
+Phase严格经过`0→1→2→3→4`，无TS reject、fallback或EQ failure，最终进入
+`Recovery.Idle`。K11顶层`K13_ENABLE=1` lint、K12 integration 7/7和K03
+Recovery.Speed directed回归也全部PASS。
+
+串行模型方面，VCS和XSIM都出现“双方Rate已切到Gen3、GT TX持续翻转，但
+RXVALID/DATA_VALID始终为0”。为避免把模型边界误诊为RTL缺陷，新增双PHY XSIM
+纯回环诊断，使用AMD示例相同的P1→P0、Preset apply和Gen3 golden pattern；复签
+结果为：
+
+```text
+K13_XSIM_PHY_LOOPBACK_RESULT ... rxvalid=0 data_valid=0 ... peer_rxvalid=0 peer_data_valid=0 ... tx_edges=263004
+K13_XSIM_PHY_MODEL_LIMIT_OBSERVED
+```
+
+临时生成的Vivado 2021.2官方PCIe PHY example同样在两端没有Gen3
+`RXVALID/DATA_VALID`；其默认成功提示只表示定时测试流程结束，并不校验RX数据。
+因此旧VCS/XSIM安全模型的Gen3无RX结论被重新分类为**仿真模型限制、非RTL失败
+证据**。K13控制状态机和行为Partner闭环现已关闭，但角色正确的真实EQ字段、
+Gen3 L0事务、真实CDR-loss、
+非负WNS实现以及实板8.0 GT/s枚举/BAR仍是冻结门，当前状态继续为
+`K13-IN-PROGRESS`。
+
+## 14. Gen3 Ordered Set修正和第二次实板复测（2026-08-13）
+
+### 14.1 已关闭的协议缺陷
+
+源码审计发现原Gen3训练发送器使用了`EIEOS→SDS→TS1/TS2`顺序，并在SDS后
+初始化scrambler。该顺序不适用于Recovery训练：训练开始和每32个TS之间应插入
+EIEOS，scrambler在EIEOS末尾复位；SDS用于Recovery.Idle开始Data Stream，不能
+插在Recovery TS前。行为Partner与生产发送器原先共享同一错误假设，因此旧联合
+回归形成了自洽但不独立的假阳性。
+
+本轮完成以下修正：
+
+- `pcie_gen3_os_tx`改为`EIEOS→TS1/TS2`，每32个TS重新发送EIEOS并复位LFSR；
+- `pcie_gen3_os_rx`在EIEOS后建立scrambler边界，SDS只推进而不重置LFSR；
+- K13集成测试独立检查生产TX前缀为4个EIEOS字后直接进入TS1，且不含SDS；
+- `make k13`通过，输出`K13_LTSSM_PARTNER_INTEGRATION_PASS`和
+  `K13_CTRL_AND_LTSSM_INTEGRATION_PASS`。
+
+### 14.2 新bit和实板结果
+
+使用`K11B2_ILA_DEBUG=1 K13_ENABLE=1 G9_WAIT_REMOTE_DETECT=1
+G12_ORDERED_SET=1`重新完成Vivado实现和bitgen：
+
+```text
+K13_ILA_IMPL_PASS
+DRC Error = 0
+WNS = -0.121 ns
+bit = fpga/kcu105/build_k13_gen3_ila/impl/k11b2_gen1_endpoint_ila.bit
+SHA256 = eea45005917eafa1e156eba9670dd45e2c005f4ec0d7363f3f16157c71db2664
+```
+
+该bit仍有负setup时序，只是诊断bit。经本机JTAG烧写后远端主机reboot，设备没有
+重新枚举，故本轮BAR测试不可执行。ILA记录为
+`fpga/kcu105/build_k13_gen3_ila/capture/20260813_202324_u_ila_pipe.csv`，关键时序：
+
+```text
+sample 512: PhyStatus 0→1，GT RXRATE保持2'b10
+sample 513: speed_state 2→3，PhyStatus 1→0
+sample 514: LTSSM Recovery.Speed(0x12)→Recovery.RcvrLock(0x0b)
+Gen3 RXVALID samples = 0
+Gen3 DATA_VALID samples = 0
+GT RX valid samples = 0
+```
+
+这证明EIEOS/SDS缺陷已修正，但它不是唯一根因。Recovery.Speed命令、GT rate切换
+和PhyStatus完成应答已经闭环；失败发生在新速率重新进入RcvrLock后，没有收到任何
+可供TS/EQ解析的Gen3 block。
+
+### 14.3 Root Port Gen3能力结论修正
+
+前一版记录曾根据一次远端`00:01.0`能力读取写成“Root Port最高只支持Gen2”，
+该结论现撤销。工程中已有同一块KCU105、同一Lane、同一PCIe插槽和同一远端主机的
+官方XDMA Gen3 x1对照证据：
+
+```text
+Endpoint = 10ee:9031 (official XDMA)
+LnkSta = 8GT/s x1
+EqualizationComplete = 1
+Equalization Phase 1/2/3 = complete
+AER = 0
+```
+
+该结果证明Root Port、PCIe插槽、Lane 0、REFCLK、PERST#和板级GT通道具备Gen3
+建链条件，当前插槽可以作为K13 Gen3实板验收Partner。之前的能力寄存器快照与该
+直接实板事实矛盾，现阶段只能判定为错误的BDF/能力偏移/采样上下文或过期状态，不能
+继续把它作为Endpoint失败的解释；应在XDMA成功运行状态下重新读取并保存完整Root
+Port BDF、PCIe capability offset和`lspci -vv`原文。
+
+仍有一个必须独立关闭的TS矛盾：先前Gen1 ILA解析到对端TS1 Rate ID为`0x8e`，
+但尚未用原始symbol和方向标记复核。由于XDMA已经证明对端确实支持Gen3，下一步
+不应再检查Root Port是否支持Gen3，而应核对Endpoint的TS字段偏移、解扰边界、RX/TX
+方向和速率能力解析是否正确。
+
+### 14.4 结论和后续顺序
+
+K13保持`K13-IN-PROGRESS`，不能冻结或发布。后续按以下顺序执行：
+
+1. 扩充ILA，直接保存Gen1 TS原始16个symbol、RX/TX方向、解析后的Rate ID和
+   speed-change位，先关闭`0x8e`与Root Port能力寄存器的矛盾。
+2. 在XDMA成功状态下重新采集Root Port完整能力和链路状态，固定正确BDF及capability
+   offset，排除上一版能力读取错误。
+3. 对Endpoint增加Gen3 TS原始symbol、`RXDATAK`、收发方向和解析结果的ILA观测，
+   核对`0x8e`是否确为Root Port TS1而非本端TX或错误字段。
+4. 在真实Gen3 Partner上补齐角色正确的EQ Phase 0～3动态字段、
+   `phy_rxeq_ctrl=2'b10`自适应流程、RX EQ done，以及Gen3 L0的128b/130b
+   Data Stream/SKP/EDS和TLP/DLLP路径。
+
+现有`pcie_equalization_ctrl`的Phase 1仍输出`phy_rxeq_ctrl=2'b01`，而当前PHY
+接口中该编码不是接收自适应命令；生产顶层还用`os_rate_id[3]`代替真实TS EQ
+Control/Data来启动EQ。行为测试中的Phase `0→1→2→3→4`只能证明状态机推进，
+不能证明PCIe Gen3 EQ协议已实现，这两项必须在真实Gen3复测前修正。

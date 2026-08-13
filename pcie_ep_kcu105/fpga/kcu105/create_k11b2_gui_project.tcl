@@ -66,6 +66,9 @@ set rtl_files [list \
   [file join $project_dir rtl/phy/pcie_gen1_rx_symbol_aligner.sv] \
   [file join $project_dir rtl/phy/pcie_gen1_os_rx.sv] \
   [file join $project_dir rtl/phy/pcie_gen1_os_tx.sv] \
+  [file join $project_dir rtl/phy/pcie_gen3_scrambler32.sv] \
+  [file join $project_dir rtl/phy/pcie_gen3_os_rx.sv] \
+  [file join $project_dir rtl/phy/pcie_gen3_os_tx.sv] \
   [file join $project_dir rtl/phy/pcie_gen1_framer.sv] \
   [file join $project_dir rtl/common/pcie_link_loss_trigger.sv] \
   [file join $project_dir rtl/phy/pcie_ltssm_mac_gen1.sv] \

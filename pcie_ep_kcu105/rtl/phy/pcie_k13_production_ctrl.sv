@@ -17,6 +17,10 @@ module pcie_k13_production_ctrl #(
     input wire       ltssm_speed_ready,
     input wire       retrain_pulse,
     input wire [1:0] target_speed,
+    // 对端也可以在L0用TS1 Speed Change发起Recovery。该请求已经位于
+    // phy_clk域，不能绕回core配置空间后再启动，否则会错过Recovery窗口。
+    input wire       partner_retrain_valid,
+    input wire [1:0] partner_target_speed,
     input wire       phy_phystatus,
     input wire       phy_cdr_lost,
     input wire       phy_txeq_done,
@@ -55,6 +59,10 @@ module pcie_k13_production_ctrl #(
 );
     wire mailbox_busy, mailbox_valid, mailbox_accept;
     wire [1:0] mailbox_target;
+    wire speed_retrain_accept;
+    wire retrain_request_valid = mailbox_valid || partner_retrain_valid;
+    wire [1:0] retrain_request_target = mailbox_valid ? mailbox_target :
+                                                        partner_target_speed;
     wire speed_timeout, peer_reject, illegal_speed, speed_cdr_loss;
     wire speed_fallback;
     wire ts_malformed, ts_illegal_rate, ts_lane_link_mismatch;
@@ -64,7 +72,20 @@ module pcie_k13_production_ctrl #(
     wire [1:0] speed_negotiated;
     wire [2:0] speed_state_w;
     wire ts_accept_w, ts_reject_w;
+    wire [1:0] eq_phy_txeq_ctrl;
+    wire [3:0] eq_phy_txeq_preset;
+    wire [5:0] eq_phy_txeq_coeff;
+    wire [1:0] eq_phy_rxeq_ctrl;
+    wire [3:0] eq_phy_rxeq_txpreset;
     reg eq_start_q;
+    reg pre_rate_txeq_active;
+    reg pre_rate_txeq_ready;
+    reg post_rate_rxeq_active;
+    reg post_rate_rxeq_ready;
+    reg [1:0] active_target;
+    wire speed_boundary_ready = ltssm_speed_ready &&
+                                ((active_target != 2'b10) ||
+                                 pre_rate_txeq_ready);
 
     generate if (K13_ENABLE != 0) begin : g_k13_enabled
         pcie_retrain_cdc_mailbox u_mailbox (
@@ -76,12 +97,26 @@ module pcie_k13_production_ctrl #(
             .d_retrain_accept(mailbox_accept)
         );
 
+        assign mailbox_accept = speed_retrain_accept && mailbox_valid;
+
+        // 固定本次Recovery的目标速率。mailbox_target只在mailbox事务期间有效，
+        // partner请求也只有一拍，后续TS guard、Preset和EQ都必须使用锁存值。
+        always @(posedge phy_clk or negedge phy_rst_n) begin
+            if (!phy_rst_n)
+                active_target <= 2'b00;
+            else if (speed_retrain_accept)
+                active_target <= retrain_request_target;
+        end
+
         pcie_recovery_ts_guard u_ts_guard (
             .clk(phy_clk), .rst_n(phy_rst_n),
             .ts_valid(ts_valid), .ts_complete(ts_complete),
             .ts_is_ts1(ts_is_ts1), .ts_is_ts2(ts_is_ts2),
             .ts_lane(ts_lane), .ts_link(ts_link), .ts_rate(ts_rate),
-            .expected_rate(mailbox_target),
+            // 请求TS本身必须按本次目标判定，不能在active_target锁存前
+            // 用上一轮速率制造一次虚假的ts_reject/illegal sticky。
+            .expected_rate(retrain_request_valid ? retrain_request_target :
+                                                   active_target),
             .ts_eq_request(ts_eq_request), .expected_lane(expected_lane),
             .expected_link(expected_link), .ts_accept(ts_accept_w),
             .ts_reject(ts_reject_w), .malformed_sticky(ts_malformed),
@@ -93,9 +128,10 @@ module pcie_k13_production_ctrl #(
             .SPEED_TIMEOUT_CYCLES(SPEED_TIMEOUT_CYCLES)
         ) u_speed (
             .clk(phy_clk), .rst_n(phy_rst_n), .link_up(link_up),
-            .retrain_valid(mailbox_valid), .retrain_target_speed(mailbox_target),
-            .ltssm_speed_ready(ltssm_speed_ready),
-            .retrain_accept(mailbox_accept), .phy_phystatus(phy_phystatus),
+            .retrain_valid(retrain_request_valid),
+            .retrain_target_speed(retrain_request_target),
+            .ltssm_speed_ready(speed_boundary_ready),
+            .retrain_accept(speed_retrain_accept), .phy_phystatus(phy_phystatus),
             .phy_cdr_lost(phy_cdr_lost), .peer_speed_ok(ts_accept_w),
             .peer_speed_reject(ts_reject_w), .state(speed_state_w),
             .phy_rate(speed_phy_rate), .phy_txelecidle(speed_txelecidle),
@@ -109,13 +145,63 @@ module pcie_k13_production_ctrl #(
             .fallback_taken_sticky(speed_fallback)
         );
 
+        // PG239 requires the initial Gen3 transmitter preset to be applied
+        // while TxElecIdle is asserted and before changing PIPE Rate.  Keep
+        // the speed controller at the Recovery.Speed boundary until the
+        // real PHY acknowledges TXEQ_DONE.
+        always @(posedge phy_clk or negedge phy_rst_n) begin
+            if (!phy_rst_n) begin
+                pre_rate_txeq_active <= 1'b0;
+                pre_rate_txeq_ready <= 1'b0;
+            end else begin
+                if ((speed_state_w == 3'd0) ||
+                    (active_target != 2'b10)) begin
+                    pre_rate_txeq_active <= 1'b0;
+                    pre_rate_txeq_ready <= 1'b0;
+                end else if ((speed_state_w == 3'd1) &&
+                             ltssm_speed_ready &&
+                             !pre_rate_txeq_ready &&
+                             !pre_rate_txeq_active) begin
+                    pre_rate_txeq_active <= 1'b1;
+                end else if (pre_rate_txeq_active && phy_txeq_done) begin
+                    pre_rate_txeq_active <= 1'b0;
+                    pre_rate_txeq_ready <= 1'b1;
+                end
+            end
+        end
+
+        // Break the Gen3 receive bootstrap deadlock: TS fields cannot start
+        // protocol equalization until the RX PCS emits blocks, while the RX
+        // PCS needs its first DFE adaptation after the rate change.  Start
+        // adaptation as soon as PhyStatus completes the Gen3 switch.
+        always @(posedge phy_clk or negedge phy_rst_n) begin
+            if (!phy_rst_n) begin
+                post_rate_rxeq_active <= 1'b0;
+                post_rate_rxeq_ready <= 1'b0;
+            end else begin
+                if ((speed_state_w == 3'd0) ||
+                    (active_target != 2'b10)) begin
+                    post_rate_rxeq_active <= 1'b0;
+                    post_rate_rxeq_ready <= 1'b0;
+                end else if ((speed_state_w == 3'd3) &&
+                             !post_rate_rxeq_ready &&
+                             !post_rate_rxeq_active) begin
+                    post_rate_rxeq_active <= 1'b1;
+                end else if (post_rate_rxeq_active && phy_rxeq_done) begin
+                    post_rate_rxeq_active <= 1'b0;
+                    post_rate_rxeq_ready <= 1'b1;
+                end
+            end
+        end
+
         always @(posedge phy_clk or negedge phy_rst_n) begin
             if (!phy_rst_n)
                 eq_start_q <= 1'b0;
             else begin
                 eq_start_q <= 1'b0;
-                if ((speed_state_w == 3'd3) && (mailbox_target == 2'b10) &&
-                    ts_accept_w && !eq_active && !eq_done && !eq_failed)
+                if ((speed_state_w == 3'd3) && (active_target == 2'b10) &&
+                    post_rate_rxeq_ready && ts_accept_w &&
+                    !eq_active && !eq_done && !eq_failed)
                     eq_start_q <= 1'b1;
             end
         end
@@ -124,15 +210,17 @@ module pcie_k13_production_ctrl #(
             .EQ_TIMEOUT_CYCLES(EQ_TIMEOUT_CYCLES)
         ) u_eq (
             .clk(phy_clk), .rst_n(phy_rst_n && !speed_cdr_loss),
-            .eq_start(eq_start_q), .target_speed(mailbox_target),
+            .eq_start(eq_start_q), .target_speed(active_target),
             .tx_preset(4'd4), .tx_coeff(6'd12), .tx_coeff_valid(1'b1),
             .rx_txpreset(4'd5), .rx_preset_valid(1'b1),
             .phy_txeq_done(phy_txeq_done), .phy_rxeq_done(phy_rxeq_done),
             .eq_start_accept(eq_start_accept), .eq_active(eq_active),
             .eq_done(eq_done), .eq_failed(eq_failed), .phase(eq_phase),
-            .phy_txeq_ctrl(phy_txeq_ctrl), .phy_txeq_preset(phy_txeq_preset),
-            .phy_txeq_coeff(phy_txeq_coeff), .phy_rxeq_ctrl(phy_rxeq_ctrl),
-            .phy_rxeq_txpreset(phy_rxeq_txpreset),
+            .phy_txeq_ctrl(eq_phy_txeq_ctrl),
+            .phy_txeq_preset(eq_phy_txeq_preset),
+            .phy_txeq_coeff(eq_phy_txeq_coeff),
+            .phy_rxeq_ctrl(eq_phy_rxeq_ctrl),
+            .phy_rxeq_txpreset(eq_phy_rxeq_txpreset),
             .illegal_param_sticky(eq_illegal_param),
             .phase_timeout_sticky(eq_phase_timeout)
         );
@@ -141,6 +229,8 @@ module pcie_k13_production_ctrl #(
         assign mailbox_valid = 1'b0;
         assign mailbox_accept = 1'b0;
         assign mailbox_target = 2'b00;
+        assign speed_retrain_accept = 1'b0;
+        assign active_target = 2'b00;
         assign speed_phy_rate = 2'b00;
         assign speed_txelecidle = 1'b0;
         assign speed_quiesce = 1'b0;
@@ -157,25 +247,41 @@ module pcie_k13_production_ctrl #(
         assign illegal_speed = 1'b0;
         assign speed_cdr_loss = 1'b0;
         assign speed_fallback = 1'b0;
+        assign pre_rate_txeq_active = 1'b0;
+        assign pre_rate_txeq_ready = 1'b0;
+        assign post_rate_rxeq_active = 1'b0;
+        assign post_rate_rxeq_ready = 1'b0;
         assign eq_start_q = 1'b0;
         assign eq_start_accept = 1'b0;
         assign eq_active = 1'b0;
         assign eq_done = 1'b0;
         assign eq_failed = 1'b0;
         assign eq_phase = 3'd7;
-        assign phy_txeq_ctrl = 2'b00;
-        assign phy_txeq_preset = 4'd0;
-        assign phy_txeq_coeff = 6'd0;
-        assign phy_rxeq_ctrl = 2'b00;
-        assign phy_rxeq_txpreset = 4'd0;
+        assign eq_phy_txeq_ctrl = 2'b00;
+        assign eq_phy_txeq_preset = 4'd0;
+        assign eq_phy_txeq_coeff = 6'd0;
+        assign eq_phy_rxeq_ctrl = 2'b00;
+        assign eq_phy_rxeq_txpreset = 4'd0;
         assign eq_illegal_param = 1'b0;
         assign eq_phase_timeout = 1'b0;
     end endgenerate
 
     assign phy_rate = speed_phy_rate;
-    assign phy_txelecidle = speed_txelecidle;
-    assign traffic_quiesce = speed_quiesce || eq_active;
-    assign recovery_active = speed_recovery_active || eq_active;
+    assign phy_txelecidle = speed_txelecidle || pre_rate_txeq_active;
+    assign phy_txeq_ctrl = pre_rate_txeq_active ? 2'b01 :
+                                                    eq_phy_txeq_ctrl;
+    assign phy_txeq_preset = pre_rate_txeq_active ? 4'd4 :
+                                                      eq_phy_txeq_preset;
+    assign phy_txeq_coeff = pre_rate_txeq_active ? 6'd0 :
+                                                     eq_phy_txeq_coeff;
+    assign phy_rxeq_ctrl = post_rate_rxeq_active ? 2'b10 :
+                                                       eq_phy_rxeq_ctrl;
+    assign phy_rxeq_txpreset = post_rate_rxeq_active ? 4'd5 :
+                                                           eq_phy_rxeq_txpreset;
+    assign traffic_quiesce = speed_quiesce || eq_active ||
+                             pre_rate_txeq_active || post_rate_rxeq_active;
+    assign recovery_active = speed_recovery_active || eq_active ||
+                             pre_rate_txeq_active || post_rate_rxeq_active;
     assign negotiated_speed = speed_negotiated;
     assign speed_state = speed_state_w;
     assign ts_accept = ts_accept_w;

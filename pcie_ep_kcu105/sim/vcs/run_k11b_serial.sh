@@ -23,6 +23,7 @@ b2_mode="${K11B2_MODE:-0}"
 b2_stress_mode="${K11B2_STRESS_MODE:-0}"
 k12e_mode="${K12E_VCS:-0}"
 k13_enable="${K13_ENABLE:-0}"
+k13_retrain="${K13_VCS_RETRAIN:-0}"
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 if [[ "${b2_mode}" == "1" ]]; then
@@ -135,6 +136,9 @@ fi
     "${project_dir}/rtl/phy/pcie_gen1_rx_symbol_aligner.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_os_rx.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_os_tx.sv" \
+    "${project_dir}/rtl/phy/pcie_gen3_scrambler32.sv" \
+    "${project_dir}/rtl/phy/pcie_gen3_os_rx.sv" \
+    "${project_dir}/rtl/phy/pcie_gen3_os_tx.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_framer.sv" \
     "${project_dir}/rtl/phy/pcie_ltssm_mac_gen1.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_gen1_top.sv" \
@@ -189,6 +193,9 @@ if [[ "${b2_mode}" == "1" ]]; then
     if [[ "${b2_stress_mode}" == "1" ]]; then
         b2_plusargs+=(+K11B2_STRESS)
     fi
+    if [[ "${k13_retrain}" == "1" ]]; then
+        b2_plusargs+=(+K13_RETRAIN)
+    fi
     set +e
     timeout --foreground "${simulation_timeout}" \
         "${run_dir}/k11b_simv" "${b2_plusargs[@]}" -licqueue \
@@ -214,6 +221,9 @@ if [[ "${b2_mode}" == "1" ]]; then
     grep -q 'K11B2_VCS_PASS' build/k11b2_simulate.log
     if [[ "${k12e_mode}" == "1" ]]; then
         grep -q 'K12E_REAL_PHY_ADAPTER_PASS' build/k11b2_simulate.log
+    fi
+    if [[ "${k13_retrain}" == "1" ]]; then
+        grep -q 'K13_VCS_GEN3_RETRAIN_PASS' build/k11b2_simulate.log
     fi
     echo "K11B2_VCS_REAL_PHY_PASS run_dir=${run_dir}"
     if [[ "${k12e_mode}" == "1" ]]; then

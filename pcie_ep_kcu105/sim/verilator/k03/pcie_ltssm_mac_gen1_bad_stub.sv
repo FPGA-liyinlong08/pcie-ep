@@ -11,8 +11,10 @@ module pcie_ltssm_mac_gen1 #(
 ) (
     input wire phy_pclk, input wire pipe_rst_n,
     input wire [31:0] phy_rxdata, input wire [1:0] phy_rxdatak,
-    input wire phy_rxdata_valid, input wire phy_rxvalid,
+    input wire phy_rxdata_valid, input wire phy_rxstart_block,
+    input wire [1:0] phy_rxsync_header, input wire phy_rxvalid,
     input wire phy_phystatus, input wire phy_rxelecidle, input wire [2:0] phy_rxstatus,
+    input wire [1:0] active_phy_rate,
     output wire [31:0] phy_txdata, output wire [1:0] phy_txdatak,
     output wire phy_txdata_valid, output wire phy_txstart_block,
     output wire [1:0] phy_txsync_header,
@@ -68,7 +70,8 @@ module pcie_ltssm_mac_gen1 #(
     assign training_error_count = 0; assign timeout_count = 0;
     assign frame_error_count = 0; assign hot_reset_seen = 0;
     assign recovery_speed_ready = 0;
-    wire _unused = &{1'b0, phy_rxdata, phy_rxdatak, phy_rxdata_valid, phy_rxvalid,
+    wire _unused = &{1'b0, phy_rxdata, phy_rxdatak, phy_rxdata_valid,
+        phy_rxstart_block, phy_rxsync_header, active_phy_rate, phy_rxvalid,
         phy_rxelecidle, tx_pkt_valid, tx_pkt_data, tx_pkt_keep, tx_pkt_sop, tx_pkt_eop,
         tx_pkt_is_dllp, tx_pkt_bad, link_disable, hot_reset_req, force_recovery,
         speed_retrain_active, recovery_speed_done,

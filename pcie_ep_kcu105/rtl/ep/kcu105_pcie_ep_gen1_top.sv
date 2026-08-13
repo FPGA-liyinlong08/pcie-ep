@@ -93,7 +93,10 @@ module kcu105_pcie_ep_gen1_top #(
     wire k13_ts_accept, k13_ts_reject, k13_cdr_loss_sticky;
     wire k13_fallback_sticky, k13_illegal_ts_sticky, k13_speed_timeout_sticky;
     wire ltssm_recovery_speed_ready;
-    wire k13_recovery_speed_done = (k13_speed_state == 3'd3);
+    // 正常切速和Gen1 fallback都必须向生产LTSSM确认Recovery.Speed完成；
+    // 否则fallback虽已收到PhyStatus，LTSSM仍会在Recovery.Speed超时掉线。
+    wire k13_recovery_speed_done = (k13_speed_state == 3'd3) ||
+                                    (k13_speed_state == 3'd5);
     wire [1:0] ltssm_negotiated_speed;
     reg [24:0] heartbeat_count;
 
@@ -195,7 +198,10 @@ module kcu105_pcie_ep_gen1_top #(
     wire [1:0] k13_ts_rate;
     wire       k13_ts_valid = os_ts1_valid || os_ts2_valid;
     wire       k13_ts_complete = k13_ts_valid;
-    wire       k13_ts_eq_request = os_training_control[0];
+    // At 8.0 GT/s the EQ request is carried by the Gen3 TS EQ fields, not
+    // the Gen1/2 Training Control hot-reset bit.  A Gen3-capable TS accepted
+    // during retrain starts the phase controller.
+    wire       k13_ts_eq_request = k13_ts_valid && os_rate_id[3];
     // pcie_phy:1.0不公开GT CDR lock端口；用PIPE连续RxElecIdle且无RxValid
     // 作为可综合的失锁代理，连续8个phy_pclk才触发，避免单拍空闲误回退。
     wire       k13_phy_cdr_lost = pipe_rst_n && link_up && phy_cdr_loss_observed;
@@ -214,6 +220,11 @@ module kcu105_pcie_ep_gen1_top #(
         end
     endfunction
     assign k13_ts_rate = decode_k13_ts_rate(os_rate_id);
+    // Root Port可在L0主动发送带Speed Change位的TS1。真实硬件会采用这一路，
+    // 不能只依赖Endpoint配置空间的Retrain Link命令。
+    wire k13_partner_retrain_valid = link_up && os_ts1_valid &&
+                                     os_rate_id[7] &&
+                                     (k13_ts_rate != 2'b11);
 
     pcie_k13_production_ctrl #(
         .K13_ENABLE(K13_ENABLE),
@@ -225,6 +236,8 @@ module kcu105_pcie_ep_gen1_top #(
         .link_up(link_up), .ltssm_speed_ready(ltssm_recovery_speed_ready),
         .retrain_pulse(core_retrain_link_pulse),
         .target_speed(core_target_link_speed),
+        .partner_retrain_valid(k13_partner_retrain_valid),
+        .partner_target_speed(k13_ts_rate),
         .phy_phystatus(phy_phystatus), .phy_cdr_lost(k13_phy_cdr_lost),
         .phy_txeq_done(phy_txeq_done), .phy_rxeq_done(phy_rxeq_done),
         .ts_valid(k13_ts_valid), .ts_complete(k13_ts_complete),
@@ -251,15 +264,15 @@ module kcu105_pcie_ep_gen1_top #(
                       ? k13_phy_rate : ltssm_phy_rate;
     assign phy_txelecidle = (K13_ENABLE != 0) && k13_recovery_active
                              ? k13_phy_txelecidle : ltssm_phy_txelecidle;
-    assign phy_txeq_ctrl = (K13_ENABLE != 0) && k13_eq_active
+    assign phy_txeq_ctrl = (K13_ENABLE != 0) && k13_recovery_active
                            ? k13_phy_txeq_ctrl : ltssm_phy_txeq_ctrl;
-    assign phy_txeq_preset = (K13_ENABLE != 0) && k13_eq_active
+    assign phy_txeq_preset = (K13_ENABLE != 0) && k13_recovery_active
                              ? k13_phy_txeq_preset : ltssm_phy_txeq_preset;
-    assign phy_txeq_coeff = (K13_ENABLE != 0) && k13_eq_active
+    assign phy_txeq_coeff = (K13_ENABLE != 0) && k13_recovery_active
                             ? k13_phy_txeq_coeff : ltssm_phy_txeq_coeff;
-    assign phy_rxeq_ctrl = (K13_ENABLE != 0) && k13_eq_active
+    assign phy_rxeq_ctrl = (K13_ENABLE != 0) && k13_recovery_active
                            ? k13_phy_rxeq_ctrl : ltssm_phy_rxeq_ctrl;
-    assign phy_rxeq_txpreset = (K13_ENABLE != 0) && k13_eq_active
+    assign phy_rxeq_txpreset = (K13_ENABLE != 0) && k13_recovery_active
                                ? k13_phy_rxeq_txpreset : ltssm_phy_rxeq_txpreset;
     assign mac_tx_valid = mac_tx_valid_core &&
                           !((K13_ENABLE != 0) && k13_traffic_quiesce);
@@ -342,9 +355,12 @@ module kcu105_pcie_ep_gen1_top #(
     ) u_ltssm_mac (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .phy_rxdata(phy_rxdata), .phy_rxdatak(phy_rxdatak),
-        .phy_rxdata_valid(phy_rxdata_valid), .phy_rxvalid(phy_rxvalid),
+        .phy_rxdata_valid(phy_rxdata_valid),
+        .phy_rxstart_block(phy_rxstart_block),
+        .phy_rxsync_header(phy_rxsync_header), .phy_rxvalid(phy_rxvalid),
         .phy_phystatus(phy_phystatus), .phy_rxelecidle(phy_rxelecidle),
-        .phy_rxstatus(phy_rxstatus), .phy_txdata(phy_txdata),
+        .phy_rxstatus(phy_rxstatus), .active_phy_rate(phy_rate),
+        .phy_txdata(phy_txdata),
         .phy_txdatak(phy_txdatak), .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block), .phy_txsync_header(phy_txsync_header),
         .phy_txdetectrx(phy_txdetectrx), .phy_txelecidle(ltssm_phy_txelecidle),

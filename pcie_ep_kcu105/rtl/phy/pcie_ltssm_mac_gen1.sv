@@ -24,10 +24,13 @@ module pcie_ltssm_mac_gen1 #(
     input  wire [31:0] phy_rxdata,
     input  wire [1:0]  phy_rxdatak,
     input  wire        phy_rxdata_valid,
+    input  wire        phy_rxstart_block,
+    input  wire [1:0]  phy_rxsync_header,
     input  wire        phy_rxvalid,
     input  wire        phy_phystatus,
     input  wire        phy_rxelecidle,
     input  wire [2:0]  phy_rxstatus,
+    input  wire [1:0]  active_phy_rate,
 
     output wire [31:0] phy_txdata,
     output wire [1:0]  phy_txdatak,
@@ -162,6 +165,17 @@ module pcie_ltssm_mac_gen1 #(
     wire       os_link_is_pad;
     wire       os_lane_is_pad;
     wire [7:0] os_n_fts;
+    wire       gen3_mode = active_phy_rate == 2'b10;
+    wire       gen1_os_ts1_valid, gen1_os_ts2_valid, gen1_os_malformed;
+    wire [7:0] gen1_os_link_number, gen1_os_lane_number;
+    wire [7:0] gen1_os_n_fts, gen1_os_rate_id, gen1_os_training_control;
+    wire       gen1_os_link_is_pad, gen1_os_lane_is_pad;
+    wire       gen3_os_ts1_valid, gen3_os_ts2_valid, gen3_os_malformed;
+    wire [7:0] gen3_os_link_number, gen3_os_lane_number;
+    wire [7:0] gen3_os_n_fts, gen3_os_rate_id, gen3_os_training_control;
+    wire [7:0] gen3_os_eq_control;
+    wire [23:0] gen3_os_eq_data;
+    wire       gen3_os_link_is_pad, gen3_os_lane_is_pad;
 
     // PIPE/standalone PHY 的 RxDataValid 只用于 Gen3 128b/130b 数据块；
     // Gen1/2 的 8b/10b Symbol 有效性由 RxValid 指示。K03 固定 Gen1，因此不能
@@ -187,11 +201,21 @@ module pcie_ltssm_mac_gen1 #(
     reg        tx_os_lane_pad;
     reg        tx_os_enable;
     reg  [7:0] tx_os_training_control;
+    wire [7:0] tx_os_rate_id = TX_RATE_ID |
+        ((speed_retrain_active &&
+          ((ltssm_state == RECOVERY_RCVRLOCK) ||
+           (ltssm_state == RECOVERY_RCVRCFG))) ? 8'h80 : 8'h00);
     wire [31:0] os_tx_data;
     wire [1:0]  os_tx_datak;
     wire        os_tx_valid;
+    wire        gen1_os_tx_complete;
     wire [2:0]  tx_os_word_index;
     wire [2:0]  tx_os_active_word_index;
+    wire [31:0] gen3_os_tx_data;
+    wire        gen3_os_tx_valid, gen3_os_tx_start_block;
+    wire [1:0]  gen3_os_tx_sync_header;
+    wire        gen3_os_tx_complete;
+    wire [1:0]  gen3_os_tx_word_index;
     // Polling.Active中的TX只发送TS1；该事件对应一个完整的8拍TS1。
     wire        os_tx_ts1_complete = os_tx_complete && (tx_os_mode == 2'd1);
     reg  [10:0] polling_tx_ts1_count;
@@ -271,10 +295,12 @@ module pcie_ltssm_mac_gen1 #(
         // G12-A：Ordered Set发送边界取证。
         // 低位到高位依次为LTSSM、TX mode、完成脉冲、原始/实际word index、TX valid。
         (* mark_debug = "true", keep = "true" *)
-        wire [31:0] dbg_g12_tx = {
-            16'd0, os_tx_valid, tx_os_active_word_index, tx_os_word_index,
-            os_tx_complete, tx_os_mode, ltssm_state
-        };
+        wire [31:0] dbg_g12_tx = gen3_mode ?
+            // Gen3复用为Root Port TS的EQ字段：高24位eq_data，低8位eq_control。
+            // 该字段此前虽已解析，但生产K13尚未消费；实板取证后用于接线。
+            {gen3_os_eq_data, gen3_os_eq_control} :
+            {16'd0, os_tx_valid, tx_os_active_word_index, tx_os_word_index,
+             os_tx_complete, tx_os_mode, ltssm_state};
         // G11：从PHY原始输入到Ordered Set解析器的逐级数据链路。
         // 低位到高位依次为OS脉冲、最终aligned、descrambled、raw aligned和PHY原始值。
         (* mark_debug = "true", keep = "true" *)
@@ -373,18 +399,43 @@ module pcie_ltssm_mac_gen1 #(
         .in_valid         (rx_raw_aligned_valid),
         .in_data          (rx_raw_aligned_data),
         .in_datak         (rx_raw_aligned_datak),
-        .ts1_valid        (os_ts1_valid),
-        .ts2_valid        (os_ts2_valid),
-        .malformed        (os_malformed),
+        .ts1_valid        (gen1_os_ts1_valid),
+        .ts2_valid        (gen1_os_ts2_valid),
+        .malformed        (gen1_os_malformed),
         .idle_pair_valid  (os_raw_idle_pair_valid),
-        .link_number      (os_link_number),
-        .link_is_pad      (os_link_is_pad),
-        .lane_number      (os_lane_number),
-        .lane_is_pad      (os_lane_is_pad),
-        .n_fts            (os_n_fts),
-        .rate_id          (os_rate_id),
-        .training_control (os_training_control)
+        .link_number      (gen1_os_link_number),
+        .link_is_pad      (gen1_os_link_is_pad),
+        .lane_number      (gen1_os_lane_number),
+        .lane_is_pad      (gen1_os_lane_is_pad),
+        .n_fts            (gen1_os_n_fts),
+        .rate_id          (gen1_os_rate_id),
+        .training_control (gen1_os_training_control)
     );
+
+    pcie_gen3_os_rx u_gen3_os_rx (
+        .clk(phy_pclk), .rst_n(pipe_rst_n), .enable(gen3_mode),
+        .in_valid(phy_rxdata_valid), .start_block(phy_rxstart_block),
+        .sync_header(phy_rxsync_header), .in_data(phy_rxdata),
+        .ts1_valid(gen3_os_ts1_valid), .ts2_valid(gen3_os_ts2_valid),
+        .malformed(gen3_os_malformed),
+        .link_number(gen3_os_link_number), .link_is_pad(gen3_os_link_is_pad),
+        .lane_number(gen3_os_lane_number), .lane_is_pad(gen3_os_lane_is_pad),
+        .n_fts(gen3_os_n_fts), .rate_id(gen3_os_rate_id),
+        .training_control(gen3_os_training_control),
+        .eq_control(gen3_os_eq_control), .eq_data(gen3_os_eq_data)
+    );
+
+    assign os_ts1_valid = gen3_mode ? gen3_os_ts1_valid : gen1_os_ts1_valid;
+    assign os_ts2_valid = gen3_mode ? gen3_os_ts2_valid : gen1_os_ts2_valid;
+    assign os_malformed = gen3_mode ? gen3_os_malformed : gen1_os_malformed;
+    assign os_link_number = gen3_mode ? gen3_os_link_number : gen1_os_link_number;
+    assign os_link_is_pad = gen3_mode ? gen3_os_link_is_pad : gen1_os_link_is_pad;
+    assign os_lane_number = gen3_mode ? gen3_os_lane_number : gen1_os_lane_number;
+    assign os_lane_is_pad = gen3_mode ? gen3_os_lane_is_pad : gen1_os_lane_is_pad;
+    assign os_n_fts = gen3_mode ? gen3_os_n_fts : gen1_os_n_fts;
+    assign os_rate_id = gen3_mode ? gen3_os_rate_id : gen1_os_rate_id;
+    assign os_training_control = gen3_mode ? gen3_os_training_control :
+                                             gen1_os_training_control;
 
     pcie_gen1_os_tx u_os_tx (
         .clk              (phy_pclk),
@@ -396,17 +447,34 @@ module pcie_ltssm_mac_gen1 #(
         .lane_number      (tx_os_lane),
         .lane_is_pad      (tx_os_lane_pad),
         .n_fts            (8'hff),
-        // TX_RATE_ID是TS Rate ID能力位图：K03/K11-B仅置bit1，
-        // K13置bit[3:1]以宣告Gen1/2/3能力。
-        .rate_id          (TX_RATE_ID),
+        // TX_RATE_ID是能力位图；Recovery速率切换期间bit7必须置位，
+        // 否则对端只执行同速率Recovery，不会改变PIPE Rate。
+        .rate_id          (tx_os_rate_id),
         .training_control (tx_os_training_control),
         .out_data         (os_tx_data),
         .out_datak        (os_tx_datak),
         .out_valid        (os_tx_valid),
-        .os_complete      (os_tx_complete),
+        .os_complete      (gen1_os_tx_complete),
         .word_index_debug (tx_os_word_index),
         .active_word_index_debug(tx_os_active_word_index)
     );
+
+    pcie_gen3_os_tx u_gen3_os_tx (
+        .clk(phy_pclk), .rst_n(pipe_rst_n),
+        .enable(gen3_mode && tx_os_enable), .mode(tx_os_mode),
+        .link_number(tx_os_link), .link_is_pad(tx_os_link_pad),
+        .lane_number(tx_os_lane), .lane_is_pad(tx_os_lane_pad),
+        .n_fts(8'hff), .rate_id(tx_os_rate_id),
+        .training_control(tx_os_training_control),
+        .out_data(gen3_os_tx_data), .out_valid(gen3_os_tx_valid),
+        .start_block(gen3_os_tx_start_block),
+        .sync_header(gen3_os_tx_sync_header),
+        .os_complete(gen3_os_tx_complete),
+        .word_index_debug(gen3_os_tx_word_index)
+    );
+
+    assign os_tx_complete = gen3_mode ? gen3_os_tx_complete :
+                                            gen1_os_tx_complete;
 
     pcie_gen12_scrambler u_tx_scrambler (
         .clk              (phy_pclk),
@@ -495,11 +563,13 @@ module pcie_ltssm_mac_gen1 #(
         endcase
     end
 
-    assign phy_txdata         = {16'd0, tx_scrambled_data};
+    assign phy_txdata         = gen3_mode ? gen3_os_tx_data :
+                                             {16'd0, tx_scrambled_data};
     assign phy_txdatak        = tx_scrambled_datak;
-    assign phy_txdata_valid   = tx_scrambled_valid;
-    assign phy_txstart_block  = 1'b0;
-    assign phy_txsync_header  = 2'b00;
+    assign phy_txdata_valid   = gen3_mode ? gen3_os_tx_valid :
+                                             tx_scrambled_valid;
+    assign phy_txstart_block  = gen3_mode && gen3_os_tx_start_block;
+    assign phy_txsync_header  = gen3_mode ? gen3_os_tx_sync_header : 2'b00;
     assign phy_txdetectrx     = (ltssm_state == DETECT_ACTIVE);
     assign phy_txelecidle     = (ltssm_state == DETECT_QUIET) ||
                                 (ltssm_state == DETECT_ACTIVE) ||

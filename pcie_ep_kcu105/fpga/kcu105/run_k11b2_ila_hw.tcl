@@ -43,7 +43,7 @@ set server_url localhost:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
+if {$action ni {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
   error "K11-B3 ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K11-B3 ILA bitstream不存在：$bit_path" }
@@ -61,7 +61,7 @@ set ku040 [lindex $ku040_devices 0]
 set_property PROBES.FILE $ltx_path $ku040
 set_property FULL_PROBES.FILE $ltx_path $ku040
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-g9-rxidle-wait capture-g9-timeout-wait}} {
+if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-g9-rxidle-wait capture-g9-timeout-wait}} {
   set_property PROGRAM.FILE $bit_path $ku040
   program_hw_devices $ku040
 }
@@ -81,7 +81,7 @@ foreach ila $ilas {
   }
 }
 
-if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
+if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
   foreach ila $ilas {
     set cell_name [get_property CELL_NAME $ila]
     if {$action eq "program-arm-perst" && $cell_name eq "u_ila_pipe"} {
@@ -95,6 +95,15 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_phystatus_rst_fall_pipe*"}]
     } elseif {$action in {program-arm-linkdown capture-linkdown-wait}} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*link_loss_trigger*"}]
+    } elseif {$action in {program-arm-k13-recovery capture-k13-recovery-wait} && $cell_name eq "u_ila_pipe"} {
+      # dbg_pipe_top[57] = K13 Recovery active；保留后续Speed/EQ窗口。
+      set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_pipe_top*"}]
+    } elseif {$action in {program-arm-k13-eq capture-k13-eq-wait} && $cell_name eq "u_ila_pipe"} {
+      # dbg_pipe_top[56] = K13 EQ active；定位Phase 0～3真实PHY握手。
+      set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_pipe_top*"}]
+    } elseif {$action eq "program-arm-k13-phystatus" && $cell_name eq "u_ila_pipe"} {
+      # dbg_pipe_top[63:61]=SPEED_WAIT且[40]=PhyStatus；排除烧录后的初始化PhyStatus。
+      set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_pipe_top*"}]
     } elseif {$action in {program-arm-rxidle-conflict capture-rxidle-conflict-wait} && $cell_name eq "u_ila_pipe"} {
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*phy_rxidle_conflict*"}]
     } elseif {$action in {program-arm-rxidle-conflict capture-rxidle-conflict-wait} && $cell_name eq "u_ila_core"} {
@@ -128,6 +137,22 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     } elseif {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-g9-rxidle capture-g9-rxidle-wait program-arm-g9-timeout capture-g9-timeout-wait}} {
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
+    } elseif {$action in {program-arm-k13-recovery capture-k13-recovery-wait} && $cell_name eq "u_ila_pipe"} {
+      set recovery_pattern [string repeat x 64]
+      set recovery_pattern [string replace $recovery_pattern [expr {63 - 57}] [expr {63 - 57}] 1]
+      set_property TRIGGER_COMPARE_VALUE "eq64'b$recovery_pattern" [lindex $trigger_probes 0]
+    } elseif {$action in {program-arm-k13-eq capture-k13-eq-wait} && $cell_name eq "u_ila_pipe"} {
+      set eq_pattern [string repeat x 64]
+      set eq_pattern [string replace $eq_pattern [expr {63 - 56}] [expr {63 - 56}] 1]
+      set_property TRIGGER_COMPARE_VALUE "eq64'b$eq_pattern" [lindex $trigger_probes 0]
+    } elseif {$action eq "program-arm-k13-phystatus" && $cell_name eq "u_ila_pipe"} {
+      set phystatus_pattern [string repeat x 64]
+      set phystatus_pattern [string replace $phystatus_pattern [expr {63 - 40}] [expr {63 - 40}] 1]
+      foreach {bit_index bit_value} {61 0 62 1 63 0} {
+        set string_index [expr {63 - $bit_index}]
+        set phystatus_pattern [string replace $phystatus_pattern $string_index $string_index $bit_value]
+      }
+      set_property TRIGGER_COMPARE_VALUE "eq64'b$phystatus_pattern" [lindex $trigger_probes 0]
     } elseif {$action eq "capture-now"} {
       set_property TRIGGER_COMPARE_VALUE eq1'bx [lindex $trigger_probes 0]
     } elseif {$action eq "arm-rx-tlp"} {
@@ -173,17 +198,17 @@ if {$action in {program-arm program-arm-linkdown program-arm-rxidle-conflict pro
     } else {
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     }
-    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : ($action eq "program-arm-cfg-lanenum-accept" ? 256 : 1024)}] $ila
-    if {$action ni {capture-linkdown-wait capture-rxidle-conflict-wait capture-cfg-complete-wait}} {
+    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-k13-recovery capture-k13-recovery-wait program-arm-k13-eq capture-k13-eq-wait program-arm-k13-phystatus} ? 512 : ($action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : ($action eq "program-arm-cfg-lanenum-accept" ? 256 : 1024))}] $ila
+    if {$action ni {capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-cfg-complete-wait}} {
       run_hw_ila $ila
     }
     puts "K11B3_ILA_ARMED cell=[get_property CELL_NAME $ila] trigger=[get_property NAME [lindex $trigger_probes 0]]"
   }
   puts "K11B3_ILA_PROGRAM_ARM_PASS bitstream=$bit_path mode=$action"
-    if {$action in {capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
+    if {$action in {capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
     set timeout_minutes [expr {$action eq "capture-now" ? 1 :
                               ($action eq "capture-wait" ? 2 :
-                              ($action in {capture-linkdown-wait capture-rxidle-conflict-wait capture-cfg-complete-wait capture-g9-rxidle-wait capture-g9-timeout-wait} ? 5 : 3))}]
+                              ($action in {capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-cfg-complete-wait capture-g9-rxidle-wait capture-g9-timeout-wait} ? 5 : 3))}]
     puts "K11B3_ILA_WAITING timeout_minutes=$timeout_minutes mode=$action"
     wait_on_hw_ila -timeout $timeout_minutes $ilas
     puts "K11B3_ILA_TRIGGERED"

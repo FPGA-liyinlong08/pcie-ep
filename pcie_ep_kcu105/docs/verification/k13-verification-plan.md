@@ -1,6 +1,6 @@
 # K13 Gen3 x1 全集成验证计划
 
-状态：**v0.4，在建；VCS elaboration和Gen1配置/BAR基线通过，Gen3动态/正式Vivado/实板出口未通过**
+状态：**v0.7，在建；生产LTSSM/行为Partner回归通过，实板Gen3出口未通过，Root Port Gen3能力已由XDMA同板对照确认**
 
 ## 1. 验证目标与判定原则
 
@@ -14,11 +14,11 @@ Gen1→Gen3 x1训练、EQ、L0、配置枚举和BAR事务，并能从全部错�
 
 | 层级 | 必需内容 | 当前状态 |
 |---|---|---|
-| Lint/行为仿真 | K13控制器展开、正常Gen3、CDR loss、非法TS、K12回归 | **部分PASS** |
-| 生产顶层仿真 | `K13_ENABLE=0/1`、真实LTSSM/TS边界、事务静默、回退 | **Recovery.Speed边界PASS；Gen3数据路径未完成** |
-| VCS真实PHY | Xilinx PHY + Root Port串行Gen1→Gen3、EQ和错误注入 | **elaboration/Gen1配置BAR PASS；Gen3动态未完成** |
+| Lint/行为仿真 | K13控制器展开、正常Gen3、CDR loss、非法TS、K12回归 | **PASS** |
+| 生产顶层仿真 | `K13_ENABLE=0/1`、真实LTSSM/TS边界、事务静默、回退 | **PIPE Partner动态闭环PASS；Gen3 L0事务路径待完成** |
+| VCS真实PHY | Xilinx PHY + Root Port串行Gen1→Gen3、EQ和错误注入 | **elaboration/Gen1配置BAR PASS；Gen3 RX受模型限制** |
 | Vivado | K13-enabled综合、CDC、DRC、route、非负WNS、bit/LTX | **诊断实现PASS；正式门未通过** |
-| KCU105实板 | Gen3 x1枚举、ILA、BAR随机压力、retrain和回退 | **枚举/BAR PASS；Gen3出口未通过** |
+| KCU105实板 | Gen3 x1枚举、ILA、BAR随机压力、retrain和回退 | **Gen1基线PASS；最新Gen3诊断bit未枚举；Root Port能力由XDMA对照确认** |
 
 ## 3. 已执行的K13-CTRL门
 
@@ -41,15 +41,21 @@ make -C pcie_ep_kcu105 k12-integration
   `retrain_uses_ltssm_recovery_speed_boundary` Directed用例通过；证明只有
   `Recovery.Speed`可授权切速，且K13未释放前`Recovery.Idle`不会提前回L0。
 - K12-B Speed回归6/6通过，包含`ltssm_speed_ready=0`时禁止改变rate的用例。
+- `k13-integration-sim`以生产`pcie_ltssm_mac_gen1`、生产
+  `pcie_k13_production_ctrl`和独立Gen3行为Partner完成Gen1 L0→Retrain→
+  `Recovery.RcvrLock/RcvrCfg/Speed`→Gen3 TS1/TS2→EQ Phase `0→1→2→3→4`→
+  `Recovery.Idle`动态闭环；无TS reject、fallback或EQ failure。
 
 固定标记为：
 
 ```text
 K13_CTRL_SIM_PASS
-K13_CTRL_PASS
+K13_LTSSM_PARTNER_INTEGRATION_PASS
+K13_CTRL_AND_LTSSM_INTEGRATION_PASS
 ```
 
-这些标记只关闭K13-CTRL子阶段，不关闭K13。
+这些标记关闭控制器及生产LTSSM/PIPE Partner集成子阶段，不关闭真实串行PHY、
+Gen3 L0事务、实现和实板门，因此不关闭K13。
 
 ## 4. 必需Directed场景
 
@@ -98,9 +104,25 @@ K11B2_BAR_PASS signature=50434945 scratch=a5c37e19
 K11B2_VCS_REAL_PHY_PASS
 ```
 
-这些标记只证明VCS平台、Gen1 DLL/配置/BAR和Gen3能力字段基线通过；尚未证明
-Gen1→Gen3 Retrain、Recovery.Speed和EQ Phase 0～3动态完成，因此仍不得写
-`K13_VCS_GEN3_PASS`。
+这些标记只证明VCS平台、Gen1 DLL/配置/BAR和Gen3能力字段基线通过。VCS串行
+Retrain中双方都完成PIPE Rate切换且GT TX持续翻转，但Endpoint的Gen3
+`RXVALID/DATA_VALID`始终为0，因而不能完成串行Gen3训练。
+
+为区分RTL缺陷和仿真模型边界，新增`sim/xsim/run_k13_phy_loopback.sh`，用两套当前
+standalone PHY、AMD示例相同的P1→P0初始化、Preset apply和Gen3 golden pattern
+进行纯PHY回环。Vivado 2021.2 XSIM仍得到：
+
+```text
+K13_XSIM_PHY_LOOPBACK_RESULT ... rxvalid=0 data_valid=0 ... peer_rxvalid=0 peer_data_valid=0 ... tx_edges=263004
+K13_XSIM_PHY_MODEL_LIMIT_OBSERVED
+```
+
+另外，临时生成并给AMD官方PCIe PHY示例增加真实RX观测后也得到两端
+`RXVALID/DATA_VALID=0`；原示例的`Test Completed Successfully`是定时状态结束，
+不是Gen3 RX数据自检。故当前VCS/XSIM串行无RX只能判定为Vivado 2021.2安全模型
+不具备可用的Gen3串行RX校验能力，不能据此判定Endpoint RTL失败，也不能据此写
+`K13_VCS_GEN3_PASS`。动态协议闭环由第3节的PIPE Partner门覆盖，最终结论必须由
+更新工具链或实板ILA给出。
 
 ## 7. Vivado实现门
 
@@ -135,11 +157,10 @@ unrouted nets为0。由于仍有负setup时序，该结果只作为诊断实现�
 `/dev/mem`直访物理BAR可以作为辅助诊断，但必须另外证明PCI Command的Memory
 Space已开启并走标准PCI设备访问路径。
 
-本轮实板结果（2026-08-13）：K13 bit 已通过本机JTAG烧写到KU040，远端主机
+第一版实板结果（2026-08-13）：K13 bit 已通过本机JTAG烧写到KU040，远端主机
 reboot 后重新枚举为`01:00.0 1234:e001`；设置`COMMAND=0006`后标准BAR访问
-通过，写吞吐39.74 MB/s、读吞吐4.19 MB/s。但真实链路为
-`2.5GT/s (downgraded), Width x1`，`EqualizationComplete`及Phase 1～3均未完成，
-因此不能标记`K13_HW_GEN3_X1_PASS`或`K13_BAR_100K_PASS`。
+通过，写吞吐39.74 MB/s、读吞吐4.19 MB/s。但真实链路仅为
+`2.5GT/s (downgraded), Width x1`，`EqualizationComplete`及Phase 1～3均未完成。
 
 ILA采样文件为
 `fpga/kcu105/build_k13_gen3_ila/capture/20260813_151042_u_ila_pipe.csv`：
@@ -147,6 +168,27 @@ ILA采样文件为
 `rxrate_values=[0]`，说明当前链路仍停留在Gen1。当前CDR-loss检测使用
 `RXELECIDLE && !RXVALID`连续8个`phy_pclk`周期的PIPE代理，不是真实GT
 `rxcdrlock`，因此不能关闭真实PHY feedback门。
+
+第二版诊断bit修正了Recovery训练中错误的`EIEOS→SDS→TS`顺序，改为开始及每
+32个TS插入EIEOS，并在EIEOS末尾复位scrambler。bit SHA256为
+`eea45005917eafa1e156eba9670dd45e2c005f4ec0d7363f3f16157c71db2664`，DRC为
+0 Error，WNS为`-0.121 ns`。烧写并reboot后Endpoint未枚举，BAR不可访问；ILA
+`20260813_202324_u_ila_pipe.csv`证明GT完成Gen3 rate切换和PhyStatus应答，但新
+速率下`RXVALID/DATA_VALID`均为0。
+
+前一版根据一次`00:01.0`能力快照误判Root Port最高为5GT/s；该结论已被撤销。官方
+XDMA Gen3 x1在同一块KCU105、同一Lane、同一插槽和同一远端主机上枚举为`10ee:9031`，
+并稳定报告`8GT/s x1`、Equalization Phase 1～3完成、AER为0。因此当前插槽具备
+Gen3验收条件。下一版必须在XDMA成功状态下重新采集Root Port的完整BDF、capability
+offset和`lspci -vv`，解释旧快照的读取上下文，不能再把Root Port能力作为当前失败原因。
+此前ILA解析出的TS1 Rate ID `0x8e`仍需用原始symbol和方向标记复核。故仍不能标记
+`K13_HW_GEN3_X1_PASS`、`K13_BAR_100K_PASS`或`K13_IMPL_PASS`，但原因应归回Endpoint
+Gen3训练/接收路径，而不是Root Port不支持Gen3。
+
+此外，当前EQ行为回归还不是协议冻结证据：`pcie_equalization_ctrl`的Phase 1使用
+`phy_rxeq_ctrl=2'b01`，生产顶层以`os_rate_id[3]`替代真实TS EQ Control/Data触发
+EQ。必须改为PHY接口定义的RX adaptation命令、接入动态TS EQ字段并按端口角色
+验证Phase 0～3，才能写入任何真实EQ通过标记。
 
 ## 9. K13冻结标记
 
@@ -162,6 +204,6 @@ K13_FALLBACK_RECOVERY_PASS
 K13_PASS
 ```
 
-当前成立的标记为`K13_CTRL_PASS`和`K13_ILA_IMPL_PASS`；后者是诊断标记，不等价于
-`K13_IMPL_PASS`。阶段状态保持`K13-IN-PROGRESS`，不得冻结为K13 release，也不得
-进入K14。
+当前成立的标记为`K13_CTRL_AND_LTSSM_INTEGRATION_PASS`和
+`K13_ILA_IMPL_PASS`；后者是诊断标记，不等价于`K13_IMPL_PASS`。阶段状态保持
+`K13-IN-PROGRESS`，不得冻结为K13 release，也不得进入K14。

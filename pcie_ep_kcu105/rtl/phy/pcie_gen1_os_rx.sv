@@ -111,6 +111,18 @@ module pcie_gen1_os_rx (
                             identifier_kind <= 2'd1;
                         else if (ident_ts2)
                             identifier_kind <= 2'd2;
+                        else if (!symbol0_k && !symbol1_k && rate_id[3] &&
+                                 (symbol1 == D_TS1)) begin
+                            // 8.0 GT/s EQ TS1 uses Symbol 6 for equalization
+                            // control; Symbols 7..15 retain the TS1 identifier.
+                            identifier_kind <= 2'd1;
+                        end else if (!symbol0_k && !symbol1_k && rate_id[3] &&
+                                     (symbol1 == D_TS2)) begin
+                            // Likewise, EQ TS2 replaces only Symbol 6. Requiring
+                            // bit3 and all remaining identifiers keeps ordinary
+                            // malformed TS detection strict.
+                            identifier_kind <= 2'd2;
+                        end
                         else begin
                             identifier_kind <= 2'd0;
                             parse_error     <= 1'b1;
