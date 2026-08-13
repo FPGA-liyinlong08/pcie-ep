@@ -255,3 +255,26 @@ ILA 与 PCI 配置空间结论一致：链路稳定在 Gen1 L0，能够完成 BA
 本轮 K13 仍保持“进行中”，不冻结为 K13 release；下一步应把真实 LTSSM/TS TX、
 PHY feedback（包括 CDR-loss、phystatus 和 EQ done）接入闭环，再重跑 Gen3 x1
 reboot、BAR 和 ILA 验证。
+
+## 10. K13 标准 Retrain 触发结果（2026-08-13）
+
+为区分“未触发 Retrain”和“Retrain 后升速失败”，本轮重新 arm ILA 后，向
+PCIe Capability 的 Link Control 写入标准 Retrain 位。结果如下：
+
+- Retrain 写入生效后，设备短暂变为 `rev ff / Unknown header type 7f`，PCIe
+  capability 暂不可读，且等待后没有自行恢复；远端 reboot 后恢复枚举。
+- ILA：
+  `fpga/kcu105/build_k13_gen3_ila/capture/20260813_153447_u_ila_pipe.csv`
+- 解码结果：`rxrate=0` 持续到 sample 1924；sample 1925～1927 短暂为
+  `rxrate=2`，随后 `rxvalid` 变为 0，sample 1957 后 `rxrate` 回到 0。
+  全部采样中的 `ltssm=0x0a`，未形成可观察的 Recovery/EQ Phase 波形。
+- ILA 汇总：`rxrate_values=[0,2]`、`rxvalid_samples=1928`、
+  `rxresetdone=1`、CRC/sequence/buffer 错误为 0。
+- reboot 恢复后：设备重新枚举，`LnkSta=2.5GT/s x1`，BAR 访问恢复，写
+  26.89 MB/s、读 4.10 MB/s。
+
+该结果说明 Retrain 并非没有触发：PHY 速率曾短暂切到 Gen3 请求值，但生产
+LTSSM 仍保持 `L0` 观测值，Gen3 速率只维持约3个采样周期即失去 `RxValid` 并回到
+Gen1。当前 EQ 未完成的直接故障点是 Recovery.Speed、生产 LTSSM 和 PHY 数据有效
+切换没有形成闭环；尚不能归因于某个 EQ Phase 的 Preset/Coefficient 或 EQ done
+失败，因为训练尚未稳定进入 EQ Phase 0。该现象进一步确认 K13 还不能冻结。
