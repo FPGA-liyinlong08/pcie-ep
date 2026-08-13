@@ -251,7 +251,9 @@ if {$ila_debug} {
     [phy_boundary_net_first [list \
       {^u_endpoint/phy_txdata_valid$} \
       {^u_endpoint/u_phy_wrapper/phy_txdata_valid$}]] \
-    [phy_boundary_net {^u_endpoint/phy_txelecidle$}] \
+    [phy_boundary_net_first [list \
+      {^u_endpoint/phy_txelecidle$} \
+      {^u_endpoint/u_phy_wrapper/phy_txelecidle$}]] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/txresetdone_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/gtpowergood_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/qpll1lock_out\[0\]$}] \

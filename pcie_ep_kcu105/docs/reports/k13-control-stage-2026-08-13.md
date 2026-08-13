@@ -72,6 +72,25 @@ Gen3 retrain 已闭环。
   Gen1 framer/PHY TX 数据路径，不是 K13 控制器逻辑。
 - 因 timing gate 失败没有生成 bit，也没有烧写或重启远端设备；K11 release 基线未被替换。
 
+## 6. 本次继续执行结果（ILA 诊断 bit）
+
+按要求暂不修复小时序，先生成可用于 ILA 取证的诊断 bit。默认 32768 深度的完整
+ILA 因 BRAM 资源不足停止，随后切换到 G12 Ordered-Set 诊断变体：PIPE ILA 深度
+4096、不创建 Core ILA，最终生成成功：
+
+```text
+bit: /home/wx/Documents/PCIe/pcie_ep_kcu105/fpga/kcu105/build_g12_ordered_set_ila/impl/k11b2_gen1_endpoint_ila.bit
+ltx: /home/wx/Documents/PCIe/pcie_ep_kcu105/fpga/kcu105/build_g12_ordered_set_ila/impl/k11b2_gen1_endpoint_ila.ltx
+marker: K11B3_ILA_IMPL_PASS
+WNS: -0.019 ns
+DRC: 0 Error
+TIMING_POLICY: DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED
+```
+
+该 bit 是 **Gen1 K11-B2 顶层的 ILA 诊断 bit**，不是 K13 Gen3 bit；`K13_ENABLE`
+仍为默认 0。外层构建脚本已同步支持 ILA 变体目录、已知 ILA warning 和诊断时序
+策略，避免出现 bit 已生成但命令因按正式 release 规则复查而返回失败的情况。
+
 下一步必须先修复现有 250 MHz TX→GTH setup 路径并恢复 `WNS>=0`，然后在真实
 Gen3 LTSSM/TS TX、CDR-loss 端口和 VCS license 可用后，重新跑 K13-enabled
 Vivado、bit、Gen3 枚举/BAR/reboot 验证。
