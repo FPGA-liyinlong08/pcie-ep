@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 接口启动基线
 
-状态：**v0.1；K12-A CDC mailbox已实现，完整接口冻结中**
+状态：**v0.1；K12-A CDC mailbox、K12-B Recovery.Speed骨架已实现，完整接口冻结中**
 
 ## 1. 约束和时钟域
 
@@ -60,3 +60,20 @@ K12控制器的生产边界全部位于`phy_pclk`域：
 K12-A只在以下条件全部满足后修改生产LTSSM：CDC mailbox定向和随机验证通过，
 错误Stub能被验证计划中的6类Checker检出，默认禁用配置与K11逐拍等价，并且
 接口、状态编码和超时默认值在文档中冻结。
+
+## 6. K12-B骨架状态编码
+
+独立控制器`pcie_recovery_speed_ctrl`当前使用以下局部编码，接入生产LTSSM前不得
+与K03/K11已有6位LTSSM编码直接混用：
+
+| 编码 | 状态 | 关键输出 |
+|---:|---|---|
+| 0 | `ST_L0` | Gen1/已协商速率，允许事务 |
+| 1 | `ST_QUIESCE` | `traffic_quiesce=1`，禁止新事务 |
+| 2 | `ST_SPEED_WAIT` | `phy_txelecidle=1`，驱动目标`phy_rate`，等待`phy_phystatus` |
+| 3 | `ST_RECOVERY_IDLE` | 目标速率保持，等待对端确认 |
+| 4 | `ST_FALLBACK_WAIT` | 驱动Gen1并等待PHY完成 |
+| 5 | `ST_FALLBACK_IDLE` | Gen1保持，等待对端确认 |
+
+K12-B只证明状态和错误出口；真正的Recovery状态、TS边界以及PHY端口接线必须在
+K12-C之前由行为PHY和真实串行环境再次确认。

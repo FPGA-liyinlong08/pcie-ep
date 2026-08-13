@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 验证计划
 
-状态：**v0.1；K12-A CDC mailbox已执行PASS，Recovery/EQ测试平台继续建设**
+状态：**v0.1；K12-A CDC mailbox、K12-B Recovery.Speed已执行PASS，EQ测试平台继续建设**
 
 ## 1. 分层验证
 
@@ -15,6 +15,10 @@
 K12-A已先完成request/ack mailbox的正向和负向自测：`K12_CHECKER_SELFTEST_PASS`、
 `K12A_CDC_MAILBOX_PASS`。当前只覆盖valid保持、payload原子性、busy/overflow和
 非法速率透传；以下Recovery/EQ六类Checker仍是后续K12-B～K12-D门禁。
+
+K12-B已增加独立Recovery.Speed骨架验证：`K12_CHECKER_SELFTEST_PASS`、
+`K12B_RECOVERY_SPEED_PASS`。当前覆盖正常切速、PHY done超时、对端拒绝、非法目标、
+Gen1 fallback及早期PHY完成负向检查；尚未覆盖真实TS和EQ。
 
 在RTL实现前，错误Stub必须至少被以下Checker检出：
 

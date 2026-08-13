@@ -36,6 +36,7 @@
 	k11b2-ila-hw-capture-now k11b2-ila-hw-upload \
 	k11b3-trigger-sim k11b3-cdc-sim k11b3-diagnostic-sim \
 	k12a-cdc-lint k12a-cdc k12a-checker-selftest k12a \
+	k12b-speed-lint k12b-speed k12b-checker-selftest k12b \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -287,6 +288,29 @@ k12a-checker-selftest:
 
 k12a: k12a-checker-selftest k12a-cdc-lint k12a-cdc
 	@echo "K12A_PASS"
+
+k12b-speed-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_recovery_speed_ctrl \
+		rtl/phy/pcie_recovery_speed_ctrl.sv
+
+k12b-speed:
+	@rm -f sim/verilator/k12b_speed/results.xml
+	$(MAKE) -C sim/verilator/k12b_speed SIM_BUILD=sim_build_k12b COCOTB_RESULTS_FILE=results.xml results.xml
+	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k12b_speed/results.xml; then \
+		echo "错误：K12-B Recovery.Speed回归失败"; exit 1; \
+	fi
+	@grep -q 'normal_gen1_to_gen3_speed_handshake' sim/verilator/k12b_speed/results.xml
+	@grep -q 'phy_done_timeout_falls_back_to_gen1' sim/verilator/k12b_speed/results.xml
+	@grep -q 'peer_reject_falls_back_to_gen1' sim/verilator/k12b_speed/results.xml
+	@grep -q 'illegal_target_is_accepted_without_phy_action' sim/verilator/k12b_speed/results.xml
+	@echo "K12B_RECOVERY_SPEED_PASS"
+
+k12b-checker-selftest:
+	$(MAKE) -C sim/verilator/k12b_speed checker-selftest
+
+k12b: k12b-checker-selftest k12b-speed-lint k12b-speed
+	@echo "K12B_PASS"
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh
