@@ -198,3 +198,58 @@ LTSSM/MAC 的 Ordered Set 仍是 Gen1 路径，PHY wrapper 仍没有真实 CDR-l
 下一步是用本机 JTAG 烧写该 K13 诊断 bit，执行远端冷启动/reboot 后核对
 `lspci -vv` 的真实速率和 x1 宽度、标准 PCI command/BAR 访问，并用 ILA 观察
 Speed/EQ/TS 边界；结果只能用于 K13 集成取证，不能替代正式 Gen3 release 门禁。
+
+## 9. K13 诊断 bit 实板 reboot 结果（2026-08-13）
+
+### 9.1 烧写和 reboot
+
+- 本机 JTAG target：KU040，序列号 `210308AC5C97`；K13 bit 烧写成功，识别到
+  1 个 PIPE ILA，并成功 arm。
+- 远端 `192.168.11.126` reboot 后设备重新枚举为 `01:00.0 1234:e001`。
+
+### 9.2 真实链路状态
+
+sudo 读取的 PCIe capability：
+
+```text
+LnkCap: Speed 8GT/s, Width x1
+LnkSta: Speed 2.5GT/s (downgraded), Width x1 (ok)
+LnkSta2: EqualizationComplete-, EqualizationPhase1-, EqualizationPhase2-, EqualizationPhase3-
+```
+
+结论：**reboot 后枚举 PASS、x1 PASS，但 Gen3 速率 FAIL**。K13 bit 虽然展开了
+Gen3 PHY wrapper 和 K13 控制器，但当前生产 LTSSM/MAC 仍走 Gen1 Ordered Set，
+因此没有发生真实 Gen3 Recovery/EQ 握手。
+
+### 9.3 标准 BAR 访问
+
+设置 `setpci -s 01:00.0 COMMAND=0006` 后，标准 PCI Memory/BusMaster 位均为 1；
+现成 `/home/wx/c_test/pcie_bar_test1 0000:01:00.0 0` 通过：
+
+```text
+Write throughput: 39.38 MB/s
+Read throughput: 3.98 MB/s
+```
+
+结论：**标准 command 开启后的 BAR0 访问 PASS**。
+
+### 9.4 ILA 证据
+
+```text
+capture: fpga/kcu105/build_k13_gen3_ila/capture/20260813_144038_u_ila_pipe.csv
+samples=4096, trigger_count=12
+ltssm=0x0a (L0), link=1, dll_active=1
+rx_tlp=13, tx_tlp=12
+link_loss_trigger=0, phy_rxidle_conflict=0
+rxrate_values=[0], rxresetdone=1, rxvalid=1
+lcrc=0, sequence=0, duplicate=0, buffer=0, fc=0, bad_dllp_crc=0
+malformed_dllp=1
+```
+
+ILA 与 PCI 配置空间结论一致：链路稳定在 Gen1 L0，能够完成 BAR 流量，但没有
+进入 Gen3 EQ。`malformed_dllp=1` 保留为下一轮 K13 的独立异常项，需结合原始
+波形确认是解码器边界误报还是实际 DLLP 异常。
+
+本轮 K13 仍保持“进行中”，不冻结为 K13 release；下一步应把真实 LTSSM/TS TX、
+PHY feedback（包括 CDR-loss、phystatus 和 EQ done）接入闭环，再重跑 Gen3 x1
+reboot、BAR 和 ILA 验证。
