@@ -1,6 +1,6 @@
 # K12 Recovery.Speed 与 Equalization 架构基线
 
-状态：**v0.1；K12-A CDC、K12-B Recovery.Speed、K12-C EQ独立控制器均PASS，生产接线前冻结中**
+状态：**v0.2；K12-A/B/C及行为PHY Partner集成PASS，真实PHY/生产接线前冻结中**
 
 ## 1. 目标
 
@@ -54,7 +54,8 @@ K11 release中`phy_rate=Gen1`、TX/RX EQ控制为0、Rate ID只宣告Gen1。K12�
 5. K12-E：VCS真实PHY串行验证与KU040实现复签，形成K12冻结报告。
 
 K12-A已完成CDC mailbox代码和cocotb正/负向门禁；K12-B已完成独立Recovery.Speed
-状态骨架和fallback门禁；K12-C已完成独立EQ Phase 0～3和done/timeout门禁。状态编码、
-行为PHY模型、Ordered Set边界和生产控制器接线仍未达到K12最终冻结出口。
+状态骨架和fallback门禁；K12-C已完成独立EQ Phase 0～3和done/timeout门禁；行为PHY
+Partner已将三者串接，并通过正常速率/EQ、Peer Reject、EQ timeout和Ordered Set边界
+负向集成门禁。真实PHY、CDR/TS细节和生产控制器接线仍未达到K12最终冻结出口。
 
 完成验证计划的全部门禁前，不宣称Gen3 Endpoint完成；Gen3枚举和BAR压力属于K13。

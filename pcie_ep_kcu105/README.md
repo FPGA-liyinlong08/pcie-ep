@@ -54,9 +54,10 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
   reboot后成功枚举并连续5次BAR mmap通过；另有3轮reboot、15次BAR mmap压力通过。
   允许进入K12。严格断电cold boot、20次启动、100次PERST#/重训和长时MMIO保留给
   K14最终发布门，不把阶段性release表述为最终量产冻结。
-- K12：**K12-A CDC、K12-B Recovery.Speed、K12-C EQ独立控制器均 PASS**；已完成
-  原子跨域、速率切换/fallback和Phase 0～3、Preset/Coefficient、TX/RX done超时的
-  独立验证；下一步接入行为PHY/真实Ordered Set和生产控制器，K11 release基线不变。
+- K12：**K12-A/B/C独立控制器及行为PHY Partner集成 PASS**；已完成原子跨域、速率
+  切换/fallback、Phase 0～3、Preset/Coefficient、TX/RX done超时，以及正常完成信号
+  的Ordered Set边界检查；提前done负向checker也能稳定检出。下一步进入真实PHY串行
+  /生产控制器接线验证，K11 release基线不变。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。

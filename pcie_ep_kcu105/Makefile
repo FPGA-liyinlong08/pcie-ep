@@ -38,6 +38,7 @@
 	k12a-cdc-lint k12a-cdc k12a-checker-selftest k12a \
 	k12b-speed-lint k12b-speed k12b-checker-selftest k12b \
 	k12c-eq-lint k12c-eq k12c-checker-selftest k12c \
+	k12-integration-lint k12-integration-sim k12-integration-checker-selftest k12-integration \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -335,6 +336,31 @@ k12c-checker-selftest:
 
 k12c: k12c-checker-selftest k12c-eq-lint k12c-eq
 	@echo "K12C_PASS"
+
+k12-integration-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module k12_behavioral_partner_top \
+		rtl/common/pcie_retrain_cdc_mailbox.sv \
+		rtl/phy/pcie_recovery_speed_ctrl.sv \
+		rtl/phy/pcie_equalization_ctrl.sv \
+		sim/verilator/k12_integration/k12_behavioral_partner_top.sv
+
+k12-integration-sim:
+	@rm -f sim/verilator/k12_integration/results.xml
+	$(MAKE) -C sim/verilator/k12_integration SIM_BUILD=sim_build_k12_integration COCOTB_RESULTS_FILE=results.xml results.xml
+	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k12_integration/results.xml; then \
+		echo "错误：K12-A/B/C行为PHY Partner集成回归失败"; exit 1; \
+	fi
+	@grep -q 'integrated_rate_and_eq_handshake_respects_boundaries' sim/verilator/k12_integration/results.xml
+	@grep -q 'peer_reject_falls_back_in_integrated_partner' sim/verilator/k12_integration/results.xml
+	@grep -q 'eq_timeout_is_reported_by_integrated_partner' sim/verilator/k12_integration/results.xml
+	@echo "K12_INTEGRATION_PASS"
+
+k12-integration-checker-selftest:
+	$(MAKE) -C sim/verilator/k12_integration checker-selftest
+
+k12-integration: k12-integration-checker-selftest k12-integration-lint k12-integration-sim
+	@echo "K12_INTEGRATION_GATE_PASS"
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh

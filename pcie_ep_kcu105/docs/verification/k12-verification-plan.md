@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 验证计划
 
-状态：**v0.1；K12-A CDC、K12-B Recovery.Speed、K12-C EQ已执行PASS，真实PHY测试继续建设**
+状态：**v0.2；K12-A/B/C及行为PHY Partner集成已执行PASS，真实PHY测试继续建设**
 
 ## 1. 分层验证
 
@@ -22,7 +22,9 @@ Gen1 fallback及早期PHY完成负向检查；尚未覆盖真实TS和EQ。
 
 K12-C已增加独立EQ控制器验证：`K12_CHECKER_SELFTEST_PASS`、
 `K12C_EQ_PHASES_PASS`。当前覆盖Phase 0～3顺序、非法Preset/Coefficient、TX/RX done
-超时和Phase跳跃负向检查；尚未覆盖真实PHY Partner和生产接线。
+超时和Phase跳跃负向检查；随后已完成 K12-A/B/C 行为 PHY Partner 集成，覆盖正常
+速率/EQ、Peer Reject、EQ timeout 和 Ordered Set 边界提前 done 负向检查，固定输出
+`K12_INTEGRATION_PASS` 与 `K12_INTEGRATION_CHECKER_SELFTEST_PASS`。
 
 在RTL实现前，错误Stub必须至少被以下Checker检出：
 
