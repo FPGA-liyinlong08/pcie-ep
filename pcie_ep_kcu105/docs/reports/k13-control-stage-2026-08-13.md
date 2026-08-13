@@ -70,7 +70,8 @@ Gen3 retrain 已闭环。
   最终 timing gate 失败，`txoutclk_out[0]` 为 `WNS=-0.033 ns`、`TNS=-0.054 ns`、
   6 个 setup failing endpoints，hold 为 `WHS=+0.030 ns`。主要失败路径仍在现有
   Gen1 framer/PHY TX 数据路径，不是 K13 控制器逻辑。
-- 因 timing gate 失败没有生成 bit，也没有烧写或重启远端设备；K11 release 基线未被替换。
+- 因 timing gate 失败没有生成 K13-enabled 正式 release bit；本次按要求生成的是
+  允许负 WNS 的 K11-B2 ILA 诊断 bit，K11 release 基线未被替换。
 
 ## 6. 本次继续执行结果（ILA 诊断 bit）
 
@@ -91,6 +92,82 @@ TIMING_POLICY: DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED
 仍为默认 0。外层构建脚本已同步支持 ILA 变体目录、已知 ILA warning 和诊断时序
 策略，避免出现 bit 已生成但命令因按正式 release 规则复查而返回失败的情况。
 
-下一步必须先修复现有 250 MHz TX→GTH setup 路径并恢复 `WNS>=0`，然后在真实
+下一步仍需修复现有 250 MHz TX→GTH setup 路径并恢复 `WNS>=0`，然后在真实
 Gen3 LTSSM/TS TX、CDR-loss 端口和 VCS license 可用后，重新跑 K13-enabled
 Vivado、bit、Gen3 枚举/BAR/reboot 验证。
+
+## 7. 本次烧写、远端 reboot、枚举和 BAR 验证
+
+### 7.1 烧写路径
+
+- 本机 Vivado `hw_server` 访问 KU040 JTAG target：Digilent，序列号
+  `210308AC5C97`。
+- 成功烧写本节第 6 节的 G12 Ordered-Set ILA bit，并发现 1 个 PIPE ILA
+  `u_ila_pipe`；烧写后执行 `program-arm`。
+- 远端主机为 `192.168.11.126`，本次执行的是主机 reboot，随后重新 SSH 检查。
+
+### 7.2 reboot 后 PCIe 枚举
+
+远端主机 reboot 后的实际结果：
+
+```text
+0000:01:00.0 Unassigned class [ff00]: Device [1234:e001] (rev 01)
+Region 0: Memory at 82800000 (32-bit, non-prefetchable) [disabled] [size=4K]
+COMMAND=0000
+```
+
+因此“设备重新枚举”结论为 **PASS**，但 Linux 此时尚未开启 PCI Memory
+Space/Bus Master；这与设备出现在 `lspci` 中是两个独立条件。
+
+### 7.3 BAR 访问
+
+现成 `/home/wx/c_test/pcie_bar_test1 0000:01:00.0 0` 通过动态发现 BAR0
+并使用 `/dev/mem` 访问物理地址，reboot 后直接完成：
+
+```text
+Write throughput: 37.21 MB/s
+Read throughput: 2.97 MB/s
+```
+
+随后使用标准 PCI 配置路径临时执行 `setpci -s 01:00.0 COMMAND=0006`，复查为：
+
+```text
+Control: I/O- Mem+ BusMaster+ ...
+Region 0: Memory at 82800000 (32-bit, non-prefetchable) [size=4K]
+Write throughput: 27.12 MB/s
+Read throughput: 2.89 MB/s
+```
+
+结论：**BAR0 物理访问 PASS；开启 PCI Memory Space/Bus Master 后的标准 BAR
+访问 PASS**。后续应由正式驱动或 PCI enable 流程设置 command bits，不能仅以
+`/dev/mem` 直访代替标准 PCI 设备访问。
+
+### 7.4 reboot 后 ILA 证据
+
+回读文件：
+
+```text
+pcie_ep_kcu105/fpga/kcu105/build_g12_ordered_set_ila/capture/20260813_134422_u_ila_pipe.csv
+```
+
+使用 `scripts/decode_k11b3_ila.py` 的结果：
+
+```text
+PIPE samples=4096 trigger=[1024]
+PIPE link_loss_trigger=[]
+PIPE phy_rxidle_conflict=[]
+PIPE final ltssm=0x0a link=1 dll_active=1 fc=3 rx_tlp=2 tx_tlp=0
+PIPE PHY RX valid_samples=4096 data_valid_samples=0 nonidle_samples=4096
+PIPE GT RX resetdone_samples=4096 valid_samples=4096
+PIPE errors lcrc=0 sequence=0 duplicate=0 buffer=0 fc=0 bad_dllp_crc=0 malformed_dllp=0
+```
+
+`ltssm=0x0a` 对应 `STATE_L0`；G9 为非 active、无 timeout，G10 状态为
+`0x39400000`（已见 CFG_COMPLETE/L0），G12 低字段保持 `0x0a`。这证明烧写后
+链路在活动状态下接收了 BAR 测试流量，没有观察到 link-loss、RxElecIdle
+冲突或 DLL/CRC 错误。
+
+本次 `program-arm` 默认使用 TLP trigger，故 ILA 采样是 **reboot 后链路恢复并
+产生 BAR 流量的证据**，不是以 PERST# 边沿为触发点的专用冷启动波形；若要取得
+PERST# 低电平到释放的完整波形，下一轮应使用 `program-arm-perst` 或
+`program-arm-perst-release` 后再单独 reboot。
