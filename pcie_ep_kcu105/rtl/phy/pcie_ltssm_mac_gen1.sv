@@ -9,6 +9,7 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer HOT_RESET_CYCLES      = 250_000,
     parameter integer TX_BUFFER_BYTES       = 160,
     parameter integer K11B2_ILA_DEBUG       = 0,
+    parameter [7:0]  TX_RATE_ID             = 8'h02,
     // G7仅用于上板A/B：Detect.Quiet保持P0，让Root Port在首次Detect前
     // 有完整窗口观察Endpoint接收终端；Detect.Active仍切到P1执行本端Detect。
     parameter integer G7_RX_P0_QUIET        = 0,
@@ -390,7 +391,7 @@ module pcie_ltssm_mac_gen1 #(
         .n_fts            (8'hff),
         // K03/K11-B固定Gen1，只宣告2.5 GT/s支持（Rate ID bit1）。
         // Gen2/Gen3能力在K12升速阶段再打开，避免Root进入Recovery.Speed。
-        .rate_id          (8'h02),
+        .rate_id          (TX_RATE_ID),
         .training_control (tx_os_training_control),
         .out_data         (os_tx_data),
         .out_datak        (os_tx_datak),

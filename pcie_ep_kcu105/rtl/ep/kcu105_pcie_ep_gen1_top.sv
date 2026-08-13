@@ -47,6 +47,8 @@ module kcu105_pcie_ep_gen1_top #(
     wire [17:0] phy_txeq_new_coeff, phy_rxeq_new_txcoeff;
     wire phy_txeq_done, phy_rxeq_preset_sel;
     wire phy_rxeq_adapt_done, phy_rxeq_done;
+    reg [2:0] phy_cdr_loss_count;
+    wire phy_cdr_loss_observed = &phy_cdr_loss_count;
 
     wire phy_txdata_valid, phy_txstart_block, phy_txdetectrx;
     wire [1:0] phy_txsync_header;
@@ -189,7 +191,9 @@ module kcu105_pcie_ep_gen1_top #(
     wire       k13_ts_valid = os_ts1_valid || os_ts2_valid;
     wire       k13_ts_complete = k13_ts_valid;
     wire       k13_ts_eq_request = os_training_control[0];
-    wire       k13_phy_cdr_lost = 1'b0;
+    // pcie_phy:1.0不公开GT CDR lock端口；用PIPE连续RxElecIdle且无RxValid
+    // 作为可综合的失锁代理，连续8个phy_pclk才触发，避免单拍空闲误回退。
+    wire       k13_phy_cdr_lost = pipe_rst_n && link_up && phy_cdr_loss_observed;
 
     function [1:0] decode_k13_ts_rate(input [7:0] raw_rate_id);
         begin
@@ -321,7 +325,8 @@ module kcu105_pcie_ep_gen1_top #(
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
         .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
-        .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES)
+        .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
+        .TX_RATE_ID((K13_ENABLE != 0) ? 8'h08 : 8'h02)
     ) u_ltssm_mac (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .phy_rxdata(phy_rxdata), .phy_rxdatak(phy_rxdatak),
@@ -386,6 +391,15 @@ module kcu105_pcie_ep_gen1_top #(
             heartbeat_count <= 25'd0;
         else
             heartbeat_count <= heartbeat_count + 1'b1;
+    end
+
+    always @(posedge phy_pclk or negedge pipe_rst_n) begin
+        if (!pipe_rst_n)
+            phy_cdr_loss_count <= 3'd0;
+        else if (!link_up || phy_rxvalid || !phy_rxelecidle)
+            phy_cdr_loss_count <= 3'd0;
+        else if (!phy_cdr_loss_observed)
+            phy_cdr_loss_count <= phy_cdr_loss_count + 1'b1;
     end
 
     assign led[0] = pipe_rst_n && !phy_phystatus_rst;

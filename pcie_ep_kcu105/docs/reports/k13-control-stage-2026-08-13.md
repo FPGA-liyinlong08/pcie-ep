@@ -185,7 +185,7 @@ ltx: /home/wx/Documents/PCIe/pcie_ep_kcu105/fpga/kcu105/build_k13_gen3_ila/impl/
 marker: K13_ILA_IMPL_PASS
 K13_ENABLE: 1
 PHY_MODULE: pcie_phy_x1_gen3
-WNS: -0.270 ns
+WNS: -0.113 ns
 DRC: 0 Error; unrouted nets: 0
 TIMING_POLICY: DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED
 ```
@@ -227,8 +227,8 @@ Gen3 PHY wrapper 和 K13 控制器，但当前生产 LTSSM/MAC 仍走 Gen1 Order
 现成 `/home/wx/c_test/pcie_bar_test1 0000:01:00.0 0` 通过：
 
 ```text
-Write throughput: 39.38 MB/s
-Read throughput: 3.98 MB/s
+Write throughput: 39.74 MB/s
+Read throughput: 4.19 MB/s
 ```
 
 结论：**标准 command 开启后的 BAR0 访问 PASS**。
@@ -236,10 +236,10 @@ Read throughput: 3.98 MB/s
 ### 9.4 ILA 证据
 
 ```text
-capture: fpga/kcu105/build_k13_gen3_ila/capture/20260813_144038_u_ila_pipe.csv
-samples=4096, trigger_count=12
+capture: fpga/kcu105/build_k13_gen3_ila/capture/20260813_151042_u_ila_pipe.csv
+samples=4096, trigger_count=1
 ltssm=0x0a (L0), link=1, dll_active=1
-rx_tlp=13, tx_tlp=12
+rx_tlp=1, tx_tlp=0
 link_loss_trigger=0, phy_rxidle_conflict=0
 rxrate_values=[0], rxresetdone=1, rxvalid=1
 lcrc=0, sequence=0, duplicate=0, buffer=0, fc=0, bad_dllp_crc=0
@@ -248,7 +248,9 @@ malformed_dllp=1
 
 ILA 与 PCI 配置空间结论一致：链路稳定在 Gen1 L0，能够完成 BAR 流量，但没有
 进入 Gen3 EQ。`malformed_dllp=1` 保留为下一轮 K13 的独立异常项，需结合原始
-波形确认是解码器边界误报还是实际 DLLP 异常。
+波形确认是解码器边界误报还是实际 DLLP 异常。当前新增的 CDR-loss 是
+`RXELECIDLE && !RXVALID` 连续 8 个 `phy_pclk` 周期的 PIPE 代理，不是 GT 原生
+`rxcdrlock`；本次没有观察到该代理触发 link-loss。
 
 本轮 K13 仍保持“进行中”，不冻结为 K13 release；下一步应把真实 LTSSM/TS TX、
 PHY feedback（包括 CDR-loss、phystatus 和 EQ done）接入闭环，再重跑 Gen3 x1
