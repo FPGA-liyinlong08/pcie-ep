@@ -37,6 +37,7 @@
 	k11b3-trigger-sim k11b3-cdc-sim k11b3-diagnostic-sim \
 	k12a-cdc-lint k12a-cdc k12a-checker-selftest k12a \
 	k12b-speed-lint k12b-speed k12b-checker-selftest k12b \
+	k12c-eq-lint k12c-eq k12c-checker-selftest k12c \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -311,6 +312,29 @@ k12b-checker-selftest:
 
 k12b: k12b-checker-selftest k12b-speed-lint k12b-speed
 	@echo "K12B_PASS"
+
+k12c-eq-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_equalization_ctrl \
+		rtl/phy/pcie_equalization_ctrl.sv
+
+k12c-eq:
+	@rm -f sim/verilator/k12c_eq/results.xml
+	$(MAKE) -C sim/verilator/k12c_eq SIM_BUILD=sim_build_k12c COCOTB_RESULTS_FILE=results.xml results.xml
+	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k12c_eq/results.xml; then \
+		echo "错误：K12-C Equalization回归失败"; exit 1; \
+	fi
+	@grep -q 'normal_phase_0_to_3' sim/verilator/k12c_eq/results.xml
+	@grep -q 'illegal_preset_or_coefficient_is_rejected' sim/verilator/k12c_eq/results.xml
+	@grep -q 'tx_done_timeout_fails_and_clears_commands' sim/verilator/k12c_eq/results.xml
+	@grep -q 'rx_done_timeout_fails_and_clears_commands' sim/verilator/k12c_eq/results.xml
+	@echo "K12C_EQ_PHASES_PASS"
+
+k12c-checker-selftest:
+	$(MAKE) -C sim/verilator/k12c_eq checker-selftest
+
+k12c: k12c-checker-selftest k12c-eq-lint k12c-eq
+	@echo "K12C_PASS"
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh

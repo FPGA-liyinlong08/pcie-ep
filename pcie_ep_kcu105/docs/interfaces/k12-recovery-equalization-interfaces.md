@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 接口启动基线
 
-状态：**v0.1；K12-A CDC mailbox、K12-B Recovery.Speed骨架已实现，完整接口冻结中**
+状态：**v0.1；K12-A CDC、K12-B Recovery.Speed、K12-C EQ骨架已实现，完整接口冻结中**
 
 ## 1. 约束和时钟域
 
@@ -77,3 +77,7 @@ K12-A只在以下条件全部满足后修改生产LTSSM：CDC mailbox定向和�
 
 K12-B只证明状态和错误出口；真正的Recovery状态、TS边界以及PHY端口接线必须在
 K12-C之前由行为PHY和真实串行环境再次确认。
+
+K12-C的EQ控制器仅使用K02已有PHY端口：Phase 0/2驱动`phy_txeq_ctrl/preset/coeff`，
+Phase 1/3驱动`phy_rxeq_ctrl/txpreset`，分别等待`phy_txeq_done`/`phy_rxeq_done`。
+它尚未改变K03/K11端口的固定0默认值。
