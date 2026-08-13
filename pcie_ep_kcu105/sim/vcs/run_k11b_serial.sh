@@ -19,10 +19,14 @@ license_timeout="${VCS_LICENSE_TIMEOUT:-300}"
 simulation_timeout="${K11B_SIM_TIMEOUT:-900}"
 b2_mode="${K11B2_MODE:-0}"
 b2_stress_mode="${K11B2_STRESS_MODE:-0}"
+k12e_mode="${K12E_VCS:-0}"
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 if [[ "${b2_mode}" == "1" ]]; then
     tb_defines+=(+define+K11B2_DUT)
+fi
+if [[ "${k12e_mode}" == "1" ]]; then
+    tb_defines+=(+define+K12E_VCS)
 fi
 
 export VCS_HOME="${vcs_home}"
@@ -123,6 +127,7 @@ fi
     "${project_dir}/sim/verilator/k09_integration/k09_tlp_test_top.sv" \
     "${project_dir}/rtl/ep/k11a_offline_top.sv" \
     "${project_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" \
+    $(if [[ "${k12e_mode}" == "1" ]]; then echo "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv ${project_dir}/rtl/phy/pcie_equalization_ctrl.sv ${project_dir}/rtl/phy/pcie_recovery_ts_guard.sv ${script_dir}/k12e_phy_monitor.sv"; fi) \
     "${vivado_home}/data/verilog/src/glbl.v" \
     "${script_dir}/k11b_serial_board.sv" \
     -l build/k11b_tb_vlogan.log
@@ -174,7 +179,13 @@ if [[ "${b2_mode}" == "1" ]]; then
         grep -q 'K11B2_STRESS_PASS' build/k11b2_simulate.log
     fi
     grep -q 'K11B2_VCS_PASS' build/k11b2_simulate.log
+    if [[ "${k12e_mode}" == "1" ]]; then
+        grep -q 'K12E_REAL_PHY_ADAPTER_PASS' build/k11b2_simulate.log
+    fi
     echo "K11B2_VCS_REAL_PHY_PASS run_dir=${run_dir}"
+    if [[ "${k12e_mode}" == "1" ]]; then
+        echo "K12E_VCS_REAL_PHY_PASS"
+    fi
     exit 0
 fi
 

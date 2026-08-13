@@ -39,6 +39,7 @@
 	k12b-speed-lint k12b-speed k12b-checker-selftest k12b \
 	k12c-eq-lint k12c-eq k12c-checker-selftest k12c \
 	k12-integration-lint k12-integration-sim k12-integration-checker-selftest k12-integration \
+	k12de-vcs-serial k12de \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -343,6 +344,7 @@ k12-integration-lint:
 		rtl/common/pcie_retrain_cdc_mailbox.sv \
 		rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_equalization_ctrl.sv \
+		rtl/phy/pcie_recovery_ts_guard.sv \
 		sim/verilator/k12_integration/k12_behavioral_partner_top.sv
 
 k12-integration-sim:
@@ -361,6 +363,12 @@ k12-integration-checker-selftest:
 
 k12-integration: k12-integration-checker-selftest k12-integration-lint k12-integration-sim
 	@echo "K12_INTEGRATION_GATE_PASS"
+
+k12de-vcs-serial:
+	./sim/vcs/run_k12e_vcs_serial.sh
+
+k12de: k12-integration k12de-vcs-serial
+	@echo "K12DE_PASS"
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh

@@ -20,6 +20,9 @@ async def reset_dut(dut):
     dut.force_peer_reject.value = 0
     dut.force_eq_timeout.value = 0
     dut.force_early_done.value = 0
+    dut.force_cdr_lost.value = 0
+    dut.force_ts_malformed.value = 0
+    dut.force_ts_lane_mismatch.value = 0
     await Timer(3, units="ns")
     dut.core_rst_n.value = 1
     dut.phy_rst_n.value = 1
@@ -109,6 +112,68 @@ async def eq_timeout_is_reported_by_integrated_partner(dut):
             break
     assert int(dut.eq_failed.value) == 1
     assert int(dut.eq_active.value) == 0
+
+
+@cocotb.test()
+async def cdr_loss_aborts_training_and_falls_back(dut):
+    cocotb.start_soon(Clock(dut.core_clk, 10, units="ns").start())
+    cocotb.start_soon(Clock(dut.phy_clk, 14, units="ns").start())
+    await reset_dut(dut)
+    dut.force_cdr_lost.value = 1
+    await issue_retrain(dut, 2)
+    for _ in range(30):
+        await advance_phy(dut)
+        if int(dut.cdr_loss_seen.value) and int(dut.speed_fallback_taken.value):
+            break
+    assert int(dut.cdr_loss_seen.value) == 1
+    assert int(dut.speed_fallback_taken.value) == 1
+    assert int(dut.negotiated_speed.value) == 0
+    assert int(dut.eq_active.value) == 0
+    assert int(dut.txeq_ctrl.value) == 0
+    assert int(dut.rxeq_ctrl.value) == 0
+
+
+@cocotb.test()
+async def malformed_ts_is_rejected_and_falls_back(dut):
+    cocotb.start_soon(Clock(dut.core_clk, 10, units="ns").start())
+    cocotb.start_soon(Clock(dut.phy_clk, 14, units="ns").start())
+    await reset_dut(dut)
+    dut.force_ts_malformed.value = 1
+    await issue_retrain(dut, 2)
+    for _ in range(40):
+        await advance_phy(dut)
+        if int(dut.ts_reject.value):
+            break
+    assert int(dut.ts_reject.value) == 1
+    assert int(dut.ts_malformed.value) == 1
+    assert int(dut.ts_illegal_rate.value) == 1
+    for _ in range(8):
+        await advance_phy(dut)
+        if int(dut.speed_fallback_taken.value):
+            break
+    assert int(dut.speed_fallback_taken.value) == 1
+    assert int(dut.negotiated_speed.value) == 0
+
+
+@cocotb.test()
+async def mismatched_ts_lane_is_rejected(dut):
+    cocotb.start_soon(Clock(dut.core_clk, 10, units="ns").start())
+    cocotb.start_soon(Clock(dut.phy_clk, 14, units="ns").start())
+    await reset_dut(dut)
+    dut.force_ts_lane_mismatch.value = 1
+    await issue_retrain(dut, 2)
+    for _ in range(40):
+        await advance_phy(dut)
+        if int(dut.ts_reject.value):
+            break
+    assert int(dut.ts_reject.value) == 1
+    assert int(dut.ts_lane_link_mismatch.value) == 1
+    for _ in range(8):
+        await advance_phy(dut)
+        if int(dut.speed_fallback_taken.value):
+            break
+    assert int(dut.speed_fallback_taken.value) == 1
+    assert int(dut.negotiated_speed.value) == 0
 
 
 @cocotb.test()

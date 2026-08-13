@@ -107,6 +107,20 @@ module board;
         .sys_rst_n   (sys_rst_n)
     );
 
+`ifdef K12E_VCS
+    k12e_phy_monitor K12E_PHY_MONITOR (
+        .clk             (EP.DUT.phy_pclk),
+        .rst_n           (EP.DUT.pipe_rst_n),
+        .link_up         (EP.DUT.link_up),
+        .phy_rate       (EP.DUT.phy_rate),
+        .phy_phystatus  (EP.DUT.phy_phystatus),
+        .phy_txeq_done  (EP.DUT.phy_txeq_done),
+        .phy_rxeq_done  (EP.DUT.phy_rxeq_done),
+        .phy_txeq_ctrl  (EP.DUT.phy_txeq_ctrl),
+        .phy_rxeq_ctrl  (EP.DUT.phy_rxeq_ctrl)
+    );
+`endif
+
     initial begin
         last_ep_state = 6'h3f;
         stable_count = 0;

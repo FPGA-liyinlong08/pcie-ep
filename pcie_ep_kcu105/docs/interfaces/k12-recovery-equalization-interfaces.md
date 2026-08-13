@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 接口启动基线
 
-状态：**v0.1；K12-A CDC、K12-B Recovery.Speed、K12-C EQ骨架已实现，完整接口冻结中**
+状态：**v0.2；K12-A/B/C/D及K12-E真实PHY影子适配接口已实现，Gen3生产接线冻结中**
 
 ## 1. 约束和时钟域
 
@@ -36,6 +36,7 @@ K12控制器的生产边界全部位于`phy_pclk`域：
 |---|---|---|
 | 触发 | `link_retrain_valid`, `link_target_speed` | 仅在L0且命令合法时accept |
 | 对端训练 | RX TS1/TS2有效及Rate/EQ字段 | 只在完整Ordered Set验证后提交 |
+| TS合法性 | `ts_valid/complete/type/lane/link/rate/eq_request` | `pcie_recovery_ts_guard`只在完整边界产生accept，否则reject并锁存分类错误 |
 | 速率控制 | `phy_rate[1:0]` | 改变后保持，直到`phy_phystatus`完成或超时 |
 | TX EQ命令 | `phy_txeq_ctrl/preset/coeff` | 先校验参数，再保持至`phy_txeq_done`或超时 |
 | RX EQ命令 | `phy_rxeq_ctrl/txpreset` | 保持至`phy_rxeq_done`或超时 |
@@ -52,6 +53,7 @@ K12控制器的生产边界全部位于`phy_pclk`域：
 - 进入Recovery后先置`traffic_quiesce`，再开始TS交换或PHY命令。
 - RcvrLock/RcvrCfg/Speed/EQ/Idle之间的发送模式切换只能在`os_tx_complete=1`后生效。
 - 超时、拒绝、非法参数或CDR失锁必须撤销所有PHY命令，进入显式Fallback路径。
+- CDR loss通过`phy_cdr_lost`进入Recovery.Speed fallback，并复位EQ控制器清除TX/RX命令。
 - Fallback将`phy_rate`恢复为Gen1，等待`phy_phystatus`，重新训练并执行DLL InitFC。
 - K12默认禁用时，所有新控制信号保持K11 release值，逐拍回归必须通过。
 
@@ -81,3 +83,7 @@ K12-C之前由行为PHY和真实串行环境再次确认。
 K12-C的EQ控制器仅使用K02已有PHY端口：Phase 0/2驱动`phy_txeq_ctrl/preset/coeff`，
 Phase 1/3驱动`phy_rxeq_ctrl/txpreset`，分别等待`phy_txeq_done`/`phy_rxeq_done`。
 它尚未改变K03/K11端口的固定0默认值。
+
+K12-E的`k12e_phy_monitor`只观测真实PHY的`phy_pclk`、`phy_rate`、`phy_phystatus`、
+`phy_txeq_done`和`phy_rxeq_done`，不驱动K11生产控制线；Gen1 release下要求feedback
+为已知值且TX/RX EQ control为0。真实Gen3 retrain/EQ驱动接线进入K13。

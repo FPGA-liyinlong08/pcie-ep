@@ -8,6 +8,7 @@ COMPILE_ARGS += --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD
 VERILOG_SOURCES := $(PROJECT_DIR)/rtl/common/pcie_retrain_cdc_mailbox.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_recovery_speed_ctrl.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_equalization_ctrl.sv \
+	$(PROJECT_DIR)/rtl/phy/pcie_recovery_ts_guard.sv \
 	$(CURDIR)/k12_behavioral_partner_top.sv
 include $(shell cocotb-config --makefiles)/Makefile.sim
 

@@ -7,7 +7,8 @@ module k12_behavioral_partner_top (
     input wire core_retrain_pulse, input wire [1:0] core_target_speed,
     input wire eq_start,
     input wire force_peer_reject, input wire force_eq_timeout,
-    input wire force_early_done,
+    input wire force_early_done, input wire force_cdr_lost,
+    input wire force_ts_malformed, input wire force_ts_lane_mismatch,
     output wire mailbox_busy, output wire mailbox_valid,
     output wire [1:0] mailbox_target_speed,
     output wire [2:0] speed_state, output wire [1:0] phy_rate,
@@ -21,7 +22,10 @@ module k12_behavioral_partner_top (
     output wire phy_phystatus, output wire phy_txeq_done,
     output wire phy_rxeq_done, output wire os_tx_complete,
     output wire boundary_violation,
-    output wire illegal_speed, output wire illegal_eq_param
+    output wire illegal_speed, output wire illegal_eq_param,
+    output wire cdr_loss_seen, output wire ts_accept, output wire ts_reject,
+    output wire ts_malformed, output wire ts_illegal_rate,
+    output wire ts_lane_link_mismatch
 );
     wire mailbox_busy_w, mailbox_valid_w;
     wire [1:0] mailbox_speed_w;
@@ -31,6 +35,9 @@ module k12_behavioral_partner_top (
     wire [1:0] phy_rate_w;
     wire phy_phystatus_w, peer_speed_ok_w, peer_speed_reject_w;
     wire speed_timeout_w, illegal_speed_w, speed_fallback_w, illegal_eq_param_w;
+    wire cdr_loss_w;
+    wire ts_accept_w, ts_reject_w, ts_malformed_w, ts_illegal_rate_w;
+    wire ts_lane_link_mismatch_w;
     wire eq_start_accept_w, eq_active_w, eq_done_w, eq_failed_w;
     wire [2:0] eq_phase_w;
     wire [1:0] txeq_ctrl_w, rxeq_ctrl_w;
@@ -55,18 +62,18 @@ module k12_behavioral_partner_top (
         .retrain_target_speed(mailbox_speed_w),
         .retrain_accept(mailbox_accept_w),
         .phy_phystatus(phy_phystatus_w),
-        .phy_cdr_lost(1'b0), .peer_speed_ok(peer_speed_ok_w),
+        .phy_cdr_lost(force_cdr_lost), .peer_speed_ok(peer_speed_ok_w),
         .peer_speed_reject(peer_speed_reject_w),
         .state(speed_state_w), .phy_rate(phy_rate_w),
         .phy_txelecidle(), .traffic_quiesce(), .recovery_active(),
         .negotiated_speed(negotiated_speed_w),
         .speed_timeout_sticky(speed_timeout_w),
         .peer_reject_sticky(), .illegal_speed_sticky(illegal_speed_w),
-        .cdr_loss_sticky(), .fallback_taken_sticky(speed_fallback_w)
+        .cdr_loss_sticky(cdr_loss_w), .fallback_taken_sticky(speed_fallback_w)
     );
 
     pcie_equalization_ctrl #(.EQ_TIMEOUT_CYCLES(8)) u_eq (
-        .clk(phy_clk), .rst_n(phy_rst_n), .eq_start(eq_start),
+        .clk(phy_clk), .rst_n(phy_rst_n && !force_cdr_lost), .eq_start(eq_start),
         .target_speed(negotiated_speed_w), .tx_preset(4'd4),
         .tx_coeff(6'd12), .tx_coeff_valid(1'b1),
         .rx_txpreset(4'd5), .rx_preset_valid(1'b1),
@@ -85,15 +92,32 @@ module k12_behavioral_partner_top (
     reg [2:0] rate_delay;
     reg [1:0] os_count;
     reg os_tx_complete_r;
-    reg phy_phystatus_r, peer_speed_ok_r, peer_speed_reject_r;
+    reg phy_phystatus_r;
     reg phy_txeq_done_r, phy_rxeq_done_r;
     reg boundary_violation_r;
+    reg peer_ts_valid_r, peer_ts_complete_r, peer_ts_is_ts1_r, peer_ts_is_ts2_r;
+    reg [2:0] peer_ts_lane_r;
+    reg [7:0] peer_ts_link_r;
+    reg [1:0] peer_ts_rate_r;
+    reg peer_ts_eq_request_r;
 
     assign phy_phystatus_w = phy_phystatus_r;
-    assign peer_speed_ok_w = peer_speed_ok_r;
-    assign peer_speed_reject_w = peer_speed_reject_r;
     assign phy_txeq_done_w = phy_txeq_done_r;
     assign phy_rxeq_done_w = phy_rxeq_done_r;
+
+    pcie_recovery_ts_guard u_ts_guard (
+        .clk(phy_clk), .rst_n(phy_rst_n),
+        .ts_valid(peer_ts_valid_r), .ts_complete(peer_ts_complete_r),
+        .ts_is_ts1(peer_ts_is_ts1_r), .ts_is_ts2(peer_ts_is_ts2_r),
+        .ts_lane(peer_ts_lane_r), .ts_link(peer_ts_link_r),
+        .ts_rate(peer_ts_rate_r), .ts_eq_request(peer_ts_eq_request_r),
+        .ts_accept(ts_accept_w), .ts_reject(ts_reject_w),
+        .malformed_sticky(ts_malformed_w),
+        .illegal_rate_sticky(ts_illegal_rate_w),
+        .lane_link_mismatch_sticky(ts_lane_link_mismatch_w)
+    );
+    assign peer_speed_ok_w = ts_accept_w;
+    assign peer_speed_reject_w = ts_reject_w;
 
     always @(posedge phy_clk or negedge phy_rst_n) begin
         if (!phy_rst_n) begin
@@ -103,19 +127,27 @@ module k12_behavioral_partner_top (
             os_count <= 2'd0;
             os_tx_complete_r <= 1'b0;
             phy_phystatus_r <= 1'b0;
-            peer_speed_ok_r <= 1'b0;
-            peer_speed_reject_r <= 1'b0;
             phy_txeq_done_r <= 1'b0;
             phy_rxeq_done_r <= 1'b0;
             boundary_violation_r <= 1'b0;
+            peer_ts_valid_r <= 1'b0;
+            peer_ts_complete_r <= 1'b0;
+            peer_ts_is_ts1_r <= 1'b0;
+            peer_ts_is_ts2_r <= 1'b0;
+            peer_ts_lane_r <= 3'd0;
+            peer_ts_link_r <= 8'd0;
+            peer_ts_rate_r <= 2'd0;
+            peer_ts_eq_request_r <= 1'b0;
         end else begin
             os_tx_complete_r <= (os_count == 2'd3);
             os_count <= os_count + 1'b1;
             phy_phystatus_r <= 1'b0;
-            peer_speed_ok_r <= 1'b0;
-            peer_speed_reject_r <= 1'b0;
             phy_txeq_done_r <= 1'b0;
             phy_rxeq_done_r <= 1'b0;
+            peer_ts_valid_r <= 1'b0;
+            peer_ts_complete_r <= 1'b0;
+            peer_ts_is_ts1_r <= 1'b0;
+            peer_ts_is_ts2_r <= 1'b0;
 
             if (phy_rate_w != partner_rate) begin
                 rate_pending <= 1'b1;
@@ -134,10 +166,14 @@ module k12_behavioral_partner_top (
             end
 
             if (speed_state_w == 3'd3 && os_tx_complete_r) begin
-                if (force_peer_reject)
-                    peer_speed_reject_r <= 1'b1;
-                else
-                    peer_speed_ok_r <= 1'b1;
+                peer_ts_valid_r <= 1'b1;
+                peer_ts_complete_r <= 1'b1;
+                peer_ts_is_ts1_r <= 1'b1;
+                peer_ts_is_ts2_r <= force_peer_reject || force_ts_malformed;
+                peer_ts_lane_r <= force_ts_lane_mismatch ? 3'd1 : 3'd0;
+                peer_ts_link_r <= 8'd0;
+                peer_ts_rate_r <= force_ts_malformed ? 2'b11 : phy_rate_w;
+                peer_ts_eq_request_r <= 1'b0;
             end
 
             if (txeq_ctrl_w != 2'b00) begin
@@ -190,4 +226,10 @@ module k12_behavioral_partner_top (
     assign boundary_violation = boundary_violation_r;
     assign illegal_speed = illegal_speed_w;
     assign illegal_eq_param = illegal_eq_param_w;
+    assign cdr_loss_seen = cdr_loss_w;
+    assign ts_accept = ts_accept_w;
+    assign ts_reject = ts_reject_w;
+    assign ts_malformed = ts_malformed_w;
+    assign ts_illegal_rate = ts_illegal_rate_w;
+    assign ts_lane_link_mismatch = ts_lane_link_mismatch_w;
 endmodule

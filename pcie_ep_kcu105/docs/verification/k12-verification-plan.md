@@ -1,6 +1,6 @@
 # K12 Recovery.Speed / Equalization 验证计划
 
-状态：**v0.2；K12-A/B/C及行为PHY Partner集成已执行PASS，真实PHY测试继续建设**
+状态：**v0.3；K12-A/B/C/D及K12-E真实PHY影子适配已执行PASS，Gen3生产接线继续建设**
 
 ## 1. 分层验证
 
@@ -67,4 +67,7 @@ K12_VCS_REAL_PHY_PASS
 K12_IMPL_PASS
 ```
 
-上述标记、CDC/DRC和非负WNS全部通过后，才生成K12冻结报告并进入K13。
+K12-D已补充CDR loss、TS类型/速率/Lane/Link合法性和Gen1安全回退；K12-E已在
+真实standalone PHY + Root Port VCS中完成影子适配，输出`K12E_VCS_REAL_PHY_PASS`，
+并保持K11-B2枚举/BAR门禁通过。上述标记、CDC/DRC和非负WNS全部通过后，才生成
+K12冻结报告并进入K13；真实Gen3 retrain/EQ生产驱动属于K13生产集成门。
