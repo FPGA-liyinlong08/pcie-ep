@@ -84,7 +84,9 @@ module k09_tlp_test_top #(
     output wire [31:0]  bar_axi_write_count,
     output wire [31:0]  bar_sc_completion_count,
     output wire [31:0]  bar_ur_completion_count,
-    output wire [31:0]  bar_ca_completion_count
+    output wire [31:0]  bar_ca_completion_count,
+    output wire         retrain_link_pulse,
+    output wire [1:0]   target_link_speed
 );
     wire        cfg_req_valid;
     wire        cfg_req_ready;
@@ -311,8 +313,6 @@ module k09_tlp_test_top #(
     wire [2:0] max_read_request_size_unused;
     wire rcb_128b_unused;
     wire link_disable_unused;
-    wire retrain_link_pulse_unused;
-    wire [1:0] target_link_speed_unused;
 
     pcie_cfg_space u_cfg_space (
         .clk                       (clk),
@@ -348,8 +348,8 @@ module k09_tlp_test_top #(
         .max_read_request_size     (max_read_request_size_unused),
         .rcb_128b                  (rcb_128b_unused),
         .link_disable              (link_disable_unused),
-        .retrain_link_pulse        (retrain_link_pulse_unused),
-        .target_link_speed         (target_link_speed_unused)
+        .retrain_link_pulse        (retrain_link_pulse),
+        .target_link_speed         (target_link_speed)
     );
 
     wire posted_drop_pulse_unused;

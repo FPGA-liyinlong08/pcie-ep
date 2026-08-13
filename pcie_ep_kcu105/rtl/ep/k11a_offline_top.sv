@@ -40,6 +40,8 @@ module k11a_offline_top #(
     output wire         bdf_valid,
     output wire [31:0]  bar0_base,
     output wire         memory_space_enable,
+    output wire         retrain_link_pulse,
+    output wire [1:0]   target_link_speed,
     output wire [7:0]   cdc_errors
 );
     wire dll_rx_valid, dll_rx_ready, dll_rx_sop, dll_rx_eop;
@@ -279,6 +281,8 @@ module k11a_offline_top #(
         .bar0_base(bar0_base), .bar0_probe_active(bar0_probe_active),
         .memory_space_enable(memory_space_enable), .bar_busy(bar_busy),
         .bar_ur_pulse(bar_ur_pulse), .bar_ca_pulse(bar_ca_pulse),
+        .retrain_link_pulse(retrain_link_pulse),
+        .target_link_speed(target_link_speed),
         .codec_cfg_request_count(codec_cfg_request_count),
         .codec_mem_request_count(codec_mem_request_count),
         .codec_tx_completion_count(codec_tx_completion_count),

@@ -127,7 +127,12 @@ fi
     "${project_dir}/sim/verilator/k09_integration/k09_tlp_test_top.sv" \
     "${project_dir}/rtl/ep/k11a_offline_top.sv" \
     "${project_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" \
-    $(if [[ "${k12e_mode}" == "1" ]]; then echo "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv ${project_dir}/rtl/phy/pcie_equalization_ctrl.sv ${project_dir}/rtl/phy/pcie_recovery_ts_guard.sv ${project_dir}/rtl/phy/pcie_k13_production_ctrl.sv ${script_dir}/k12e_phy_monitor.sv"; fi) \
+    "${project_dir}/rtl/common/pcie_retrain_cdc_mailbox.sv" \
+    "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv" \
+    "${project_dir}/rtl/phy/pcie_equalization_ctrl.sv" \
+    "${project_dir}/rtl/phy/pcie_recovery_ts_guard.sv" \
+    "${project_dir}/rtl/phy/pcie_k13_production_ctrl.sv" \
+    $(if [[ "${k12e_mode}" == "1" ]]; then echo "${script_dir}/k12e_phy_monitor.sv"; fi) \
     "${vivado_home}/data/verilog/src/glbl.v" \
     "${script_dir}/k11b_serial_board.sv" \
     -l build/k11b_tb_vlogan.log

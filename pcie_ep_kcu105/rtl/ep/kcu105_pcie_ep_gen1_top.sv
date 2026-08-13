@@ -10,7 +10,10 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer K11B2_ILA_DEBUG        = 0,
     parameter integer G7_RX_P0_QUIET         = 0,
     parameter integer G9_WAIT_REMOTE_DETECT  = 0,
-    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
+    parameter integer K13_ENABLE             = 0,
+    parameter integer K13_SPEED_TIMEOUT_CYCLES = 32,
+    parameter integer K13_EQ_TIMEOUT_CYCLES    = 32
 ) (
     input  wire        pcie_refclk_p,
     input  wire        pcie_refclk_n,
@@ -49,18 +52,23 @@ module kcu105_pcie_ep_gen1_top #(
     wire [1:0] phy_txsync_header;
     wire phy_txelecidle, phy_txcompliance, phy_rxpolarity;
     wire [1:0] phy_powerdown, phy_rate;
+    wire [1:0] ltssm_phy_rate;
+    wire ltssm_phy_txelecidle;
     wire [2:0] phy_txmargin;
     wire phy_txswing, phy_txdeemph;
     wire [1:0] phy_txeq_ctrl, phy_rxeq_ctrl;
     wire [3:0] phy_txeq_preset, phy_rxeq_txpreset;
     wire [5:0] phy_txeq_coeff;
+    wire [1:0] ltssm_phy_txeq_ctrl, ltssm_phy_rxeq_ctrl;
+    wire [3:0] ltssm_phy_txeq_preset, ltssm_phy_rxeq_txpreset;
+    wire [5:0] ltssm_phy_txeq_coeff;
     wire as_mac_in_detect, as_cdr_hold_req;
 
     wire mac_rx_valid, mac_rx_sop, mac_rx_eop, mac_rx_is_dllp;
     wire [15:0] mac_rx_data;
     wire [1:0] mac_rx_keep;
     wire [3:0] mac_rx_error;
-    wire mac_tx_valid, mac_tx_ready, mac_tx_sop, mac_tx_eop;
+    wire mac_tx_valid, mac_tx_valid_core, mac_tx_ready, mac_tx_sop, mac_tx_eop;
     wire mac_tx_is_dllp, mac_tx_bad;
     wire [15:0] mac_tx_data;
     wire [1:0] mac_tx_keep;
@@ -68,6 +76,21 @@ module kcu105_pcie_ep_gen1_top #(
     wire [7:0] link_number;
     wire [4:0] rx_ts_count;
     wire [31:0] training_error_count, timeout_count, frame_error_count;
+    wire core_retrain_link_pulse;
+    wire [1:0] core_target_link_speed;
+    wire os_ts1_valid, os_ts2_valid, os_malformed, os_tx_complete;
+    wire [7:0] os_link_number, os_lane_number, os_rate_id, os_training_control;
+    wire k13_phy_txelecidle;
+    wire [1:0] k13_phy_rate, k13_phy_txeq_ctrl, k13_phy_rxeq_ctrl;
+    wire [3:0] k13_phy_txeq_preset, k13_phy_rxeq_txpreset;
+    wire [5:0] k13_phy_txeq_coeff;
+    wire k13_traffic_quiesce, k13_recovery_active;
+    wire [1:0] k13_negotiated_speed;
+    wire [2:0] k13_speed_state, k13_eq_phase;
+    wire k13_eq_active, k13_eq_done, k13_eq_failed;
+    wire k13_ts_accept, k13_ts_reject, k13_cdr_loss_sticky;
+    wire k13_fallback_sticky, k13_illegal_ts_sticky;
+    wire [1:0] ltssm_negotiated_speed;
     reg [24:0] heartbeat_count;
 
     wire dbg_operational_seen;
@@ -159,6 +182,108 @@ module kcu105_pcie_ep_gen1_top #(
         };
     end endgenerate
 
+    generate if (K13_ENABLE != 0) begin : g_k13_enabled_top
+    // K13生产边界：K02 PHY wrapper目前没有独立的CDR-loss端口，先保持安全默认值；
+    // phystatus与TX/RX EQ done则直接接入真实PHY反馈。
+    wire [1:0] k13_ts_rate;
+    wire       k13_ts_valid = os_ts1_valid || os_ts2_valid;
+    wire       k13_ts_complete = k13_ts_valid;
+    wire       k13_ts_eq_request = os_training_control[0];
+    wire       k13_phy_cdr_lost = 1'b0;
+
+    function [1:0] decode_k13_ts_rate(input [7:0] raw_rate_id);
+        begin
+            case (raw_rate_id)
+                8'h02: decode_k13_ts_rate = 2'b00;
+                8'h04: decode_k13_ts_rate = 2'b01;
+                8'h08: decode_k13_ts_rate = 2'b10;
+                default: decode_k13_ts_rate = 2'b11;
+            endcase
+        end
+    endfunction
+    assign k13_ts_rate = decode_k13_ts_rate(os_rate_id);
+
+    pcie_k13_production_ctrl #(
+        .K13_ENABLE(K13_ENABLE),
+        .SPEED_TIMEOUT_CYCLES(K13_SPEED_TIMEOUT_CYCLES),
+        .EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES)
+    ) u_k13_production_ctrl (
+        .core_clk(phy_coreclk), .core_rst_n(core_rst_n),
+        .phy_clk(phy_pclk), .phy_rst_n(pipe_rst_n),
+        .link_up(link_up), .retrain_pulse(core_retrain_link_pulse),
+        .target_speed(core_target_link_speed),
+        .phy_phystatus(phy_phystatus), .phy_cdr_lost(k13_phy_cdr_lost),
+        .phy_txeq_done(phy_txeq_done), .phy_rxeq_done(phy_rxeq_done),
+        .ts_valid(k13_ts_valid), .ts_complete(k13_ts_complete),
+        .ts_is_ts1(os_ts1_valid), .ts_is_ts2(os_ts2_valid),
+        .ts_lane(os_lane_number[2:0]), .ts_link(os_link_number),
+        .ts_rate(k13_ts_rate), .ts_eq_request(k13_ts_eq_request),
+        .expected_lane(3'd0), .expected_link(link_number),
+        .phy_rate(k13_phy_rate), .phy_txelecidle(k13_phy_txelecidle),
+        .phy_txeq_ctrl(k13_phy_txeq_ctrl), .phy_txeq_preset(k13_phy_txeq_preset),
+        .phy_txeq_coeff(k13_phy_txeq_coeff), .phy_rxeq_ctrl(k13_phy_rxeq_ctrl),
+        .phy_rxeq_txpreset(k13_phy_rxeq_txpreset),
+        .traffic_quiesce(k13_traffic_quiesce), .recovery_active(k13_recovery_active),
+        .negotiated_speed(k13_negotiated_speed), .speed_state(k13_speed_state),
+        .eq_active(k13_eq_active), .eq_done(k13_eq_done), .eq_failed(k13_eq_failed),
+        .eq_phase(k13_eq_phase), .ts_accept(k13_ts_accept), .ts_reject(k13_ts_reject),
+        .cdr_loss_sticky(k13_cdr_loss_sticky), .fallback_sticky(k13_fallback_sticky),
+        .illegal_ts_sticky(k13_illegal_ts_sticky)
+    );
+
+    assign phy_rate = (K13_ENABLE != 0) &&
+                      (k13_recovery_active || (k13_negotiated_speed != 2'b00))
+                      ? k13_phy_rate : ltssm_phy_rate;
+    assign phy_txelecidle = (K13_ENABLE != 0) && k13_recovery_active
+                             ? k13_phy_txelecidle : ltssm_phy_txelecidle;
+    assign phy_txeq_ctrl = (K13_ENABLE != 0) && k13_eq_active
+                           ? k13_phy_txeq_ctrl : ltssm_phy_txeq_ctrl;
+    assign phy_txeq_preset = (K13_ENABLE != 0) && k13_eq_active
+                             ? k13_phy_txeq_preset : ltssm_phy_txeq_preset;
+    assign phy_txeq_coeff = (K13_ENABLE != 0) && k13_eq_active
+                            ? k13_phy_txeq_coeff : ltssm_phy_txeq_coeff;
+    assign phy_rxeq_ctrl = (K13_ENABLE != 0) && k13_eq_active
+                           ? k13_phy_rxeq_ctrl : ltssm_phy_rxeq_ctrl;
+    assign phy_rxeq_txpreset = (K13_ENABLE != 0) && k13_eq_active
+                               ? k13_phy_rxeq_txpreset : ltssm_phy_rxeq_txpreset;
+    assign mac_tx_valid = mac_tx_valid_core &&
+                          !((K13_ENABLE != 0) && k13_traffic_quiesce);
+    assign negotiated_speed = (K13_ENABLE != 0) &&
+                              (k13_negotiated_speed != 2'b00)
+                              ? k13_negotiated_speed : ltssm_negotiated_speed;
+    end else begin : g_k13_disabled_top
+        // K11 release旁路：关闭K13时不实例化控制器，也不保留mux逻辑。
+        assign phy_rate = ltssm_phy_rate;
+        assign phy_txelecidle = ltssm_phy_txelecidle;
+        assign phy_txeq_ctrl = ltssm_phy_txeq_ctrl;
+        assign phy_txeq_preset = ltssm_phy_txeq_preset;
+        assign phy_txeq_coeff = ltssm_phy_txeq_coeff;
+        assign phy_rxeq_ctrl = ltssm_phy_rxeq_ctrl;
+        assign phy_rxeq_txpreset = ltssm_phy_rxeq_txpreset;
+        assign mac_tx_valid = mac_tx_valid_core;
+        assign negotiated_speed = ltssm_negotiated_speed;
+        assign k13_phy_txelecidle = 1'b0;
+        assign k13_phy_rate = 2'b00;
+        assign k13_phy_txeq_ctrl = 2'b00;
+        assign k13_phy_txeq_preset = 4'd0;
+        assign k13_phy_txeq_coeff = 6'd0;
+        assign k13_phy_rxeq_ctrl = 2'b00;
+        assign k13_phy_rxeq_txpreset = 4'd0;
+        assign k13_traffic_quiesce = 1'b0;
+        assign k13_recovery_active = 1'b0;
+        assign k13_negotiated_speed = 2'b00;
+        assign k13_speed_state = 3'd0;
+        assign k13_eq_phase = 3'd7;
+        assign k13_eq_active = 1'b0;
+        assign k13_eq_done = 1'b0;
+        assign k13_eq_failed = 1'b0;
+        assign k13_ts_accept = 1'b0;
+        assign k13_ts_reject = 1'b0;
+        assign k13_cdr_loss_sticky = 1'b0;
+        assign k13_fallback_sticky = 1'b0;
+        assign k13_illegal_ts_sticky = 1'b0;
+    end endgenerate
+
     kcu105_pcie_phy_wrapper u_phy_wrapper (
         .pcie_refclk_p(pcie_refclk_p), .pcie_refclk_n(pcie_refclk_n),
         .pcie_perst_n(pcie_perst_n), .pcie_rxp(pcie_rxp), .pcie_rxn(pcie_rxn),
@@ -205,13 +330,13 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_rxstatus(phy_rxstatus), .phy_txdata(phy_txdata),
         .phy_txdatak(phy_txdatak), .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block), .phy_txsync_header(phy_txsync_header),
-        .phy_txdetectrx(phy_txdetectrx), .phy_txelecidle(phy_txelecidle),
+        .phy_txdetectrx(phy_txdetectrx), .phy_txelecidle(ltssm_phy_txelecidle),
         .phy_txcompliance(phy_txcompliance), .phy_rxpolarity(phy_rxpolarity),
-        .phy_powerdown(phy_powerdown), .phy_rate(phy_rate),
+        .phy_powerdown(phy_powerdown), .phy_rate(ltssm_phy_rate),
         .phy_txmargin(phy_txmargin), .phy_txswing(phy_txswing),
-        .phy_txdeemph(phy_txdeemph), .phy_txeq_ctrl(phy_txeq_ctrl),
-        .phy_txeq_preset(phy_txeq_preset), .phy_txeq_coeff(phy_txeq_coeff),
-        .phy_rxeq_ctrl(phy_rxeq_ctrl), .phy_rxeq_txpreset(phy_rxeq_txpreset),
+        .phy_txdeemph(phy_txdeemph), .phy_txeq_ctrl(ltssm_phy_txeq_ctrl),
+        .phy_txeq_preset(ltssm_phy_txeq_preset), .phy_txeq_coeff(ltssm_phy_txeq_coeff),
+        .phy_rxeq_ctrl(ltssm_phy_rxeq_ctrl), .phy_rxeq_txpreset(ltssm_phy_rxeq_txpreset),
         .as_mac_in_detect(as_mac_in_detect), .as_cdr_hold_req(as_cdr_hold_req),
         .tx_pkt_valid(mac_tx_valid), .tx_pkt_ready(mac_tx_ready),
         .tx_pkt_data(mac_tx_data), .tx_pkt_keep(mac_tx_keep),
@@ -223,10 +348,14 @@ module kcu105_pcie_ep_gen1_top #(
         .rx_pkt_error(mac_rx_error), .link_disable(1'b0),
         .hot_reset_req(1'b0), .force_recovery(recovery_req),
         .ltssm_state(ltssm_state), .link_up(link_up),
-        .negotiated_width(negotiated_width), .negotiated_speed(negotiated_speed),
+        .negotiated_width(negotiated_width), .negotiated_speed(ltssm_negotiated_speed),
         .link_number(link_number), .rx_ts_count(rx_ts_count),
         .training_error_count(training_error_count), .timeout_count(timeout_count),
-        .frame_error_count(frame_error_count), .hot_reset_seen(hot_reset_seen)
+        .frame_error_count(frame_error_count), .hot_reset_seen(hot_reset_seen),
+        .os_ts1_valid(os_ts1_valid), .os_ts2_valid(os_ts2_valid),
+        .os_malformed(os_malformed), .os_link_number(os_link_number),
+        .os_lane_number(os_lane_number), .os_rate_id(os_rate_id),
+        .os_training_control(os_training_control), .os_tx_complete(os_tx_complete)
     );
 
     k11a_offline_top #(.K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)) u_protocol_core (
@@ -239,7 +368,7 @@ module kcu105_pcie_ep_gen1_top #(
         .mac_rx_valid(mac_rx_valid), .mac_rx_data(mac_rx_data),
         .mac_rx_keep(mac_rx_keep), .mac_rx_sop(mac_rx_sop),
         .mac_rx_eop(mac_rx_eop), .mac_rx_is_dllp(mac_rx_is_dllp),
-        .mac_rx_error(mac_rx_error), .mac_tx_valid(mac_tx_valid),
+        .mac_rx_error(mac_rx_error), .mac_tx_valid(mac_tx_valid_core),
         .mac_tx_ready(mac_tx_ready), .mac_tx_data(mac_tx_data),
         .mac_tx_keep(mac_tx_keep), .mac_tx_sop(mac_tx_sop),
         .mac_tx_eop(mac_tx_eop), .mac_tx_is_dllp(mac_tx_is_dllp),
@@ -247,6 +376,8 @@ module kcu105_pcie_ep_gen1_top #(
         .dll_fc_state(dll_fc_state), .recovery_req(recovery_req),
         .captured_bdf(captured_bdf), .bdf_valid(bdf_valid),
         .bar0_base(bar0_base), .memory_space_enable(memory_space_enable),
+        .retrain_link_pulse(core_retrain_link_pulse),
+        .target_link_speed(core_target_link_speed),
         .cdc_errors(cdc_errors)
     );
 

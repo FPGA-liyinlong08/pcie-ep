@@ -79,7 +79,15 @@ module pcie_ltssm_mac_gen1 #(
     output reg  [31:0] training_error_count,
     output reg  [31:0] timeout_count,
     output reg  [31:0] frame_error_count,
-    output reg         hot_reset_seen
+    output reg         hot_reset_seen,
+    output wire        os_ts1_valid,
+    output wire        os_ts2_valid,
+    output wire        os_malformed,
+    output wire [7:0]  os_link_number,
+    output wire [7:0]  os_lane_number,
+    output wire [7:0]  os_rate_id,
+    output wire [7:0]  os_training_control,
+    output wire        os_tx_complete
 );
     localparam [5:0] DETECT_QUIET         = 6'd0;
     localparam [5:0] DETECT_ACTIVE        = 6'd1;
@@ -142,17 +150,10 @@ module pcie_ltssm_mac_gen1 #(
     wire rxelecidle_sample = phy_rxelecidle && !phy_rxvalid;
     wire rxelecidle_qualified = &rxelecidle_count;
 
-    wire       os_ts1_valid;
-    wire       os_ts2_valid;
-    wire       os_malformed;
     wire       os_raw_idle_pair_valid;
-    wire [7:0] os_link_number;
     wire       os_link_is_pad;
-    wire [7:0] os_lane_number;
     wire       os_lane_is_pad;
     wire [7:0] os_n_fts;
-    wire [7:0] os_rate_id;
-    wire [7:0] os_training_control;
 
     // PIPE/standalone PHY 的 RxDataValid 只用于 Gen3 128b/130b 数据块；
     // Gen1/2 的 8b/10b Symbol 有效性由 RxValid 指示。K03 固定 Gen1，因此不能
@@ -181,7 +182,6 @@ module pcie_ltssm_mac_gen1 #(
     wire [31:0] os_tx_data;
     wire [1:0]  os_tx_datak;
     wire        os_tx_valid;
-    wire        os_tx_complete;
     wire [2:0]  tx_os_word_index;
     wire [2:0]  tx_os_active_word_index;
     // Polling.Active中的TX只发送TS1；该事件对应一个完整的8拍TS1。

@@ -1,6 +1,6 @@
 # K13 控制阶段记录（2026-08-13）
 
-状态：**K13-CTRL PASS；K13 全集成未完成**
+状态：**K13-CTRL PASS；生产顶层边界接线完成；K13 全集成未完成**
 
 ## 1. 本次完成内容
 
@@ -43,15 +43,35 @@ K13 仿真测试名：
 - `production_cdr_loss_fallback`
 - `production_bad_ts_rejects`
 
-## 3. 当前边界和未完成项
+## 3. 生产顶层接线结果
 
-当前验证的是生产控制器本身，不是完整 Gen3 Endpoint。生产顶层
-`kcu105_pcie_ep_gen1_top` 仍需完成以下接线后，才可生成 K13 bit：
+已将控制器接入 `rtl/ep/kcu105_pcie_ep_gen1_top.sv`：
 
-1. 将 `k09_tlp_test_top` / `k11a_offline_top` 的 Retrain 脉冲和目标速率引出；
-2. 从生产 LTSSM 引出完整 Ordered Set 检查所需的 TS1/TS2、Lane/Link、Rate 和完成边界；
-3. 将 K13 输出与现有 Gen1 PHY 控制线做参数化 mux，确认 `K13_ENABLE=0` 与 K11 逐拍等价；
-4. 接入真实 PHY 的 CDR loss、`phystatus`、TX/RX EQ done 反馈；
-5. 运行真实 PHY VCS Gen1→Gen3、Vivado 综合/实现，再进行 KCU105 Gen3 枚举、BAR 和 reboot 验证。
+- Retrain 脉冲和目标速率由配置空间经 `k11a_offline_top` 引出；
+- 生产 LTSSM 的 TS1/TS2 合法性、Lane/Link、Rate、training-control 和 RX TS 完成边界接入；
+- PHY `phystatus`、TX EQ done、RX EQ done 接入；
+- `K13_ENABLE=1` 时 K13 控制器驱动速率、TX electrical idle、EQ 和 TX quiesce；
+- `K13_ENABLE=0` 使用静态 generate bypass，不实例化控制器，也不保留 K13 mux 逻辑，保持 K11 release 数据路径；
+- 当前 K02 PHY wrapper 没有独立 CDR-loss 输出，因此顶层暂以安全默认 `phy_cdr_lost=0` 接入，不能视为真实 CDR loss 已完成。
 
-因此本记录不产生 bit、不烧写远端设备，也不改变 K11 release 基线。
+默认展开和 `-GK13_ENABLE=1` 的 K11-B2 lint 均 PASS；K13 控制器 3/3、K12 集成 7/7 均 PASS。
+
+## 4. 当前边界和未完成项
+
+当前仍不是完整 Gen3 Endpoint：生产 LTSSM/MAC 的 TX Ordered Set 仍是 Gen1 实现，
+PHY wrapper 也缺少真实 CDR-loss 端口，因此 K13 目前只能作为控制接线阶段，不能宣称
+Gen3 retrain 已闭环。
+
+## 5. VCS / Vivado 门禁结果
+
+- VCS：源文件扩展和编译阶段通过；真实 VCS 在 elaboration 阶段因环境没有
+  `VCSCompiler_Net` license seat 阻塞，未宣称 VCS PASS。
+- Vivado 默认 `K13_ENABLE=0`：综合、place、route、DRC 均完成，DRC 为 0 Error；
+  最终 timing gate 失败，`txoutclk_out[0]` 为 `WNS=-0.033 ns`、`TNS=-0.054 ns`、
+  6 个 setup failing endpoints，hold 为 `WHS=+0.030 ns`。主要失败路径仍在现有
+  Gen1 framer/PHY TX 数据路径，不是 K13 控制器逻辑。
+- 因 timing gate 失败没有生成 bit，也没有烧写或重启远端设备；K11 release 基线未被替换。
+
+下一步必须先修复现有 250 MHz TX→GTH setup 路径并恢复 `WNS>=0`，然后在真实
+Gen3 LTSSM/TS TX、CDR-loss 端口和 VCS license 可用后，重新跑 K13-enabled
+Vivado、bit、Gen3 枚举/BAR/reboot 验证。
