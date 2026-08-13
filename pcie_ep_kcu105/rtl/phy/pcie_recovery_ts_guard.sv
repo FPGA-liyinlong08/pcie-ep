@@ -3,10 +3,7 @@
 
 // K12-D：Recovery TS 合法性门禁。
 // 只在完整 Ordered Set 边界提交一次合法 TS；任何字段非法或不匹配都拒绝。
-module pcie_recovery_ts_guard #(
-    parameter [2:0] EXPECTED_LANE = 3'd0,
-    parameter [7:0] EXPECTED_LINK = 8'd0
-) (
+module pcie_recovery_ts_guard (
     input wire       clk,
     input wire       rst_n,
     input wire       ts_valid,
@@ -17,6 +14,8 @@ module pcie_recovery_ts_guard #(
     input wire [7:0] ts_link,
     input wire [1:0] ts_rate,
     input wire       ts_eq_request,
+    input wire [2:0] expected_lane,
+    input wire [7:0] expected_link,
     output reg       ts_accept,
     output reg       ts_reject,
     output reg       malformed_sticky,
@@ -25,8 +24,8 @@ module pcie_recovery_ts_guard #(
 );
     wire type_legal = ts_is_ts1 ^ ts_is_ts2;
     wire rate_legal = ts_rate != 2'b11;
-    wire lane_link_legal = (ts_lane == EXPECTED_LANE) &&
-                           (ts_link == EXPECTED_LINK);
+    wire lane_link_legal = (ts_lane == expected_lane) &&
+                           (ts_link == expected_link);
     wire eq_legal = !ts_eq_request || (ts_rate == 2'b10);
     wire fields_legal = type_legal && rate_legal && lane_link_legal && eq_legal;
 

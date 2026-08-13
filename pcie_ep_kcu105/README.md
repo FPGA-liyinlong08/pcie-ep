@@ -58,13 +58,18 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
   fallback、Phase 0～3、Preset/Coefficient、TX/RX done超时、CDR loss、TS类型/速率/
   Lane/Link合法性和Ordered Set边界检查；真实PHY VCS下Gen1默认反馈已知且EQ控制为0，
   K11-B2枚举/BAR仍通过。真实Gen3 retrain/EQ生产驱动接线归入K13，K11 release基线不变。
+- K13：**控制阶段 PASS，生产顶层接线未完成**；新增可关闭的
+  `pcie_k13_production_ctrl`，组合K12 CDC、Recovery.Speed、TS合法性和EQ Phase 0～3，
+  已通过Gen3速率/EQ、CDR loss回退和非法TS拒绝三项门禁；`K13_ENABLE=0`保持K11
+  Gen1安全值。下一步是把配置空间Retrain、生产LTSSM Ordered Set边界和真实PHY反馈
+  接入该控制器，然后再做Gen3真实VCS、Vivado和上板bit验证。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
 - K02 已生成 standalone PHY 封装和 bring-up bitstream；原延期的VCS动态门禁已
   补齐，只剩实板Receiver Detect。K03 已完成软件、静态与VCS串行门禁，K04、K05已
-  独立完成并
-  冻结；K06～K10已完成并冻结，K11已形成阶段性release，当前进入K12。
+  独立完成并冻结；K06～K10已完成并冻结，K11已形成阶段性release，K12已完成控制与
+  影子适配，当前进入K13生产接线。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 

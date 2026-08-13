@@ -40,6 +40,7 @@
 	k12c-eq-lint k12c-eq k12c-checker-selftest k12c \
 	k12-integration-lint k12-integration-sim k12-integration-checker-selftest k12-integration \
 	k12de-vcs-serial k12de \
+	k13-ctrl-lint k13-ctrl-sim k13 \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -369,6 +370,31 @@ k12de-vcs-serial:
 
 k12de: k12-integration k12de-vcs-serial
 	@echo "K12DE_PASS"
+
+k13-ctrl-lint:
+	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_k13_production_ctrl \
+		-GK13_ENABLE=1 \
+		rtl/common/pcie_retrain_cdc_mailbox.sv \
+		rtl/phy/pcie_recovery_speed_ctrl.sv \
+		rtl/phy/pcie_equalization_ctrl.sv \
+		rtl/phy/pcie_recovery_ts_guard.sv \
+		rtl/phy/pcie_k13_production_ctrl.sv
+
+k13-ctrl-sim:
+	@rm -f sim/verilator/k13_ctrl/results.xml
+	$(MAKE) -C sim/verilator/k13_ctrl \
+		SIM_BUILD=sim_build_k13_ctrl COCOTB_RESULTS_FILE=results.xml results.xml
+	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k13_ctrl/results.xml; then \
+		echo "错误：K13生产控制器回归失败"; exit 1; \
+	fi
+	@grep -q 'production_gen3_speed_eq_path' sim/verilator/k13_ctrl/results.xml
+	@grep -q 'production_cdr_loss_fallback' sim/verilator/k13_ctrl/results.xml
+	@grep -q 'production_bad_ts_rejects' sim/verilator/k13_ctrl/results.xml
+	@echo "K13_CTRL_SIM_PASS"
+
+k13: k13-ctrl-lint k13-ctrl-sim
+	@echo "K13_CTRL_PASS"
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh

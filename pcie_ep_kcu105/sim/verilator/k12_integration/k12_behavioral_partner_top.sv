@@ -111,6 +111,7 @@ module k12_behavioral_partner_top (
         .ts_is_ts1(peer_ts_is_ts1_r), .ts_is_ts2(peer_ts_is_ts2_r),
         .ts_lane(peer_ts_lane_r), .ts_link(peer_ts_link_r),
         .ts_rate(peer_ts_rate_r), .ts_eq_request(peer_ts_eq_request_r),
+        .expected_lane(3'd0), .expected_link(8'd0),
         .ts_accept(ts_accept_w), .ts_reject(ts_reject_w),
         .malformed_sticky(ts_malformed_w),
         .illegal_rate_sticky(ts_illegal_rate_w),
