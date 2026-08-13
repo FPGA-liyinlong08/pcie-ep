@@ -41,10 +41,14 @@
 	k12-integration-lint k12-integration-sim k12-integration-checker-selftest k12-integration \
 	k12de-vcs-serial k12de \
 	k13-ctrl-lint k13-ctrl-sim k13 \
+	ku040-hw-probe ku040-hw-program \
+	remote-check remote-reboot remote-wait remote-lspci remote-cycle \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
 VIVADO ?= /home/Xilinx/Vivado/2021.2/bin/vivado
+KU040_SERVER ?= localhost:3122
+KU040_BIT ?= fpga/kcu105/build_k11b2/impl/k11b2_gen1_endpoint.bit
 
 k00: k00-baseline k00-m02
 
@@ -540,6 +544,31 @@ xdma-x1-hw-program:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/xdma_x1_demo/program_xdma_x1_demo.tcl \
 		-tclargs localhost:3122
+
+ku040-hw-probe:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source scripts/program_ku040.tcl \
+		-tclargs $(KU040_SERVER) - probe
+
+ku040-hw-program:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source scripts/program_ku040.tcl \
+		-tclargs $(KU040_SERVER) $(KU040_BIT) program
+
+remote-check:
+	./scripts/remote_pcie_host.sh check
+
+remote-reboot:
+	./scripts/remote_pcie_host.sh reboot
+
+remote-wait:
+	./scripts/remote_pcie_host.sh wait
+
+remote-lspci:
+	./scripts/remote_pcie_host.sh lspci
+
+remote-cycle:
+	./scripts/remote_pcie_host.sh cycle
 
 k04-checker-selftest:
 	@$(MAKE) -C sim/verilator/k04 NEGATIVE_STUB=1 \

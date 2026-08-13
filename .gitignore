@@ -10,3 +10,6 @@ pcie_ep_kcu105/sim/verilator/k12a_cdc/k12a_negative_checker_observed.txt
 pcie_ep_kcu105/sim/verilator/k12b_speed/k12b_negative_checker_observed.txt
 pcie_ep_kcu105/sim/verilator/k12c_eq/k12c_negative_checker_observed.txt
 pcie_ep_kcu105/sim/verilator/k12_integration/k12_integration_negative_observed.txt
+
+*.log
+*.jou

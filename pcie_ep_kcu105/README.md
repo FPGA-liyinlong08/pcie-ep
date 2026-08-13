@@ -92,6 +92,18 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 | `sim/vcs` | VCS/Xilinx 库 Smoke 和 FIFO 回归 |
 | `fpga/kcu105` | KU040 约束、Tcl 和阶段构建入口 |
 
+KCU105/KU040 的公共 JTAG 下载、远程 SSH/reboot/lspci 操作和板级连接说明见
+[`docs/kcu040-hardware-and-remote.md`](docs/kcu040-hardware-and-remote.md)。
+
+常用入口：
+
+```bash
+make ku040-hw-probe
+make ku040-hw-program KU040_BIT=fpga/kcu105/build_k11b2/impl/k11b2_gen1_endpoint.bit
+make remote-check
+make remote-cycle
+```
+
 ## K00 命令
 
 完整回归：
