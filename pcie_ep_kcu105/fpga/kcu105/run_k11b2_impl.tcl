@@ -2,6 +2,8 @@ set script_dir  [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
 set ila_debug   [expr {[info exists ::env(K11B2_ILA_DEBUG)] &&
                        $::env(K11B2_ILA_DEBUG) eq "1"}]
+set k13_enable  [expr {[info exists ::env(K13_ENABLE)] &&
+                       $::env(K13_ENABLE) eq "1"}]
 set ila_pipe_only [expr {$ila_debug && [info exists ::env(K11B2_ILA_PIPE_ONLY)] &&
                          $::env(K11B2_ILA_PIPE_ONLY) eq "1"}]
 set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
@@ -80,6 +82,9 @@ if {$g12_ordered_set} {
 if {$g8_fast_detect} { set build_variant "build_g8_fast_detect_ila" }
 if {$g7_rx_p0_quiet} { set build_variant "build_g7_rxp0_ila" }
 if {$g2_gen1_only} { set build_variant "build_g2_gen1" }
+if {$k13_enable} {
+  set build_variant [expr {$ila_debug ? "build_k13_gen3_ila" : "build_k13_gen3"}]
+}
 set build_dir   [file join $script_dir $build_variant impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
 set afifo_path  /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
@@ -143,9 +148,11 @@ if {$ila_debug} {
     synth_design -top $top_name -part $part_name \
       -generic K11B2_ILA_DEBUG=1 \
       -generic G9_WAIT_REMOTE_DETECT=1 \
-      -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles
+      -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
+      -generic K13_ENABLE=$k13_enable
   } else {
-    synth_design -top $top_name -part $part_name -generic K11B2_ILA_DEBUG=1
+    synth_design -top $top_name -part $part_name \
+      -generic K11B2_ILA_DEBUG=1 -generic K13_ENABLE=$k13_enable
   }
   write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
 } else {
@@ -153,9 +160,10 @@ if {$ila_debug} {
     # Release版保留已经过硬件验证的G9启动等待，只移除ILA/mark_debug。
     synth_design -top $top_name -part $part_name \
       -generic G9_WAIT_REMOTE_DETECT=1 \
-      -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles
+      -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
+      -generic K13_ENABLE=$k13_enable
   } else {
-    synth_design -top $top_name -part $part_name
+    synth_design -top $top_name -part $part_name -generic K13_ENABLE=$k13_enable
   }
 }
 }
@@ -441,8 +449,10 @@ if {$ila_debug} {
 }
 set summary_file [open [file join $build_dir summary.txt] w]
 set pass_marker [expr {$g2_gen1_only ? "G2_GEN1_CPLL_IMPL_PASS" :
-                        ($ila_debug ? "K11B3_ILA_IMPL_PASS" :
-                                      "K11B2_IMPL_PASS")}]
+                        ($k13_enable ?
+                         ($ila_debug ? "K13_ILA_IMPL_PASS" : "K13_IMPL_PASS") :
+                         ($ila_debug ? "K11B3_ILA_IMPL_PASS" :
+                                       "K11B2_IMPL_PASS"))}]
 puts $summary_file $pass_marker
 puts $summary_file "part=$part_name"
 puts $summary_file "top=$top_name"
@@ -458,10 +468,11 @@ puts $summary_file "WNS=$wns"
 puts $summary_file "ILA_DEBUG=$ila_debug"
 puts $summary_file "ILA_PIPE_ONLY=$ila_pipe_only"
 puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
+puts $summary_file "K13_ENABLE=$k13_enable"
 puts $summary_file "G7_RX_P0_QUIET=$g7_rx_p0_quiet"
 puts $summary_file "G8_FAST_DETECT=$g8_fast_detect"
 puts $summary_file "PHY_MODULE=$phy_module"
 puts $summary_file "TIMING_POLICY=[expr {$ila_debug ? "DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED" : "WNS_GE_0_REQUIRED"}]"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
-puts "$pass_marker channel=$channel_loc common=$common_loc WNS=$wns"
+puts "$pass_marker channel=$channel_loc common=$common_loc K13_ENABLE=$k13_enable WNS=$wns"

@@ -171,3 +171,30 @@ PIPE errors lcrc=0 sequence=0 duplicate=0 buffer=0 fc=0 bad_dllp_crc=0 malformed
 产生 BAR 流量的证据**，不是以 PERST# 边沿为触发点的专用冷启动波形；若要取得
 PERST# 低电平到释放的完整波形，下一轮应使用 `program-arm-perst` 或
 `program-arm-perst-release` 后再单独 reboot。
+
+## 8. K13_ENABLE=1 诊断实现结果（本次继续执行）
+
+为保持 K13 阶段继续进行，新增了 K13-enabled 的 Vivado 构建入口，并保留
+`K13_ENABLE=0` 的 K11 安全旁路。第一次使用完整 32768 深度 ILA 时，综合因
+KU040 BRAM 容量不足停止；随后采用 G9+G12 PIPE-only、4096 深度 ILA 重新实现，
+实现和 bitgen 均成功：
+
+```text
+bit: /home/wx/Documents/PCIe/pcie_ep_kcu105/fpga/kcu105/build_k13_gen3_ila/impl/k11b2_gen1_endpoint_ila.bit
+ltx: /home/wx/Documents/PCIe/pcie_ep_kcu105/fpga/kcu105/build_k13_gen3_ila/impl/k11b2_gen1_endpoint_ila.ltx
+marker: K13_ILA_IMPL_PASS
+K13_ENABLE: 1
+PHY_MODULE: pcie_phy_x1_gen3
+WNS: -0.270 ns
+DRC: 0 Error; unrouted nets: 0
+TIMING_POLICY: DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED
+```
+
+该 bit 是 **K13 控制器已展开的诊断实现 bit**，不是 K13 正式 release：当前生产
+LTSSM/MAC 的 Ordered Set 仍是 Gen1 路径，PHY wrapper 仍没有真实 CDR-loss 输入，
+并且 ILA 保留了负 setup 时序。外层 warning allowlist 的换行比对问题也已修复，
+可复用检查现有实现目录而不重复跑 Vivado。
+
+下一步是用本机 JTAG 烧写该 K13 诊断 bit，执行远端冷启动/reboot 后核对
+`lspci -vv` 的真实速率和 x1 宽度、标准 PCI command/BAR 访问，并用 ILA 观察
+Speed/EQ/TS 边界；结果只能用于 K13 集成取证，不能替代正式 Gen3 release 门禁。

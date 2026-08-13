@@ -7,7 +7,10 @@ module kcu105_pcie_ep_gen1_board_top #(
     parameter integer G7_RX_P0_QUIET  = 0,
     parameter integer G9_WAIT_REMOTE_DETECT = 0,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
-    parameter integer DETECT_QUIET_CYCLES = 1_500_000
+    parameter integer DETECT_QUIET_CYCLES = 1_500_000,
+    parameter integer K13_ENABLE = 0,
+    parameter integer K13_SPEED_TIMEOUT_CYCLES = 32,
+    parameter integer K13_EQ_TIMEOUT_CYCLES = 32
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -35,7 +38,10 @@ module kcu105_pcie_ep_gen1_board_top #(
         .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
-        .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES)
+        .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES),
+        .K13_ENABLE(K13_ENABLE),
+        .K13_SPEED_TIMEOUT_CYCLES(K13_SPEED_TIMEOUT_CYCLES),
+        .K13_EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),
         .pcie_refclk_n(pcie_refclk_n),

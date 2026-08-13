@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
 ila_debug="${K11B2_ILA_DEBUG:-0}"
+k13_enable="${K13_ENABLE:-0}"
 build_variant="build_k11b2"
 if [[ "${ila_debug}" == "1" ]]; then
   build_variant="build_k11b2_ila"
@@ -37,6 +38,13 @@ fi
 if [[ "${G2_GEN1_ONLY:-0}" == "1" ]]; then
   build_variant="build_g2_gen1"
 fi
+if [[ "${k13_enable}" == "1" ]]; then
+  if [[ "${ila_debug}" == "1" ]]; then
+    build_variant="build_k13_gen3_ila"
+  else
+    build_variant="build_k13_gen3"
+  fi
+fi
 build_dir="${script_dir}/${build_variant}/impl"
 vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
 
@@ -61,23 +69,24 @@ fi
 
 warning_ids="$(grep '^WARNING: \[' "${build_dir}/vivado.log" \
   | sed -E 's/^WARNING: \[([^]]+)\].*/\1/' | sort -u)"
-expected_warning_ids="$(printf '%s\n' \
-  $([[ "${ila_debug}" == "1" ]] && printf '%s\n' \
-    'DRC PDCN-1569' \
-    'DRC RTSTAT-10' \
-    'Route 35-328' || true) \
-  'Synth 8-3848' \
-  'Synth 8-3917' \
-  'Synth 8-6014' \
-  'Synth 8-6779' \
-  'Synth 8-7023' \
-  'Synth 8-7071' \
-  'Synth 8-7080' \
-  'Synth 8-7129' \
-  $([[ "${ila_debug}" == "1" ]] && printf '%s\n' \
-    'Timing 38-164' \
-    'Timing 38-436' || true) \
-  'Vivado 12-975')"
+expected_warning_ids="$(cat <<EOF
+$(if [[ "${ila_debug}" == "1" ]]; then
+  printf '%s\n' 'DRC PDCN-1569' 'DRC RTSTAT-10' 'Route 35-328'
+fi)
+Synth 8-3848
+Synth 8-3917
+Synth 8-6014
+Synth 8-6779
+Synth 8-7023
+Synth 8-7071
+Synth 8-7080
+Synth 8-7129
+$(if [[ "${ila_debug}" == "1" ]]; then
+  printf '%s\n' 'Timing 38-164' 'Timing 38-436'
+fi)
+Vivado 12-975
+EOF
+)"
 if [[ "${warning_ids}" != "${expected_warning_ids}" ]]; then
   echo "错误：K11-B2 Warning ID集合与固定allowlist不一致" >&2
   printf '实际：\n%s\n期望：\n%s\n' "${warning_ids}" "${expected_warning_ids}" >&2
@@ -93,11 +102,15 @@ if grep -Eq '^CDC-[0-9]+[[:space:]]+Critical' "${build_dir}/cdc_routed.rpt"; the
   echo "错误：K11-B2 CDC报告存在Critical路径" >&2
   exit 1
 fi
-if [[ "${ila_debug}" != "1" ]]; then
+if [[ "${ila_debug}" != "1" && "${k13_enable}" != "1" ]]; then
   grep -q 'All user specified timing constraints are met.' \
     "${build_dir}/timing_summary.rpt"
   grep -q '^K11B2_IMPL_PASS$' "${build_dir}/summary.txt"
-else
+elif [[ "${ila_debug}" == "1" && "${k13_enable}" == "1" ]]; then
+  grep -q '^K13_ILA_IMPL_PASS$' "${build_dir}/summary.txt"
+elif [[ "${ila_debug}" == "1" ]]; then
   grep -q '^K11B3_ILA_IMPL_PASS$' "${build_dir}/summary.txt"
+else
+  grep -q '^K13_IMPL_PASS$' "${build_dir}/summary.txt"
 fi
 cat "${build_dir}/summary.txt"
