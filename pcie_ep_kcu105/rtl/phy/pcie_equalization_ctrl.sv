@@ -8,7 +8,8 @@ module pcie_equalization_ctrl #(
     input wire [3:0] tx_preset, input wire [5:0] tx_coeff,
     input wire tx_coeff_valid, input wire [3:0] rx_txpreset,
     input wire rx_preset_valid,
-    input wire phy_txeq_done, input wire phy_rxeq_done,
+    input wire phy_txeq_done, input wire phy_rxeq_adapt_done,
+    input wire phy_rxeq_done,
     output reg eq_start_accept, output reg eq_active,
     output reg eq_done, output reg eq_failed,
     output reg [2:0] phase,
@@ -38,6 +39,9 @@ module pcie_equalization_ctrl #(
                         (rx_txpreset <= 4'd9) &&
                         tx_coeff_valid && rx_preset_valid;
     wire timeout_expired = timeout_count >= (TIMEOUT_LIMIT - 1);
+    // PG239: RXEQ is complete only when both one-cycle indications are high.
+    // A done pulse without adaptation must not advance the EQ phase.
+    wire phy_rxeq_success = phy_rxeq_done && phy_rxeq_adapt_done;
 
     always @* begin
         eq_active = (state == ST_P0_TX) || (state == ST_P1_RX) ||
@@ -56,7 +60,8 @@ module pcie_equalization_ctrl #(
                 phy_txeq_preset = saved_tx_preset; phy_txeq_coeff = saved_tx_coeff;
             end
             ST_P1_RX: begin
-                phase = 3'd1; phy_rxeq_ctrl = 2'b01;
+                // 01 is reserved by PG239; 10 requests RX equalization.
+                phase = 3'd1; phy_rxeq_ctrl = 2'b10;
                 phy_rxeq_txpreset = saved_rx_txpreset;
             end
             ST_P2_TX: begin
@@ -106,8 +111,14 @@ module pcie_equalization_ctrl #(
                     end else timeout_count <= timeout_count + 1'b1;
                 end
                 ST_P1_RX: begin
-                    if (phy_rxeq_done) begin
+                    if (phy_rxeq_success) begin
                         timeout_count <= 32'd0; state <= ST_P2_TX;
+                    end else if (phy_rxeq_done) begin
+                        // The PHY rejected this adaptation proposal.  Clear
+                        // the command by entering the failure state instead
+                        // of falsely reporting a completed phase.
+                        phase_timeout_sticky <= 1'b1;
+                        timeout_count <= 32'd0; state <= ST_FAIL;
                     end else if (timeout_expired) begin
                         phase_timeout_sticky <= 1'b1; timeout_count <= 32'd0; state <= ST_FAIL;
                     end else timeout_count <= timeout_count + 1'b1;
@@ -120,8 +131,11 @@ module pcie_equalization_ctrl #(
                     end else timeout_count <= timeout_count + 1'b1;
                 end
                 ST_P3_RX: begin
-                    if (phy_rxeq_done) begin
+                    if (phy_rxeq_success) begin
                         timeout_count <= 32'd0; state <= ST_DONE;
+                    end else if (phy_rxeq_done) begin
+                        phase_timeout_sticky <= 1'b1;
+                        timeout_count <= 32'd0; state <= ST_FAIL;
                     end else if (timeout_expired) begin
                         phase_timeout_sticky <= 1'b1; timeout_count <= 32'd0; state <= ST_FAIL;
                     end else timeout_count <= timeout_count + 1'b1;

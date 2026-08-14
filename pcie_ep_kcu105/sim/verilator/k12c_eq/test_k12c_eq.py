@@ -23,6 +23,7 @@ async def reset_dut(dut):
     dut.rx_txpreset.value = 5
     dut.rx_preset_valid.value = 1
     dut.phy_txeq_done.value = 0
+    dut.phy_rxeq_adapt_done.value = 0
     dut.phy_rxeq_done.value = 0
     await Timer(3, units="ns")
     dut.rst_n.value = 1
@@ -59,10 +60,12 @@ async def normal_phase_0_to_3(dut):
     await advance(dut)
     dut.phy_txeq_done.value = 0
     assert int(dut.phase.value) == PHASE1
-    assert int(dut.phy_rxeq_ctrl.value) == 1
+    assert int(dut.phy_rxeq_ctrl.value) == 2
     assert int(dut.phy_rxeq_txpreset.value) == 5
+    dut.phy_rxeq_adapt_done.value = 1
     dut.phy_rxeq_done.value = 1
     await advance(dut)
+    dut.phy_rxeq_adapt_done.value = 0
     dut.phy_rxeq_done.value = 0
     assert int(dut.phase.value) == PHASE2
     assert int(dut.phy_txeq_ctrl.value) == 2
@@ -71,9 +74,11 @@ async def normal_phase_0_to_3(dut):
     dut.phy_txeq_done.value = 0
     assert int(dut.phase.value) == PHASE3
     assert int(dut.phy_rxeq_ctrl.value) == 2
+    dut.phy_rxeq_adapt_done.value = 1
     dut.phy_rxeq_done.value = 1
     await advance(dut)
     dut.phy_rxeq_done.value = 0
+    dut.phy_rxeq_adapt_done.value = 0
     assert int(dut.eq_done.value) == 1
     assert int(dut.eq_active.value) == 0
     assert int(dut.phase.value) == PHASE_DONE
@@ -129,6 +134,24 @@ async def rx_done_timeout_fails_and_clears_commands(dut):
     await advance(dut, 5)
     assert int(dut.eq_failed.value) == 1
     assert int(dut.phase_timeout_sticky.value) == 1
+    assert int(dut.phy_rxeq_ctrl.value) == 0
+
+
+@cocotb.test()
+async def rx_done_without_adapt_fails(dut):
+    """A PHY done pulse without adaptation must never complete RXEQ."""
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset_dut(dut)
+    await start_eq(dut)
+    dut.phy_txeq_done.value = 1
+    await advance(dut)
+    dut.phy_txeq_done.value = 0
+    assert int(dut.phase.value) == PHASE1
+    dut.phy_rxeq_done.value = 1
+    dut.phy_rxeq_adapt_done.value = 0
+    await advance(dut)
+    assert int(dut.eq_done.value) == 0
+    assert int(dut.eq_failed.value) == 1
     assert int(dut.phy_rxeq_ctrl.value) == 0
 
 

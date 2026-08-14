@@ -9,6 +9,7 @@
 | `K13_ENABLE` | `0` | `0`为K11 Gen1静态旁路；`1`启用K13生产控制器 |
 | `K13_SPEED_TIMEOUT_CYCLES` | `1_000_000` | `phy_pclk`域Recovery/Speed超时，250 MHz时约4 ms |
 | `K13_EQ_TIMEOUT_CYCLES` | `1_000_000` | `phy_pclk`域每个EQ阶段超时，250 MHz时约4 ms |
+| `K13_RXEQ_BOOTSTRAP` | `1` | Gen3 Rate change完成后是否主动发送PG239 `phy_rxeq_ctrl=2'b10`；用于A/B隔离 |
 
 `core_clk/core_rst_n`对应`phy_coreclk/core_rst_n`，只承载配置空间发出的Retrain
 命令；其余Speed、TS、EQ和PHY控制全部位于`phy_pclk/pipe_rst_n`域。跨域命令只能
@@ -24,7 +25,8 @@
 | `phy_phystatus` | 1 | `phy_pclk` | PHY速率操作完成脉冲 |
 | `phy_cdr_lost` | 1 | `phy_pclk` | 真实CDR失锁；高电平中止训练并触发Gen1回退 |
 | `phy_txeq_done` | 1 | `phy_pclk` | 当前TX EQ命令完成 |
-| `phy_rxeq_done` | 1 | `phy_pclk` | 当前RX EQ命令完成 |
+| `phy_rxeq_done` | 1 | `phy_pclk` | RX EQ完成指示；必须与`phy_rxeq_adapt_done`同拍有效 |
+| `phy_rxeq_adapt_done` | 1 | `phy_pclk` | RX adaptation完成指示；必须与`phy_rxeq_done`同拍有效 |
 | `ltssm_speed_ready` | 1 | `phy_pclk` | 生产LTSSM已进入`Recovery.Speed`，是唯一允许改变`phy_rate`的边界 |
 | `ts_valid` | 1 | `phy_pclk` | 当前有已解析训练序列候选 |
 | `ts_complete` | 1 | `phy_pclk` | 当前TS完整结束；accept只能在此边界产生 |
@@ -53,7 +55,7 @@ bit2映射Gen2，再否则bit1映射Gen1；无任一合法能力位时映射为
 | `phy_txeq_ctrl` | 2 | Phase 0/2命令；保持到`phy_txeq_done`或timeout |
 | `phy_txeq_preset` | 4 | 当前固定Preset 4；驱动前必须合法 |
 | `phy_txeq_coeff` | 6 | 当前固定Coefficient 12；驱动前必须合法 |
-| `phy_rxeq_ctrl` | 2 | Phase 1/3命令；保持到`phy_rxeq_done`或timeout |
+| `phy_rxeq_ctrl` | 2 | PG239编码：`00=Idle`、`01=Reserved`（生产逻辑禁止）、`10=RX EQ`、`11=Bypass`；`10`保持到`done && adapt_done`或失败/timeout |
 | `phy_rxeq_txpreset` | 4 | 当前固定TX Preset 5；驱动前必须合法 |
 | `traffic_quiesce` | 1 | Speed或EQ活动时为1，禁止新的TLP/DLLP提交 |
 | `recovery_active` | 1 | Speed Recovery或EQ任一活动时为1 |
@@ -88,6 +90,7 @@ K13未释放`force_recovery`前不得提前返回L0。
 
 - `core_rst_n=0`清空Retrain mailbox；`phy_rst_n=0`清空Speed、TS和EQ状态；
 - CDR loss以`phy_rst_n && !speed_cdr_loss`复位EQ控制器，所有EQ命令必须归零；
+- RXEQ成功条件固定为`phy_rxeq_done && phy_rxeq_adapt_done`；done-only脉冲不得推进Phase，生产Bootstrap失败后停止命令并进入回退路径；
 - timeout、TS reject、非法速率和CDR loss必须最终令`fallback_sticky=1`并回到Gen1；
 - sticky状态只在相应复位撤销，不允许自动清零掩盖错误；
 - PERST#期间所有PHY控制取K02/K11定义的安全值。

@@ -94,9 +94,22 @@ wait_for_ssh() {
 }
 
 reboot_remote() {
-    if ssh_run 'sudo -n reboot'; then
+    local reboot_output reboot_status
+    set +e
+    reboot_output="$(ssh_run 'sudo -n reboot' 2>&1)"
+    reboot_status=$?
+    set -e
+
+    # reboot通常会在远端接受命令后主动关闭SSH，ssh因此返回非零。
+    # 仅在明确看到连接因远端关闭而断开时视为已发送，不能吞掉
+    # sudo密码不足、认证失败或其他真正的执行错误。
+    if [[ "$reboot_status" -eq 0 ]] ||
+       grep -Eq 'closed by remote host|Connection to .* closed' <<<"$reboot_output"; then
         echo "REMOTE_REBOOT_SENT host=$target"
     else
+        if [[ -n "$reboot_output" ]]; then
+            printf '%s\n' "$reboot_output" >&2
+        fi
         cat >&2 <<EOF
 远端 sudo reboot 失败。当前脚本不会交互式保存或传递密码。
 请人工执行：ssh $target 'sudo reboot'

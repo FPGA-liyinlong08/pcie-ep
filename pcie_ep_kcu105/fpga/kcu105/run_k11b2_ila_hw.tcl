@@ -13,6 +13,12 @@ set g12_ordered_set [expr {[info exists ::env(G12_ORDERED_SET)] &&
                            $::env(G12_ORDERED_SET) eq "1"}]
 set k13_enable [expr {[info exists ::env(K13_ENABLE)] &&
                        $::env(K13_ENABLE) eq "1"}]
+set k13_rxeq_bootstrap [expr {![info exists ::env(K13_RXEQ_BOOTSTRAP)] ||
+                              $::env(K13_RXEQ_BOOTSTRAP) ne "0"}]
+set k13_gt_rate_done_tie_high [expr {[info exists ::env(K13_GT_RATE_DONE_TIE_HIGH)] &&
+                                     $::env(K13_GT_RATE_DONE_TIE_HIGH) eq "1"}]
+set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RESET_FORWARD)] &&
+                                          $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
@@ -33,7 +39,12 @@ if {$g11_rx_parser} { set build_name "build_g11_rx_parser_ila" }
 if {$g12_ordered_set} { set build_name "build_g12_ordered_set_ila" }
 if {$g8_fast_detect} { set build_name "build_g8_fast_detect_ila" }
 if {$g7_rx_p0_quiet} { set build_name "build_g7_rxp0_ila" }
-if {$k13_enable} { set build_name "build_k13_gen3_ila" }
+if {$k13_enable} {
+  set build_name "build_k13_gen3_ila"
+  if {!$k13_rxeq_bootstrap} { set build_name "${build_name}_rxeq_off" }
+  if {$k13_gt_rate_done_tie_high} { set build_name "${build_name}_gt_rate_done1" }
+  if {$k13_gt_rate_qpll_reset_forward} { set build_name "${build_name}_gt_qpllreset" }
+}
 set impl_dir    [file join $script_dir $build_name impl]
 set capture_dir [file join $script_dir $build_name capture]
 set bit_path    [file join $impl_dir k11b2_gen1_endpoint_ila.bit]

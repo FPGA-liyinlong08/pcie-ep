@@ -1,6 +1,6 @@
 # K13 Gen3 x1 全集成验证计划
 
-状态：**v0.7，在建；生产LTSSM/行为Partner回归通过，实板Gen3出口未通过，Root Port Gen3能力已由XDMA同板对照确认**
+状态：**v0.9，在建；RXEQ合约、Recovery.Speed TXELECIDLE定向检查和PIPE Partner回归通过；实板已定位到GT rate-change/QPLL出口，Gen3尚未通过**
 
 ## 1. 验证目标与判定原则
 
@@ -45,6 +45,18 @@ make -C pcie_ep_kcu105 k12-integration
   `pcie_k13_production_ctrl`和独立Gen3行为Partner完成Gen1 L0→Retrain→
   `Recovery.RcvrLock/RcvrCfg/Speed`→Gen3 TS1/TS2→EQ Phase `0→1→2→3→4`→
   `Recovery.Idle`动态闭环；无TS reject、fallback或EQ failure。
+- K12-C RXEQ回归已覆盖PG239合法编码、保留编码不驱动、`done=1/adapt_done=0`
+  失败，以及四阶段成功路径；`K13_CTRL_SIM_PASS`中的behavioral responder也只在
+  `phy_rxeq_ctrl=2'b10`下分别产生两个完成指示。
+- 生产K13控制器已增加`K13_RXEQ_BOOTSTRAP=0/1` A/B参数。Gen3切速前的
+  `TXELECIDLE` NBA交接窗口已由定向检查覆盖：进入Gen3 preset/rate-change
+  window后，直到`PhyStatus`完成不允许出现0拍；TXEQ delayed-done、非法TS和
+  CDR loss回归仍保持通过。
+- 独立`k13_gen3_golden_checker.py`检查Endpoint PIPE观测的EIEOS→TS1顺序、
+  block起始、Sync Header、TS1 marker和SDS禁用，判定不依赖partner RX。
+- 本地`K13_RXEQ_BOOTSTRAP=0` controller A/B回归通过；完整LTSSM行为Partner的
+  OFF分支目前被Verilator报告为测试模型零时间组合环，未将其记为PASS，也未把
+  该harness问题外推为硬件结论。上板A/B仍须在真实PHY/Root Port上执行。
 
 固定标记为：
 
@@ -56,6 +68,60 @@ K13_CTRL_AND_LTSSM_INTEGRATION_PASS
 
 这些标记关闭控制器及生产LTSSM/PIPE Partner集成子阶段，不关闭真实串行PHY、
 Gen3 L0事务、实现和实板门，因此不关闭K13。
+
+## 3.5 新增 GT rate-change/QPLL 前置门
+
+实板 RXEQ ON/OFF 各一次均在 RXEQ 启动前停于 `Recovery.Speed`，因此在进入
+RXEQ Bootstrap A/B 和 Gen3 Ordered-Set 结论前，先完成 GT rate-change 前置门。
+该门只判断 PHY/GT 握手和 QPLL 状态，不把诊断 bit 记为正式实现通过。
+
+必须同时观测：
+
+- `PHY_RATE/RXRATE`、`PCIERATEIDLE`、`PCIERATEGEN3`；
+- `PCIEUSERGEN3RDY`、`PCIEUSERRATESTART`、`PCIEUSERRATEDONE`；
+- `PCIERATEQPLLRESET/PD`、`QPLL1LOCK`、`PhyStatus`；
+- 首个 Gen3 `RXVALID/DATA_VALID/START_BLOCK/SYNC_HEADER`。
+
+最小合法时序窗口为：
+
+```text
+PHY_RATE=Gen3
+→ PCIERATEIDLE进入切速窗口
+→ QPLL rate reset/lock
+→ PCIERATEGEN3和PCIEUSERGEN3RDY有效
+→ PCIEUSERRATESTART/PCIEUSERRATEDONE完成
+→ PhyStatus
+→ 首个Gen3 block
+```
+
+当前硬件结果为：`PCIERATEIDLE` 在 sample 700 由 1 变 0，sample 701
+`PCIERATEQPLLRESET` 拉高且 `QPLL1LOCK` 由 1 变 0；`PCIERATEGEN3`、
+`PCIEUSERGEN3RDY`、`PCIEUSERRATESTART` 全程为 0，`PhyStatus` 仍为 0。
+因此 GT rate-change/QPLL 前置门 **FAIL**，RXEQ、DLL/TLP/BAR 和最终 Gen3
+验收必须继续冻结。
+
+`PCIEUSERRATEDONE` 固定拉高的诊断 A/B 已完成但无改善，不能作为修复。随后完成了
+`K13_GT_RATE_QPLL_RESET_FORWARD=1` 的诊断 A/B：静态网表确认
+`PCIERATEQPLLRESET[0]` 确实进入活动 QPLL1RESET 驱动 LUT 的输入，但实板仍在
+sample 701 发生 `QPLL1LOCK: 1→0`，且未恢复；`PCIERATEGEN3`、
+`PCIEUSERGEN3RDY`、`PCIEUSERRATESTART` 和 `PhyStatus` 仍为 0。因此“rate reset
+未扇出到 QPLL1”已排除为唯一根因，但 GT rate-change/QPLL 前置门仍 **FAIL**。
+下一步应继续核对 standalone PHY/IP 生成配置和端口方向，尤其是 GT 内部
+`PCIERATEGEN3/IDLE/USERGEN3RDY/USERRATESTART` 的实际驱动来源、QPLL1 lock
+恢复条件以及 GT rate-done/START 时序；确认后再决定是否需要修改 PHY wrapper/IP
+配置。该诊断 bit 的 WNS 为 `-0.129 ns`，仍只能作为诊断证据。
+
+当前最直接的下一嫌疑是生成的 `pcie_phy_x1_gen3_core_top.v` 将
+`GT_PCIEUSERRATEDONE` 固定接为 0，而 `GT_PCIEUSERRATESTART` 只被观测、没有
+返回到用户握手逻辑；这与 `PCIEUSERGEN3RDY` 全程为 0 相互吻合。下一版应实现
+“看到 `PCIEUSERRATESTART` 后按 GT Wizard 合约产生一次受控 `USERRATEDONE`”的
+独立诊断变体，并同时采集 `PCIERATEGEN3/USERGEN3RDY/PhyStatus`。不能用持续拉高
+done 代替该握手，也不能在此之前修改生产默认路径。
+
+Gen1→Gen2 隔离仍保留为下一道硬件门，但当前仓库的 `G2_GEN1_ONLY` 入口是
+Gen1/CPLL 对照构建，不是可直接代表 Gen2 的实板配置；不能把该入口误报为
+Gen1→Gen2 PASS。需要先提供真实 Gen2 rate 选择/Root Port 限速方法，再执行
+10 次冷启动和 20 次 Retrain。
 
 ## 4. 必需Directed场景
 
@@ -207,3 +273,14 @@ K13_PASS
 当前成立的标记为`K13_CTRL_AND_LTSSM_INTEGRATION_PASS`和
 `K13_ILA_IMPL_PASS`；后者是诊断标记，不等价于`K13_IMPL_PASS`。阶段状态保持
 `K13-IN-PROGRESS`，不得冻结为K13 release，也不得进入K14。
+
+本轮新增的ILA probe19为64-bit `dbg_k13_top`，覆盖Recovery.Speed、
+`phy_txelecidle`、TXEQ/RXEQ命令及两个done、TX/RX valid/start/header、
+`PhyStatus`和LTSSM。实现脚本同时生成`timing_paths_50.rpt`；仍需单独确认
+Gen3 TX相关路径无负WNS后，才可把实现结果从诊断门升级。
+
+硬件门尚未执行：Gen1→Gen2的10次冷启动/20次Retrain、Gen3 RXEQ
+Bootstrap ON/OFF各10次冷启动/10次Retrain、3次reboot/rescan、100,000次
+标准PCI BAR访问和失败注入恢复均待上板。故`K13_VCS_GEN3_PASS`、
+`K13_IMPL_PASS`、`K13_HW_GEN3_X1_PASS`、`K13_BAR_100K_PASS`、
+`K13_FALLBACK_RECOVERY_PASS`和`K13_PASS`继续保持未置位。

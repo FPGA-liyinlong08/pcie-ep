@@ -405,6 +405,7 @@ k13-ctrl-sim:
 	@grep -q 'production_gen3_speed_eq_path' sim/verilator/k13_ctrl/results.xml
 	@grep -q 'production_cdr_loss_fallback' sim/verilator/k13_ctrl/results.xml
 	@grep -q 'production_bad_ts_rejects' sim/verilator/k13_ctrl/results.xml
+	@grep -q 'production_rxeq_done_without_adapt_falls_back' sim/verilator/k13_ctrl/results.xml
 	@echo "K13_CTRL_SIM_PASS"
 
 k13-integration-lint:

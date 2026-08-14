@@ -2,6 +2,8 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ReadOnly, RisingEdge, Timer
 
+from k13_gen3_golden_checker import assert_training_prefix
+
 
 COM, PAD, TS1, TS2, IDL = 0xBC, 0xF7, 0x4A, 0x45, 0x00
 DETECT_ACTIVE = 1
@@ -175,7 +177,8 @@ async def phy_command_responder(dut):
         dut.phy_phystatus.value = int(rate != previous_rate)
         previous_rate = rate
         dut.phy_txeq_done.value = int(txeq != 0 and not txeq_seen)
-        dut.phy_rxeq_done.value = int(rxeq != 0 and not rxeq_seen)
+        dut.phy_rxeq_done.value = int(rxeq == 2 and not rxeq_seen)
+        dut.phy_rxeq_adapt_done.value = int(rxeq == 2 and not rxeq_seen)
         txeq_seen = txeq != 0
         rxeq_seen = rxeq != 0
 
@@ -205,7 +208,8 @@ async def production_ltssm_gen1_to_gen3_eq_closed_loop(dut):
         "pipe_rst_n", "core_rst_n", "phy_rxdata", "phy_rxdatak",
         "phy_rxdata_valid", "phy_rxstart_block", "phy_rxsync_header",
         "phy_rxvalid", "phy_phystatus", "phy_rxelecidle", "phy_rxstatus",
-        "phy_cdr_lost", "phy_txeq_done", "phy_rxeq_done",
+        "phy_cdr_lost", "phy_txeq_done", "phy_rxeq_adapt_done",
+        "phy_rxeq_done",
         "retrain_pulse", "gen3_partner_enable",
     ):
         getattr(dut, name).value = 0
@@ -263,14 +267,8 @@ async def production_ltssm_gen1_to_gen3_eq_closed_loop(dut):
     assert phases == [0, 1, 2, 3, 4]
     assert int(dut.negotiated_speed.value) == 2
     prefix = await prefix_task
-    assert [word[0] for word in prefix[:4]] == [0xFF00FF00] * 4
-    assert [word[1] for word in prefix[:4]] == [1, 0, 0, 0]
-    assert prefix[0][2] == 0b01
-    # Recovery.RcvrLock starts TS1 immediately after EIEOS. SDS here would
-    # falsely start a Data Stream before Recovery.Idle.
-    assert prefix[4][1:] == (1, 0b01)
-    assert prefix[4][0] & 0xFF == 0x1E
-    assert all(word[0] != 0xAAAAAAAA for word in prefix)
+    # Independent checker: no TX/RX partner signal is used for this verdict.
+    assert_training_prefix(prefix)
 
 
 @cocotb.test()
@@ -284,7 +282,8 @@ async def partner_initiated_speed_change_closes_recovery_and_eq(dut):
         "pipe_rst_n", "core_rst_n", "phy_rxdata", "phy_rxdatak",
         "phy_rxdata_valid", "phy_rxstart_block", "phy_rxsync_header",
         "phy_rxvalid", "phy_phystatus", "phy_rxelecidle", "phy_rxstatus",
-        "phy_cdr_lost", "phy_txeq_done", "phy_rxeq_done",
+        "phy_cdr_lost", "phy_txeq_done", "phy_rxeq_adapt_done",
+        "phy_rxeq_done",
         "retrain_pulse", "gen3_partner_enable",
     ):
         getattr(dut, name).value = 0

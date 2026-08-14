@@ -5,7 +5,9 @@
 // the real K13 controller and the same boundary muxes used by the board top.
 // Gen1 PIPE input is driven by cocotb; after Rate=Gen3, a separate ordered-set
 // transmitter acts as the behavioral PHY partner.
-module k13_ltssm_partner_top (
+module k13_ltssm_partner_top #(
+    parameter integer K13_RXEQ_BOOTSTRAP = 1
+) (
     input  wire        phy_pclk,
     input  wire        core_clk,
     input  wire        pipe_rst_n,
@@ -22,6 +24,7 @@ module k13_ltssm_partner_top (
     input  wire [2:0]  phy_rxstatus,
     input  wire        phy_cdr_lost,
     input  wire        phy_txeq_done,
+    input  wire        phy_rxeq_adapt_done,
     input  wire        phy_rxeq_done,
     input  wire        retrain_pulse,
     input  wire [1:0]  target_speed,
@@ -79,13 +82,19 @@ module k13_ltssm_partner_top (
 
     wire [1:0] k13_rate, k13_txeq_ctrl, k13_rxeq_ctrl;
     wire k13_txelecidle, traffic_quiesce;
+    wire [1:0] phy_rate_w, phy_txeq_ctrl_w, phy_rxeq_ctrl_w;
+    wire phy_txelecidle_w;
     wire [3:0] k13_txeq_preset, k13_rxeq_txpreset;
     wire [5:0] k13_txeq_coeff;
     wire [1:0] k13_negotiated_speed;
     wire cdr_loss_sticky, speed_timeout_sticky, illegal_ts_sticky;
     wire recovery_speed_done = speed_state == 3'd3;
-
-    wire partner_enable = gen3_partner_enable && (phy_rate == 2'b10) &&
+    // In the OFF A/B harness, EQ begins in the same cycle as Recovery.Idle.
+    // Use the registered speed-state indication for LTSSM force-recovery so
+    // that this test-only mux does not create a zero-time EQ feedback loop.
+    wire harness_recovery_force = (K13_RXEQ_BOOTSTRAP == 0) ?
+                                   (speed_state != 3'd0) : recovery_active;
+    wire partner_enable = gen3_partner_enable && (phy_rate_w == 2'b10) &&
                           ((ltssm_state == 6'd11) ||
                            (ltssm_state == 6'd12));
     wire [1:0] partner_mode = (ltssm_state == 6'd12) ? 2'd2 : 2'd1;
@@ -125,7 +134,8 @@ module k13_ltssm_partner_top (
                                   (decode_ts_rate(os_rate_id) != 2'b11);
 
     pcie_k13_production_ctrl #(
-        .K13_ENABLE(1), .SPEED_TIMEOUT_CYCLES(256),
+        .K13_ENABLE(1), .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
+        .SPEED_TIMEOUT_CYCLES(256),
         .EQ_TIMEOUT_CYCLES(64)
     ) u_k13_ctrl (
         .core_clk(core_clk), .core_rst_n(core_rst_n),
@@ -135,7 +145,9 @@ module k13_ltssm_partner_top (
         .partner_retrain_valid(partner_retrain_valid),
         .partner_target_speed(decode_ts_rate(os_rate_id)),
         .phy_phystatus(phy_phystatus), .phy_cdr_lost(phy_cdr_lost),
-        .phy_txeq_done(phy_txeq_done), .phy_rxeq_done(phy_rxeq_done),
+        .phy_txeq_done(phy_txeq_done),
+        .phy_rxeq_adapt_done(phy_rxeq_adapt_done),
+        .phy_rxeq_done(phy_rxeq_done),
         .ts_valid(os_ts1_valid || os_ts2_valid),
         .ts_complete(os_ts1_valid || os_ts2_valid),
         .ts_is_ts1(os_ts1_valid), .ts_is_ts2(os_ts2_valid),
@@ -157,12 +169,17 @@ module k13_ltssm_partner_top (
         .illegal_ts_sticky(illegal_ts_sticky)
     );
 
-    assign phy_rate = (recovery_active || (k13_negotiated_speed != 2'b00)) ?
+    assign phy_rate_w = ((speed_state != 3'd0) ||
+                         (k13_negotiated_speed != 2'b00)) ?
                       k13_rate : ltssm_phy_rate;
-    assign phy_txelecidle = recovery_active ? k13_txelecidle :
+    assign phy_txelecidle_w = recovery_active ? k13_txelecidle :
                                               ltssm_phy_txelecidle;
-    assign phy_txeq_ctrl = recovery_active ? k13_txeq_ctrl : ltssm_txeq_ctrl;
-    assign phy_rxeq_ctrl = recovery_active ? k13_rxeq_ctrl : ltssm_rxeq_ctrl;
+    assign phy_txeq_ctrl_w = recovery_active ? k13_txeq_ctrl : ltssm_txeq_ctrl;
+    assign phy_rxeq_ctrl_w = recovery_active ? k13_rxeq_ctrl : ltssm_rxeq_ctrl;
+    assign phy_rate = phy_rate_w;
+    assign phy_txelecidle = phy_txelecidle_w;
+    assign phy_txeq_ctrl = phy_txeq_ctrl_w;
+    assign phy_rxeq_ctrl = phy_rxeq_ctrl_w;
     assign negotiated_speed = (k13_negotiated_speed != 2'b00) ?
                               k13_negotiated_speed : 2'b00;
 
@@ -177,7 +194,7 @@ module k13_ltssm_partner_top (
         .phy_rxstart_block(lt_rxstart_block),
         .phy_rxsync_header(lt_rxsync_header), .phy_rxvalid(lt_rxvalid),
         .phy_phystatus(phy_phystatus), .phy_rxelecidle(lt_rxelecidle),
-        .phy_rxstatus(phy_rxstatus), .active_phy_rate(phy_rate),
+        .phy_rxstatus(phy_rxstatus), .active_phy_rate(phy_rate_w),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),
         .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block),
@@ -200,8 +217,8 @@ module k13_ltssm_partner_top (
         .rx_pkt_keep(rx_pkt_keep), .rx_pkt_sop(rx_pkt_sop),
         .rx_pkt_eop(rx_pkt_eop), .rx_pkt_is_dllp(rx_pkt_is_dllp),
         .rx_pkt_error(rx_pkt_error), .link_disable(1'b0),
-        .hot_reset_req(1'b0), .force_recovery(recovery_active),
-        .speed_retrain_active(recovery_active),
+        .hot_reset_req(1'b0), .force_recovery(harness_recovery_force),
+        .speed_retrain_active(harness_recovery_force),
         .recovery_speed_done(recovery_speed_done),
         .recovery_speed_ready(recovery_speed_ready),
         .ltssm_state(ltssm_state), .link_up(link_up),

@@ -13,7 +13,8 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
     parameter integer K13_ENABLE             = 0,
     parameter integer K13_SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer K13_EQ_TIMEOUT_CYCLES    = 1_000_000
+    parameter integer K13_EQ_TIMEOUT_CYCLES    = 1_000_000,
+    parameter integer K13_RXEQ_BOOTSTRAP       = 1
 ) (
     input  wire        pcie_refclk_p,
     input  wire        pcie_refclk_n,
@@ -190,6 +191,24 @@ module kcu105_pcie_ep_gen1_top #(
             mac_tx_is_dllp, mac_tx_bad,
             |cdc_errors, bdf_valid, memory_space_enable
         };
+        // K13 Gen3 directed evidence. Keep raw payload outside this compact
+        // probe so the diagnostic build remains routable; valid/start/header
+        // and all control handshakes are captured here.
+        (* mark_debug = "true", keep = "true" *)
+        wire [63:0] dbg_k13_top = {
+            k13_speed_state, k13_eq_phase,
+            k13_recovery_active, k13_eq_active, k13_eq_done, k13_eq_failed,
+            k13_fallback_sticky, k13_speed_timeout_sticky, k13_cdr_loss_sticky,
+            k13_ts_accept, k13_ts_reject,
+            phy_rate, phy_txelecidle,
+            phy_txeq_ctrl, phy_txeq_preset, phy_txeq_coeff, phy_txeq_done,
+            phy_rxeq_ctrl, phy_rxeq_txpreset,
+            phy_rxeq_adapt_done, phy_rxeq_done,
+            phy_txdata_valid, phy_txstart_block, phy_txsync_header,
+            phy_rxdata_valid, phy_rxstart_block, phy_rxsync_header,
+            phy_rxelecidle, phy_phystatus, phy_rxstatus,
+            ltssm_state, 6'd0
+        };
     end endgenerate
 
     generate if (K13_ENABLE != 0) begin : g_k13_enabled_top
@@ -229,7 +248,8 @@ module kcu105_pcie_ep_gen1_top #(
     pcie_k13_production_ctrl #(
         .K13_ENABLE(K13_ENABLE),
         .SPEED_TIMEOUT_CYCLES(K13_SPEED_TIMEOUT_CYCLES),
-        .EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES)
+        .EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES),
+        .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP)
     ) u_k13_production_ctrl (
         .core_clk(phy_coreclk), .core_rst_n(core_rst_n),
         .phy_clk(phy_pclk), .phy_rst_n(pipe_rst_n),
@@ -239,7 +259,9 @@ module kcu105_pcie_ep_gen1_top #(
         .partner_retrain_valid(k13_partner_retrain_valid),
         .partner_target_speed(k13_ts_rate),
         .phy_phystatus(phy_phystatus), .phy_cdr_lost(k13_phy_cdr_lost),
-        .phy_txeq_done(phy_txeq_done), .phy_rxeq_done(phy_rxeq_done),
+        .phy_txeq_done(phy_txeq_done),
+        .phy_rxeq_adapt_done(phy_rxeq_adapt_done),
+        .phy_rxeq_done(phy_rxeq_done),
         .ts_valid(k13_ts_valid), .ts_complete(k13_ts_complete),
         .ts_is_ts1(os_ts1_valid), .ts_is_ts2(os_ts2_valid),
         .ts_lane(os_lane_number[2:0]), .ts_link(os_link_number),

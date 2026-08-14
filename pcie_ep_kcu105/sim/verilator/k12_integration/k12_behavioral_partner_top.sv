@@ -20,7 +20,8 @@ module k12_behavioral_partner_top (
     output wire [5:0] txeq_coeff, output wire [1:0] rxeq_ctrl,
     output wire [3:0] rxeq_txpreset,
     output wire phy_phystatus, output wire phy_txeq_done,
-    output wire phy_rxeq_done, output wire os_tx_complete,
+    output wire phy_rxeq_adapt_done, output wire phy_rxeq_done,
+    output wire os_tx_complete,
     output wire boundary_violation,
     output wire illegal_speed, output wire illegal_eq_param,
     output wire cdr_loss_seen, output wire ts_accept, output wire ts_reject,
@@ -43,7 +44,7 @@ module k12_behavioral_partner_top (
     wire [1:0] txeq_ctrl_w, rxeq_ctrl_w;
     wire [3:0] txeq_preset_w, rxeq_txpreset_w;
     wire [5:0] txeq_coeff_w;
-    wire phy_txeq_done_w, phy_rxeq_done_w;
+    wire phy_txeq_done_w, phy_rxeq_adapt_done_w, phy_rxeq_done_w;
 
     pcie_retrain_cdc_mailbox u_mailbox (
         .s_clk(core_clk), .s_rst_n(core_rst_n),
@@ -78,7 +79,9 @@ module k12_behavioral_partner_top (
         .target_speed(negotiated_speed_w), .tx_preset(4'd4),
         .tx_coeff(6'd12), .tx_coeff_valid(1'b1),
         .rx_txpreset(4'd5), .rx_preset_valid(1'b1),
-        .phy_txeq_done(phy_txeq_done_w), .phy_rxeq_done(phy_rxeq_done_w),
+        .phy_txeq_done(phy_txeq_done_w),
+        .phy_rxeq_adapt_done(phy_rxeq_adapt_done_w),
+        .phy_rxeq_done(phy_rxeq_done_w),
         .eq_start_accept(eq_start_accept_w), .eq_active(eq_active_w),
         .eq_done(eq_done_w), .eq_failed(eq_failed_w), .phase(eq_phase_w),
         .phy_txeq_ctrl(txeq_ctrl_w), .phy_txeq_preset(txeq_preset_w),
@@ -94,7 +97,7 @@ module k12_behavioral_partner_top (
     reg [1:0] os_count;
     reg os_tx_complete_r;
     reg phy_phystatus_r;
-    reg phy_txeq_done_r, phy_rxeq_done_r;
+    reg phy_txeq_done_r, phy_rxeq_adapt_done_r, phy_rxeq_done_r;
     reg boundary_violation_r;
     reg peer_ts_valid_r, peer_ts_complete_r, peer_ts_is_ts1_r, peer_ts_is_ts2_r;
     reg [2:0] peer_ts_lane_r;
@@ -104,6 +107,7 @@ module k12_behavioral_partner_top (
 
     assign phy_phystatus_w = phy_phystatus_r;
     assign phy_txeq_done_w = phy_txeq_done_r;
+    assign phy_rxeq_adapt_done_w = phy_rxeq_adapt_done_r;
     assign phy_rxeq_done_w = phy_rxeq_done_r;
 
     pcie_recovery_ts_guard u_ts_guard (
@@ -131,6 +135,7 @@ module k12_behavioral_partner_top (
             os_tx_complete_r <= 1'b0;
             phy_phystatus_r <= 1'b0;
             phy_txeq_done_r <= 1'b0;
+            phy_rxeq_adapt_done_r <= 1'b0;
             phy_rxeq_done_r <= 1'b0;
             boundary_violation_r <= 1'b0;
             peer_ts_valid_r <= 1'b0;
@@ -146,6 +151,7 @@ module k12_behavioral_partner_top (
             os_count <= os_count + 1'b1;
             phy_phystatus_r <= 1'b0;
             phy_txeq_done_r <= 1'b0;
+            phy_rxeq_adapt_done_r <= 1'b0;
             phy_rxeq_done_r <= 1'b0;
             peer_ts_valid_r <= 1'b0;
             peer_ts_complete_r <= 1'b0;
@@ -189,6 +195,7 @@ module k12_behavioral_partner_top (
             if (rxeq_ctrl_w != 2'b00) begin
                 if (force_early_done || (!force_eq_timeout && os_tx_complete_r)) begin
                     phy_rxeq_done_r <= 1'b1;
+                    phy_rxeq_adapt_done_r <= 1'b1;
                     if (!os_tx_complete_r && force_early_done)
                         boundary_violation_r <= 1'b1;
                 end
@@ -224,6 +231,7 @@ module k12_behavioral_partner_top (
     assign rxeq_txpreset = rxeq_txpreset_w;
     assign phy_phystatus = phy_phystatus_w;
     assign phy_txeq_done = phy_txeq_done_w;
+    assign phy_rxeq_adapt_done = phy_rxeq_adapt_done_w;
     assign phy_rxeq_done = phy_rxeq_done_w;
     assign os_tx_complete = os_tx_complete_r;
     assign boundary_violation = boundary_violation_r;

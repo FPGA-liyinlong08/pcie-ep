@@ -4,6 +4,12 @@ set ila_debug   [expr {[info exists ::env(K11B2_ILA_DEBUG)] &&
                        $::env(K11B2_ILA_DEBUG) eq "1"}]
 set k13_enable  [expr {[info exists ::env(K13_ENABLE)] &&
                        $::env(K13_ENABLE) eq "1"}]
+set k13_rxeq_bootstrap [expr {![info exists ::env(K13_RXEQ_BOOTSTRAP)] ||
+                              $::env(K13_RXEQ_BOOTSTRAP) ne "0"}]
+set k13_gt_rate_done_tie_high [expr {[info exists ::env(K13_GT_RATE_DONE_TIE_HIGH)] &&
+                                     $::env(K13_GT_RATE_DONE_TIE_HIGH) eq "1"}]
+set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RESET_FORWARD)] &&
+                                          $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
 set ila_pipe_only [expr {$ila_debug && [info exists ::env(K11B2_ILA_PIPE_ONLY)] &&
                          $::env(K11B2_ILA_PIPE_ONLY) eq "1"}]
 set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
@@ -84,6 +90,9 @@ if {$g7_rx_p0_quiet} { set build_variant "build_g7_rxp0_ila" }
 if {$g2_gen1_only} { set build_variant "build_g2_gen1" }
 if {$k13_enable} {
   set build_variant [expr {$ila_debug ? "build_k13_gen3_ila" : "build_k13_gen3"}]
+  if {!$k13_rxeq_bootstrap} { set build_variant "${build_variant}_rxeq_off" }
+  if {$k13_gt_rate_done_tie_high} { set build_variant "${build_variant}_gt_rate_done1" }
+  if {$k13_gt_rate_qpll_reset_forward} { set build_variant "${build_variant}_gt_qpllreset" }
 }
 set build_dir   [file join $script_dir $build_variant impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
@@ -104,9 +113,181 @@ if {![file exists $afifo_path]} { error "缺少冻结afifo依赖：$afifo_path" 
 set_part $part_name
 read_ip $xci_path
 generate_target all [get_ips $phy_module]
+
+# Diagnostic-only A/B variant. With TX/RX both using QPLL1, the generated
+# GT Wizard normally lets its reset controller own the active QPLL1 reset.
+# Forward the PCIe rate-change QPLL reset request into that active reset path
+# for one controlled hardware experiment; never enable this in production.
+if {$k13_gt_rate_qpll_reset_forward} {
+  if {!$k13_enable} {
+    error "K13_GT_RATE_QPLL_RESET_FORWARD requires K13_ENABLE=1"
+  }
+  if {$k13_gt_rate_done_tie_high} {
+    error "Do not combine K13_GT_RATE_QPLL_RESET_FORWARD with K13_GT_RATE_DONE_TIE_HIGH"
+  }
+  set qpll_reset_src [file join $phy_ip_root $phy_module ip_0 synth \
+                      pcie_phy_x1_gen3_gt_gtwizard_gthe3.v]
+  if {![file exists $qpll_reset_src]} {
+    error "GT Wizard generated source not found: $qpll_reset_src"
+  }
+  set qpll_reset_f [open $qpll_reset_src r]
+  set qpll_reset_text [read $qpll_reset_f]
+  close $qpll_reset_f
+  # The active shared-common implementation is the QPLL1/QPLL1 vector case
+  # below the channel-bonding loop.  The scalar assignments above it belong to
+  # inactive generated branches and are not sufficient for this experiment.
+  set qpll_reset_vec_old {assign qpll1reset_int[gi_hb_rst_cm] =
+                     (|gtwiz_reset_pllreset_tx_int[f_idx_ch_ub(gi_hb_rst_cm):f_idx_ch_lb(gi_hb_rst_cm)]) ||
+                     (|gtwiz_reset_pllreset_rx_int[f_idx_ch_ub(gi_hb_rst_cm):f_idx_ch_lb(gi_hb_rst_cm)]);}
+  set qpll_reset_vec_new {assign qpll1reset_int[gi_hb_rst_cm] =
+                     (|gtwiz_reset_pllreset_tx_int[f_idx_ch_ub(gi_hb_rst_cm):f_idx_ch_lb(gi_hb_rst_cm)]) ||
+                     (|gtwiz_reset_pllreset_rx_int[f_idx_ch_ub(gi_hb_rst_cm):f_idx_ch_lb(gi_hb_rst_cm)]) ||
+                     qpll1reset_in[gi_hb_rst_cm];}
+  set qpll_reset_vec_count 0
+  set qpll_reset_vec_offset 0
+  while {[set qpll_reset_vec_hit [string first $qpll_reset_vec_old $qpll_reset_text $qpll_reset_vec_offset]] >= 0} {
+    incr qpll_reset_vec_count
+    set qpll_reset_vec_offset [expr {$qpll_reset_vec_hit + [string length $qpll_reset_vec_old]}]
+  }
+  if {$qpll_reset_vec_count != 1} {
+    error "GT QPLL reset diagnostic expects one active QPLL1/QPLL1 assignment, found $qpll_reset_vec_count"
+  }
+  set qpll_reset_text [string map [list $qpll_reset_vec_old $qpll_reset_vec_new] $qpll_reset_text]
+  set qpll_reset_old {assign qpll1reset_int = {`pcie_phy_x1_gen3_gt_gtwizard_gthe3_SF_CM{gtwiz_reset_pllreset_tx_int || gtwiz_reset_pllreset_rx_int}};}
+  set qpll_reset_new {assign qpll1reset_int = {`pcie_phy_x1_gen3_gt_gtwizard_gthe3_SF_CM{gtwiz_reset_pllreset_tx_int || gtwiz_reset_pllreset_rx_int}} || qpll1reset_in;}
+  set qpll_reset_count 0
+  set qpll_reset_offset 0
+  while {[set qpll_reset_hit [string first $qpll_reset_old $qpll_reset_text $qpll_reset_offset]] >= 0} {
+    incr qpll_reset_count
+    set qpll_reset_offset [expr {$qpll_reset_hit + [string length $qpll_reset_old]}]
+  }
+  if {$qpll_reset_count != 2} {
+    error "GT QPLL reset diagnostic expects two generated assignments, found $qpll_reset_count"
+  }
+  set qpll_reset_text [string map [list $qpll_reset_old $qpll_reset_new] $qpll_reset_text]
+  set qpll_reset_f [open $qpll_reset_src w]
+  puts -nonewline $qpll_reset_f $qpll_reset_text
+  close $qpll_reset_f
+  puts "K13_GT_RATE_QPLL_RESET_FORWARD_PATCH=$qpll_reset_src"
+}
+set k13_gt_rate_direct_source [expr {$k13_gt_rate_done_tie_high || $k13_gt_rate_qpll_reset_forward}]
+
+# Diagnostic-only A variant. The generated PHY currently hardwires
+# GT_PCIEUSERRATEDONE low; patch only this dedicated generated source so the
+# default production build remains unchanged. This is not a production
+# workaround until the full START/IDLE/DONE handshake is implemented.
+if {$k13_gt_rate_direct_source} {
+  if {$k13_gt_rate_done_tie_high} {
+  set rate_done_src [file join $phy_ip_root $phy_module source pcie_phy_x1_gen3_core_top.v]
+  if {![file exists $rate_done_src]} {
+    error "GT rate-done diagnostic source not found: $rate_done_src"
+  }
+  set rate_done_f [open $rate_done_src r]
+  set rate_done_text [read $rate_done_f]
+  close $rate_done_f
+  set rate_done_old {.GT_PCIEUSERRATEDONE    ( {PHY_LANE{1'b0}} ),}
+  set rate_done_new {.GT_PCIEUSERRATEDONE    ( {PHY_LANE{1'b1}} ),}
+  if {[string first $rate_done_old $rate_done_text] >= 0} {
+    set rate_done_matches 0
+    set rate_done_offset 0
+    while {[set rate_done_hit [string first $rate_done_old $rate_done_text $rate_done_offset]] >= 0} {
+      incr rate_done_matches
+      set rate_done_offset [expr {$rate_done_hit + [string length $rate_done_old]}]
+    }
+    if {$rate_done_matches != 1} {
+      error "GT rate-done diagnostic expects one hardwired-low connection, found $rate_done_matches"
+    }
+    set rate_done_text [string map [list $rate_done_old $rate_done_new] $rate_done_text]
+  } elseif {[string first $rate_done_new $rate_done_text] < 0} {
+    error "GT rate-done diagnostic source has neither low nor high tie"
+  }
+  set rate_done_f [open $rate_done_src w]
+  puts -nonewline $rate_done_f $rate_done_text
+  close $rate_done_f
+  puts "K13_GT_RATE_DONE_TIE_HIGH_PATCH=$rate_done_src"
+  }
+
+  # Direct-source synthesis otherwise removes the GT boundary nets before the
+  # ILA insertion pass. Preserve the same read-only evidence used by the
+  # normal IP-DCP build, without changing the default production path.
+  set gt_debug_src [file join $phy_ip_root $phy_module source pcie_phy_x1_gen3_gtwizard_top.v]
+  set gt_debug_f [open $gt_debug_src r]
+  set gt_debug_text [read $gt_debug_f]
+  close $gt_debug_f
+  foreach {gt_decl gt_decl_keep} [list \
+    {wire        [(PHY_LANE-1)>>2:0]     qpll1lock_out;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire        [(PHY_LANE-1)>>2:0]     qpll1lock_out;} \
+    {wire [PHY_LANE-1:0]         gtpowergood_out         ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         gtpowergood_out         ;} \
+    {wire [PHY_LANE-1:0]         pciesynctxsyncdone_out  ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pciesynctxsyncdone_out  ;} \
+    {wire [PHY_LANE-1:0]         txresetdone_out         ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         txresetdone_out         ;} \
+    {wire [PHY_LANE-1:0] txelecidle_in          ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0] txelecidle_in          ;} \
+    {wire [PHY_LANE-1:0]         rxelecidle_out          ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         rxelecidle_out          ;} \
+    {wire [PHY_LANE-1:0]         rxresetdone_out         ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         rxresetdone_out         ;} \
+    {wire [(PHY_LANE* 3)-1:0]    rxstatus_out            ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [(PHY_LANE* 3)-1:0]    rxstatus_out            ;} \
+    {wire [PHY_LANE-1:0]         rxvalid_out             ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         rxvalid_out             ;} \
+    {wire [PHY_LANE-1:0] rxcdrhold_in           ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0] rxcdrhold_in           ;} \
+    {wire [(PHY_LANE* 3)-1:0]     rxrate_in;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [(PHY_LANE* 3)-1:0]     rxrate_in;} \
+    {wire [(PHY_LANE* 2)-1:0]rxpd_in            ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [(PHY_LANE* 2)-1:0]rxpd_in            ;} \
+    {wire [PHY_LANE-1:0] rxpolarity_in          ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0] rxpolarity_in          ;} \
+    {wire [PHY_LANE-1:0] rx8b10ben_in;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0] rx8b10ben_in;} \
+    {wire        [PHY_LANE-1:0]          pcierategen3_out;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire        [PHY_LANE-1:0]          pcierategen3_out;} \
+    {wire        [(PHY_LANE*2)-1:0]      pcierateqpllpd_out;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire        [(PHY_LANE*2)-1:0]      pcierateqpllpd_out;} \
+    {wire        [(PHY_LANE*2)-1:0]      pcierateqpllreset_out;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire        [(PHY_LANE*2)-1:0]      pcierateqpllreset_out;} \
+    {wire [PHY_LANE-1:0]         pcierateidle_out        ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pcierateidle_out        ;} \
+    {wire [PHY_LANE-1:0]         pcieusergen3rdy_out     ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pcieusergen3rdy_out     ;} \
+    {wire [PHY_LANE-1:0]         pcieuserratestart_out   ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pcieuserratestart_out   ;}] {
+    if {[string first $gt_decl $gt_debug_text] < 0} {
+      error "GT rate-done diagnostic declaration not found: $gt_decl"
+    }
+    set gt_debug_text [string map [list $gt_decl $gt_decl_keep] $gt_debug_text]
+  }
+  set gt_debug_f [open $gt_debug_src w]
+  puts -nonewline $gt_debug_f $gt_debug_text
+  close $gt_debug_f
+}
 set ip_dcp [file join $phy_ip_root $phy_module ${phy_module}.dcp]
-if {[file exists $ip_dcp]} { file delete -force $ip_dcp }
-synth_ip -force [get_ips $phy_module]
+if {$k13_gt_rate_direct_source} {
+  # The generated PHY source is read directly below for this A build.  This
+  # keeps the diagnostic patch in the top-level synthesis instead of relying
+  # on an OOC checkpoint's IP metadata.
+  puts "K13_GT_RATE_DONE_TIE_HIGH_READ_GENERATED_SOURCE=1"
+} else {
+  if {[file exists $ip_dcp]} { file delete -force $ip_dcp }
+  synth_ip -force [get_ips $phy_module]
+}
+
+if {$k13_gt_rate_direct_source} {
+  set generated_phy_sources [concat \
+    [lsort [glob -nocomplain [file join $phy_ip_root $phy_module source *.v]]] \
+    [list [file join $phy_ip_root $phy_module synth ${phy_module}.v]] \
+    [lsort [glob -nocomplain [file join $phy_ip_root $phy_module ip_0 synth *.v]]]]
+  if {[llength $generated_phy_sources] == 0} {
+    error "GT rate-done diagnostic generated PHY source list为空"
+  }
+  foreach generated_phy_source $generated_phy_sources {
+    read_verilog $generated_phy_source
+  }
+  puts "K13_GT_RATE_DONE_TIE_HIGH_SOURCE_COUNT=[llength $generated_phy_sources]"
+}
 
 read_verilog $afifo_path
 set sv_files [list \
@@ -150,10 +331,12 @@ if {$ila_debug} {
       -generic K11B2_ILA_DEBUG=1 \
       -generic G9_WAIT_REMOTE_DETECT=1 \
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
-      -generic K13_ENABLE=$k13_enable
+      -generic K13_ENABLE=$k13_enable \
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
   } else {
     synth_design -top $top_name -part $part_name \
-      -generic K11B2_ILA_DEBUG=1 -generic K13_ENABLE=$k13_enable
+      -generic K11B2_ILA_DEBUG=1 -generic K13_ENABLE=$k13_enable \
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
   }
   write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
 } else {
@@ -162,9 +345,12 @@ if {$ila_debug} {
     synth_design -top $top_name -part $part_name \
       -generic G9_WAIT_REMOTE_DETECT=1 \
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
-      -generic K13_ENABLE=$k13_enable
+      -generic K13_ENABLE=$k13_enable \
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
   } else {
-    synth_design -top $top_name -part $part_name -generic K13_ENABLE=$k13_enable
+    synth_design -top $top_name -part $part_name \
+      -generic K13_ENABLE=$k13_enable \
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
   }
 }
 }
@@ -230,7 +416,17 @@ if {$ila_debug} {
   create_debug_core u_ila_pipe ila
   # 1024 TS1 = 8192个125 MHz PIPE周期；这里保留更长的GT RX复位/CDR
   # 取证窗口，确认RXRESETDONE不是仅仅晚于上一版131 us采集窗口。
-  set ila_pipe_depth [expr {$g11_rx_parser || $g12_ordered_set ? 4096 : ($g10_cfg_complete ? 8192 : 32768)}]
+  # K13 的 478-bit PIPE ILA 在 KU040 上不能使用 32768 深度，否则调试
+  # 核自身会耗尽 BRAM。允许构建调用方显式覆盖，默认给 K13 采用 4096。
+  set ila_pipe_depth [expr {$g11_rx_parser || $g12_ordered_set ? 4096 : ($g10_cfg_complete ? 8192 : ($k13_enable ? 4096 : 32768))}]
+  if {[info exists ::env(K11B2_ILA_PIPE_DEPTH)]} {
+    set ila_pipe_depth $::env(K11B2_ILA_PIPE_DEPTH)
+  }
+  if {![string is integer -strict $ila_pipe_depth] ||
+      $ila_pipe_depth < 1024 ||
+      ($ila_pipe_depth & ($ila_pipe_depth - 1)) != 0} {
+    error "K11B2_ILA_PIPE_DEPTH必须是不小于1024的2次幂"
+  }
   set_property C_DATA_DEPTH $ila_pipe_depth [get_debug_cores u_ila_pipe]
   set_property C_TRIGIN_EN false [get_debug_cores u_ila_pipe]
   set_property C_TRIGOUT_EN false [get_debug_cores u_ila_pipe]
@@ -252,7 +448,11 @@ if {$ila_debug} {
   # probe6 位序（由低到高对应列表顺序）：
   # 同步后的PERST#、PERST#上升沿脉冲、PIPE_RST_N、PHY TX_VALID、PHY TX_ELECIDLE、
   # GT TXRESETDONE、GT POWERGOOD、QPLL1LOCK、PCIe TX sync done、
-  # GT 侧 TXELECIDLE 输入、PHY状态复位撤销事件。
+  # GT 侧 TXELECIDLE 输入、PHY状态复位撤销事件，以及 GT Gen3 rate-change
+  # 控制面的 RATEGEN3、QPLL reset/PD、RATEIDLE、USERGEN3RDY、
+  # USERRATESTART 和 RXRATE。后几项用于区分“QPLL 被 rate-change
+  # 逻辑主动复位但未恢复”与“仅仅是 RX CDR 未锁定”，并还原完整
+  # PCIEUSERRATE handshake。
   set phy_probe_nets [list \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_n_pipe] \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_rise_pipe] \
@@ -268,6 +468,12 @@ if {$ila_debug} {
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/qpll1lock_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pciesynctxsyncdone_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/txelecidle_in\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierategen3_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateqpllreset_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateqpllpd_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateidle_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieusergen3rdy_out\[0\]$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieuserratestart_out\[0\]$}] \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_phystatus_rst_fall_pipe]]
   add_ila_probe u_ila_pipe 6 $phy_probe_nets
 
@@ -290,14 +496,21 @@ if {$ila_debug} {
   # GTRXRESET/RXUSERRDY来自100 MHz复位域，直接接入250 MHz ILA会形成CDC-1；
   # RXRESETDONE已足够确认其最终复位/ready结果，因此不跨域采集这两位。
   # 这些信号用于验证静态GT属性相同后，接收电源/CDR控制时序是否仍有差异。
-  set g4_rx_control_nets [list \
-    [phy_boundary_net [format {%srxcdrhold_in\[0\]$} $g3_gt_prefix]]]
-  set g4_rx_control_nets [concat $g4_rx_control_nets \
-    [phy_boundary_bus [format {%srxrate_in\[[0-1]\]$} $g3_gt_prefix] 2] \
-    [phy_boundary_bus [format {%srxpd_in\[[0-1]\]$} $g3_gt_prefix] 2] \
-    [list \
-      [phy_boundary_net [format {%srxpolarity_in\[0\]$} $g3_gt_prefix]] \
-      [phy_boundary_net [format {%srx8b10ben_in\[0\]$} $g3_gt_prefix]]]]
+  if {$k13_gt_rate_direct_source} {
+    # Direct-source A synthesis does not retain these internal control nets;
+    # keep probe width/index stable with a diagnostic slice of dbg_k13_top.
+    set g4_rx_control_nets [lrange \
+      [debug_bus_nets {.*dbg_k13_top.*\[[0-9]+\]$} 64] 0 7]
+  } else {
+    set g4_rx_control_nets [list \
+      [phy_boundary_net [format {%srxcdrhold_in\[0\]$} $g3_gt_prefix]]]
+    set g4_rx_control_nets [concat $g4_rx_control_nets \
+      [phy_boundary_bus [format {%srxrate_in\[[0-1]\]$} $g3_gt_prefix] 2] \
+      [phy_boundary_bus [format {%srxpd_in\[[0-1]\]$} $g3_gt_prefix] 2] \
+      [list \
+        [phy_boundary_net [format {%srxpolarity_in\[0\]$} $g3_gt_prefix]] \
+        [phy_boundary_net [format {%srx8b10ben_in\[0\]$} $g3_gt_prefix]]]]
+  }
   add_ila_probe u_ila_pipe 8 $g4_rx_control_nets
   # probe9：Polling.Active中已经完成发送的TS1数量（每个TS1=8个125 MHz pclk）。
   add_ila_probe u_ila_pipe 9 \
@@ -323,6 +536,10 @@ if {$ila_debug} {
     [debug_bus_nets {.*dbg_g11_rx.*\[[0-9]+\]$} 128]
   add_ila_probe u_ila_pipe 18 \
     [debug_bus_nets {.*dbg_g12_tx.*\[[0-9]+\]$} 32]
+  # K13 probe19: Recovery.Speed, RXEQ done/adapt_done, TXELECIDLE and
+  # TX/RX first-block boundary evidence. The packed field order is in RTL.
+  add_ila_probe u_ila_pipe 19 \
+    [debug_bus_nets {.*dbg_k13_top.*\[[0-9]+\]$} 64]
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
@@ -341,7 +558,7 @@ if {$ila_debug} {
       [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
   }
 
-  puts "K11G4_ILA_INSERT_PASS pipe_width=475 core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=$ila_pipe_depth"
+  puts "K11G4_ILA_INSERT_PASS pipe_width=478 core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=$ila_pipe_depth"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]
@@ -364,6 +581,8 @@ write_checkpoint -force [file join $build_dir k11b2_routed.dcp]
 report_utilization -file [file join $build_dir utilization_routed.rpt]
 report_timing_summary -delay_type min_max -report_unconstrained \
   -check_timing_verbose -file [file join $build_dir timing_summary.rpt]
+report_timing -delay_type max -max_paths 50 -sort_by group \
+  -file [file join $build_dir timing_paths_50.rpt]
 check_timing -verbose -file [file join $build_dir check_timing.rpt]
 report_cdc -details -file [file join $build_dir cdc_routed.rpt]
 report_drc -file [file join $build_dir drc.rpt]
@@ -470,6 +689,9 @@ puts $summary_file "ILA_DEBUG=$ila_debug"
 puts $summary_file "ILA_PIPE_ONLY=$ila_pipe_only"
 puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
 puts $summary_file "K13_ENABLE=$k13_enable"
+puts $summary_file "K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap"
+puts $summary_file "K13_GT_RATE_DONE_TIE_HIGH=$k13_gt_rate_done_tie_high"
+puts $summary_file "K13_GT_RATE_QPLL_RESET_FORWARD=$k13_gt_rate_qpll_reset_forward"
 puts $summary_file "G7_RX_P0_QUIET=$g7_rx_p0_quiet"
 puts $summary_file "G8_FAST_DETECT=$g8_fast_detect"
 puts $summary_file "PHY_MODULE=$phy_module"

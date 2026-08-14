@@ -10,7 +10,8 @@ module kcu105_pcie_ep_gen1_board_top #(
     parameter integer DETECT_QUIET_CYCLES = 1_500_000,
     parameter integer K13_ENABLE = 0,
     parameter integer K13_SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer K13_EQ_TIMEOUT_CYCLES = 1_000_000
+    parameter integer K13_EQ_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer K13_RXEQ_BOOTSTRAP = 1
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -41,7 +42,8 @@ module kcu105_pcie_ep_gen1_board_top #(
         .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES),
         .K13_ENABLE(K13_ENABLE),
         .K13_SPEED_TIMEOUT_CYCLES(K13_SPEED_TIMEOUT_CYCLES),
-        .K13_EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES)
+        .K13_EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES),
+        .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),
         .pcie_refclk_n(pcie_refclk_n),

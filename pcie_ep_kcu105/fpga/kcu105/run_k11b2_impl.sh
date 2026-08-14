@@ -5,6 +5,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
 ila_debug="${K11B2_ILA_DEBUG:-0}"
 k13_enable="${K13_ENABLE:-0}"
+k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
+k13_gt_rate_done_tie_high="${K13_GT_RATE_DONE_TIE_HIGH:-0}"
+k13_gt_rate_qpll_reset_forward="${K13_GT_RATE_QPLL_RESET_FORWARD:-0}"
+k13_gt_rate_direct_source="0"
+if [[ "${k13_gt_rate_done_tie_high}" == "1" ||
+      "${k13_gt_rate_qpll_reset_forward}" == "1" ]]; then
+  k13_gt_rate_direct_source="1"
+fi
 build_variant="build_k11b2"
 if [[ "${ila_debug}" == "1" ]]; then
   build_variant="build_k11b2_ila"
@@ -44,6 +52,15 @@ if [[ "${k13_enable}" == "1" ]]; then
   else
     build_variant="build_k13_gen3"
   fi
+  if [[ "${k13_rxeq_bootstrap}" == "0" ]]; then
+    build_variant+="_rxeq_off"
+  fi
+  if [[ "${k13_gt_rate_done_tie_high}" == "1" ]]; then
+    build_variant+="_gt_rate_done1"
+  fi
+  if [[ "${k13_gt_rate_qpll_reset_forward}" == "1" ]]; then
+    build_variant+="_gt_qpllreset"
+  fi
 fi
 build_dir="${script_dir}/${build_variant}/impl"
 vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
@@ -63,8 +80,13 @@ if grep -q '^ERROR:' "${build_dir}/vivado.log"; then
   exit 1
 fi
 if grep -q '^CRITICAL WARNING:' "${build_dir}/vivado.log"; then
-  echo "错误：K11-B2 Vivado日志存在Critical Warning" >&2
-  exit 1
+  if [[ "${k13_gt_rate_direct_source}" != "1" ]] || \
+     grep '^CRITICAL WARNING:' "${build_dir}/vivado.log" \
+       | grep -Ev '\[(Common 17-741|filemgmt 20-1440)\]' \
+       | grep -q .; then
+    echo "错误：K11-B2 Vivado日志存在未允许的Critical Warning" >&2
+    exit 1
+  fi
 fi
 
 warning_ids="$(grep '^WARNING: \[' "${build_dir}/vivado.log" \
@@ -73,20 +95,25 @@ expected_warning_ids="$(cat <<EOF
 $(if [[ "${ila_debug}" == "1" ]]; then
   printf '%s\n' 'DRC PDCN-1569' 'DRC RTSTAT-10' 'Route 35-328'
 fi)
-Synth 8-3848
-Synth 8-3917
-Synth 8-6014
-Synth 8-6779
-Synth 8-7023
-Synth 8-7071
-Synth 8-7080
-Synth 8-7129
+$(if [[ "${K11B2_ILA_RESUME:-0}" != "1" ]]; then
+  printf '%s\n' \
+    'Synth 8-3848' 'Synth 8-3917' 'Synth 8-6014' 'Synth 8-6779' \
+    'Synth 8-7023' 'Synth 8-7071' 'Synth 8-7129'
+  if [[ "${k13_gt_rate_direct_source}" != "1" ]]; then
+    printf '%s\n' 'Synth 8-7080'
+  fi
+fi)
 $(if [[ "${ila_debug}" == "1" ]]; then
-  printf '%s\n' 'Timing 38-164' 'Timing 38-436'
+  printf '%s\n' 'Timing 38-164'
+  if [[ "${k13_gt_rate_direct_source}" == "1" ]]; then
+    printf '%s\n' 'Timing 38-252' 'Timing 38-277'
+  fi
+  printf '%s\n' 'Timing 38-436'
 fi)
 Vivado 12-975
 EOF
 )"
+expected_warning_ids="$(printf '%s\n' "${expected_warning_ids}" | sed '/^$/d')"
 if [[ "${warning_ids}" != "${expected_warning_ids}" ]]; then
   echo "错误：K11-B2 Warning ID集合与固定allowlist不一致" >&2
   printf '实际：\n%s\n期望：\n%s\n' "${warning_ids}" "${expected_warning_ids}" >&2

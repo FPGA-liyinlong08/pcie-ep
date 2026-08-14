@@ -55,6 +55,13 @@ def decode_pipe(path):
     gt_rxuserrdy_col = find_optional_column(columns, "rxuserrdy_in[")
     gt_rxcdrhold_col = find_optional_column(columns, "rxcdrhold_in[")
     gt_rxrate_col = find_optional_column(columns, "rxrate_in[")
+    gt_rategen3_col = find_optional_column(columns, "pcierategen3_out[")
+    gt_rateqpllreset_col = find_optional_column(columns, "pcierateqpllreset_out[")
+    gt_rateqpllpd_col = find_optional_column(columns, "pcierateqpllpd_out[")
+    gt_rateidle_col = find_optional_column(columns, "pcierateidle_out[")
+    gt_usergen3rdy_col = find_optional_column(columns, "pcieusergen3rdy_out[")
+    gt_userratestart_col = find_optional_column(columns, "pcieuserratestart_out[")
+    gt_qpll1lock_col = find_optional_column(columns, "qpll1lock_out[")
     gt_rxpd_col = find_optional_column(columns, "rxpd_in[")
     gt_rxpolarity_col = find_optional_column(columns, "rxpolarity_in[")
     gt_rx8b10ben_col = find_optional_column(columns, "rx8b10ben_in[")
@@ -141,6 +148,13 @@ def decode_pipe(path):
             "gt_rxuserrdy": int(row[gt_rxuserrdy_col], 16) if gt_rxuserrdy_col is not None else None,
             "gt_rxcdrhold": int(row[gt_rxcdrhold_col], 16) if gt_rxcdrhold_col is not None else None,
             "gt_rxrate": int(row[gt_rxrate_col], 16) if gt_rxrate_col is not None else None,
+            "gt_rategen3": int(row[gt_rategen3_col], 16) if gt_rategen3_col is not None else None,
+            "gt_rateqpllreset": int(row[gt_rateqpllreset_col], 16) if gt_rateqpllreset_col is not None else None,
+            "gt_rateqpllpd": int(row[gt_rateqpllpd_col], 16) if gt_rateqpllpd_col is not None else None,
+            "gt_rateidle": int(row[gt_rateidle_col], 16) if gt_rateidle_col is not None else None,
+            "gt_usergen3rdy": int(row[gt_usergen3rdy_col], 16) if gt_usergen3rdy_col is not None else None,
+            "gt_userratestart": int(row[gt_userratestart_col], 16) if gt_userratestart_col is not None else None,
+            "gt_qpll1lock": int(row[gt_qpll1lock_col], 16) if gt_qpll1lock_col is not None else None,
             "gt_rxpd": int(row[gt_rxpd_col], 16) if gt_rxpd_col is not None else None,
             "gt_rxpolarity": int(row[gt_rxpolarity_col], 16) if gt_rxpolarity_col is not None else None,
             "gt_rx8b10ben": int(row[gt_rx8b10ben_col], 16) if gt_rx8b10ben_col is not None else None,
@@ -264,6 +278,23 @@ def main():
         f"phystatus={transition_points(pipe, 'phy_phystatus')} "
         f"gt_rxrate={transition_points(pipe, 'gt_rxrate')}"
     )
+    if pipe[0]["gt_rategen3"] is not None:
+        print(
+            "PIPE GT rate control "
+            f"rategen3_values={sorted(set(r['gt_rategen3'] for r in pipe))} "
+            f"rategen3={transition_points(pipe, 'gt_rategen3')} "
+            f"qpllreset_values={sorted(set(r['gt_rateqpllreset'] for r in pipe))} "
+            f"qpllreset={transition_points(pipe, 'gt_rateqpllreset')} "
+            f"qpllpd_values={sorted(set(r['gt_rateqpllpd'] for r in pipe))} "
+            f"rateidle_values={sorted(set(r['gt_rateidle'] for r in pipe))} "
+            f"rateidle={transition_points(pipe, 'gt_rateidle')} "
+            f"usergen3rdy_values={sorted(set(r['gt_usergen3rdy'] for r in pipe))} "
+            f"usergen3rdy={transition_points(pipe, 'gt_usergen3rdy')} "
+            f"userratestart_values={sorted(set(r['gt_userratestart'] for r in pipe))} "
+            f"userratestart={transition_points(pipe, 'gt_userratestart')} "
+            f"qpll1lock_values={sorted(set(r['gt_qpll1lock'] for r in pipe))} "
+            f"qpll1lock={transition_points(pipe, 'gt_qpll1lock')}"
+        )
     # dbg_g12_tx只在Gen3速率下复用为K13 EQ字段；Gen1/Gen2时仍承载旧G12诊断位。
     # 只解码RXRATE=Gen3的样本，避免把旧诊断总线误报为动态EQ字段。
     gen3_pipe = [row for row in pipe if row["gt_rxrate"] == 2]

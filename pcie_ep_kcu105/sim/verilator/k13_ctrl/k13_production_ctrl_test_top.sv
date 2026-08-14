@@ -1,13 +1,18 @@
-module k13_production_ctrl_test_top (
+module k13_production_ctrl_test_top #(
+    parameter integer K13_RXEQ_BOOTSTRAP = 1
+) (
     input wire core_clk, input wire phy_clk,
     input wire core_rst_n, input wire phy_rst_n,
     input wire retrain_pulse, input wire [1:0] target_speed,
     input wire force_cdr_lost, input wire force_ts_bad,
+    input wire force_rx_done_without_adapt,
     output wire [1:0] phy_rate, output wire [1:0] negotiated_speed,
+    output wire phy_txelecidle,
     output wire [2:0] speed_state, output wire eq_active, output wire eq_done,
     output wire eq_failed, output wire [2:0] eq_phase,
     output wire traffic_quiesce, output wire [1:0] txeq_ctrl,
     output wire [1:0] rxeq_ctrl, output wire ts_reject,
+    output wire rxeq_bootstrap_enabled,
     output wire cdr_loss_sticky, output wire fallback_sticky
 );
     reg link_up;
@@ -15,7 +20,7 @@ module k13_production_ctrl_test_top (
     reg [1:0] os_count;
     reg phystatus_r, ts_valid_r, ts_complete_r, ts_is_ts1_r, ts_is_ts2_r;
     reg [1:0] ts_rate_r;
-    reg tx_done_r, rx_done_r;
+    reg tx_done_r, rx_done_r, rx_adapt_done_r;
 
     wire [1:0] ctrl_rate;
     wire ctrl_txelecidle;
@@ -28,7 +33,9 @@ module k13_production_ctrl_test_top (
     wire ltssm_speed_ready = ctrl_recovery_active &&
                              (speed_state == 3'd1) && (os_count == 2'd3);
 
-    pcie_k13_production_ctrl #(.K13_ENABLE(1), .SPEED_TIMEOUT_CYCLES(32),
+    pcie_k13_production_ctrl #(.K13_ENABLE(1),
+                               .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
+                               .SPEED_TIMEOUT_CYCLES(32),
                                .EQ_TIMEOUT_CYCLES(8)) dut (
         .core_clk(core_clk), .core_rst_n(core_rst_n),
         .phy_clk(phy_clk), .phy_rst_n(phy_rst_n), .link_up(link_up),
@@ -36,7 +43,8 @@ module k13_production_ctrl_test_top (
         .retrain_pulse(retrain_pulse), .target_speed(target_speed),
         .partner_retrain_valid(1'b0), .partner_target_speed(2'b00),
         .phy_phystatus(phystatus_r), .phy_cdr_lost(force_cdr_lost),
-        .phy_txeq_done(tx_done_r), .phy_rxeq_done(rx_done_r),
+        .phy_txeq_done(tx_done_r),
+        .phy_rxeq_adapt_done(rx_adapt_done_r), .phy_rxeq_done(rx_done_r),
         .ts_valid(ts_valid_r), .ts_complete(ts_complete_r),
         .ts_is_ts1(ts_is_ts1_r), .ts_is_ts2(ts_is_ts2_r),
         .ts_lane(3'd0), .ts_link(8'd0), .ts_rate(ts_rate_r),
@@ -67,6 +75,7 @@ module k13_production_ctrl_test_top (
             ts_rate_r <= 2'b00;
             tx_done_r <= 1'b0;
             rx_done_r <= 1'b0;
+            rx_adapt_done_r <= 1'b0;
         end else begin
             link_up <= 1'b1;
             os_count <= os_count + 1'b1;
@@ -90,14 +99,21 @@ module k13_production_ctrl_test_top (
             end
             if (ctrl_txeq_ctrl != 2'b00 && os_count == 2'd3)
                 tx_done_r <= 1'b1;
-            if (ctrl_rxeq_ctrl != 2'b00 && os_count == 2'd3)
+            // PG239 RXEQ=10 requires both indications.  This responder
+            // intentionally models them independently so a done-only pulse
+            // cannot create a false EQ pass.
+            if (ctrl_rxeq_ctrl == 2'b10 && os_count == 2'd3) begin
                 rx_done_r <= 1'b1;
+                rx_adapt_done_r <= !force_rx_done_without_adapt;
+            end
         end
     end
 
     assign phy_rate = ctrl_rate;
+    assign phy_txelecidle = ctrl_txelecidle;
     assign txeq_ctrl = ctrl_txeq_ctrl;
     assign rxeq_ctrl = ctrl_rxeq_ctrl;
+    assign rxeq_bootstrap_enabled = (K13_RXEQ_BOOTSTRAP != 0);
     assign eq_done = ctrl_eq_done;
     assign eq_failed = ctrl_eq_failed;
 endmodule

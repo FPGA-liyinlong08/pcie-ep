@@ -5,6 +5,7 @@
 // K13_ENABLE=0时，所有控制输出保持K11 Gen1安全值；启用后才接受Retrain。
 module pcie_k13_production_ctrl #(
     parameter integer K13_ENABLE = 0,
+    parameter integer K13_RXEQ_BOOTSTRAP = 1,
     // 250 MHz PIPE下分别为4 ms；行为仿真继续通过参数覆盖缩短。
     parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer EQ_TIMEOUT_CYCLES = 1_000_000
@@ -24,6 +25,7 @@ module pcie_k13_production_ctrl #(
     input wire       phy_phystatus,
     input wire       phy_cdr_lost,
     input wire       phy_txeq_done,
+    input wire       phy_rxeq_adapt_done,
     input wire       phy_rxeq_done,
     input wire       ts_valid,
     input wire       ts_complete,
@@ -77,15 +79,24 @@ module pcie_k13_production_ctrl #(
     wire [5:0] eq_phy_txeq_coeff;
     wire [1:0] eq_phy_rxeq_ctrl;
     wire [3:0] eq_phy_rxeq_txpreset;
+    wire eq_done_w, eq_failed_w;
     reg eq_start_q;
     reg pre_rate_txeq_active;
     reg pre_rate_txeq_ready;
     reg post_rate_rxeq_active;
     reg post_rate_rxeq_ready;
+    reg post_rate_rxeq_failed;
+    reg [31:0] post_rate_rxeq_timeout_count;
     reg [1:0] active_target;
     wire speed_boundary_ready = ltssm_speed_ready &&
                                 ((active_target != 2'b10) ||
                                  pre_rate_txeq_ready);
+    wire rxeq_bootstrap_ready = (K13_RXEQ_BOOTSTRAP == 0) ? 1'b1 :
+                                 post_rate_rxeq_ready;
+    localparam integer RXEQ_BOOTSTRAP_TIMEOUT =
+        (EQ_TIMEOUT_CYCLES < 1) ? 1 : EQ_TIMEOUT_CYCLES;
+    wire rxeq_bootstrap_timeout_expired =
+        post_rate_rxeq_timeout_count >= (RXEQ_BOOTSTRAP_TIMEOUT - 1);
 
     generate if (K13_ENABLE != 0) begin : g_k13_enabled
         pcie_retrain_cdc_mailbox u_mailbox (
@@ -178,18 +189,46 @@ module pcie_k13_production_ctrl #(
             if (!phy_rst_n) begin
                 post_rate_rxeq_active <= 1'b0;
                 post_rate_rxeq_ready <= 1'b0;
+                post_rate_rxeq_failed <= 1'b0;
+                post_rate_rxeq_timeout_count <= 32'd0;
             end else begin
                 if ((speed_state_w == 3'd0) ||
                     (active_target != 2'b10)) begin
                     post_rate_rxeq_active <= 1'b0;
                     post_rate_rxeq_ready <= 1'b0;
-                end else if ((speed_state_w == 3'd3) &&
+                    post_rate_rxeq_failed <= 1'b0;
+                    post_rate_rxeq_timeout_count <= 32'd0;
+                end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
+                             (speed_state_w == 3'd3) &&
                              !post_rate_rxeq_ready &&
                              !post_rate_rxeq_active) begin
                     post_rate_rxeq_active <= 1'b1;
-                end else if (post_rate_rxeq_active && phy_rxeq_done) begin
+                    post_rate_rxeq_timeout_count <= 32'd0;
+                end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
+                             post_rate_rxeq_active && phy_rxeq_done &&
+                             phy_rxeq_adapt_done) begin
                     post_rate_rxeq_active <= 1'b0;
                     post_rate_rxeq_ready <= 1'b1;
+                    post_rate_rxeq_timeout_count <= 32'd0;
+                end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
+                             post_rate_rxeq_active && phy_rxeq_done) begin
+                    // PG239's done indication without adaptation is a
+                    // failed bootstrap, not a successful RXEQ phase.  Stop
+                    // driving the command and let the speed controller take
+                    // its normal CDR-loss/fallback path.
+                    post_rate_rxeq_active <= 1'b0;
+                    post_rate_rxeq_failed <= 1'b1;
+                    post_rate_rxeq_timeout_count <= 32'd0;
+                end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
+                             post_rate_rxeq_active &&
+                             rxeq_bootstrap_timeout_expired) begin
+                    post_rate_rxeq_active <= 1'b0;
+                    post_rate_rxeq_failed <= 1'b1;
+                    post_rate_rxeq_timeout_count <= 32'd0;
+                end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
+                             post_rate_rxeq_active) begin
+                    post_rate_rxeq_timeout_count <=
+                        post_rate_rxeq_timeout_count + 1'b1;
                 end
             end
         end
@@ -200,7 +239,7 @@ module pcie_k13_production_ctrl #(
             else begin
                 eq_start_q <= 1'b0;
                 if ((speed_state_w == 3'd3) && (active_target == 2'b10) &&
-                    post_rate_rxeq_ready && ts_accept_w &&
+                    rxeq_bootstrap_ready && ts_accept_w &&
                     !eq_active && !eq_done && !eq_failed)
                     eq_start_q <= 1'b1;
             end
@@ -213,9 +252,11 @@ module pcie_k13_production_ctrl #(
             .eq_start(eq_start_q), .target_speed(active_target),
             .tx_preset(4'd4), .tx_coeff(6'd12), .tx_coeff_valid(1'b1),
             .rx_txpreset(4'd5), .rx_preset_valid(1'b1),
-            .phy_txeq_done(phy_txeq_done), .phy_rxeq_done(phy_rxeq_done),
+            .phy_txeq_done(phy_txeq_done),
+            .phy_rxeq_adapt_done(phy_rxeq_adapt_done),
+            .phy_rxeq_done(phy_rxeq_done),
             .eq_start_accept(eq_start_accept), .eq_active(eq_active),
-            .eq_done(eq_done), .eq_failed(eq_failed), .phase(eq_phase),
+            .eq_done(eq_done_w), .eq_failed(eq_failed_w), .phase(eq_phase),
             .phy_txeq_ctrl(eq_phy_txeq_ctrl),
             .phy_txeq_preset(eq_phy_txeq_preset),
             .phy_txeq_coeff(eq_phy_txeq_coeff),
@@ -251,11 +292,13 @@ module pcie_k13_production_ctrl #(
         assign pre_rate_txeq_ready = 1'b0;
         assign post_rate_rxeq_active = 1'b0;
         assign post_rate_rxeq_ready = 1'b0;
+        assign post_rate_rxeq_failed = 1'b0;
+        assign post_rate_rxeq_timeout_count = 32'd0;
         assign eq_start_q = 1'b0;
         assign eq_start_accept = 1'b0;
         assign eq_active = 1'b0;
-        assign eq_done = 1'b0;
-        assign eq_failed = 1'b0;
+        assign eq_done_w = 1'b0;
+        assign eq_failed_w = 1'b0;
         assign eq_phase = 3'd7;
         assign eq_phy_txeq_ctrl = 2'b00;
         assign eq_phy_txeq_preset = 4'd0;
@@ -266,8 +309,18 @@ module pcie_k13_production_ctrl #(
         assign eq_phase_timeout = 1'b0;
     end endgenerate
 
-    assign phy_rate = speed_phy_rate;
-    assign phy_txelecidle = speed_txelecidle || pre_rate_txeq_active;
+    // A done-only RXEQ bootstrap failure must expose the safe Gen1 rate even
+    // if the speed sub-controller has not yet consumed the sticky fault.
+    assign phy_rate = post_rate_rxeq_failed ? 2'b00 : speed_phy_rate;
+    assign eq_done = eq_done_w;
+    assign eq_failed = eq_failed_w || post_rate_rxeq_failed;
+    // pre_rate_txeq_ready is asserted one clock before u_speed can observe
+    // speed_boundary_ready.  Keep the electrical-idle window closed during
+    // that NBA hand-off; otherwise ST_QUIESCE creates a one-PCLK hole.
+    assign phy_txelecidle = speed_txelecidle || pre_rate_txeq_active ||
+                            ((active_target == 2'b10) &&
+                             (speed_state_w == 3'd1) &&
+                             pre_rate_txeq_ready);
     assign phy_txeq_ctrl = pre_rate_txeq_active ? 2'b01 :
                                                     eq_phy_txeq_ctrl;
     assign phy_txeq_preset = pre_rate_txeq_active ? 4'd4 :
@@ -282,15 +335,37 @@ module pcie_k13_production_ctrl #(
                              pre_rate_txeq_active || post_rate_rxeq_active;
     assign recovery_active = speed_recovery_active || eq_active ||
                              pre_rate_txeq_active || post_rate_rxeq_active;
-    assign negotiated_speed = speed_negotiated;
+    assign negotiated_speed = post_rate_rxeq_failed ? 2'b00 : speed_negotiated;
     assign speed_state = speed_state_w;
     assign ts_accept = ts_accept_w;
     assign ts_reject = ts_reject_w;
     assign cdr_loss_sticky = speed_cdr_loss;
     assign speed_timeout_sticky = speed_timeout;
-    assign fallback_sticky = speed_fallback;
+    assign fallback_sticky = speed_fallback || post_rate_rxeq_failed;
     assign illegal_ts_sticky = ts_malformed || ts_illegal_rate ||
                                 ts_lane_link_mismatch;
+
+`ifndef SYNTHESIS
+    // Lightweight simulation assertion for the Recovery.Speed boundary.  The
+    // Python directed test also checks this externally, but keeping the
+    // invariant beside the mux catches regressions in any simulator or top.
+    reg txelecidle_window_q;
+    always @(posedge phy_clk or negedge phy_rst_n) begin
+        if (!phy_rst_n) begin
+            txelecidle_window_q <= 1'b0;
+        end else begin
+            if (txelecidle_window_q && !phy_txelecidle && !phy_phystatus)
+                $error("K13 Recovery.Speed TXELECIDLE gap before PhyStatus");
+            if (phy_phystatus)
+                txelecidle_window_q <= 1'b0;
+            else if ((active_target == 2'b10) &&
+                     (pre_rate_txeq_active || (speed_state_w == 3'd2)))
+                txelecidle_window_q <= 1'b1;
+            else if ((active_target != 2'b10) || (speed_state_w == 3'd0))
+                txelecidle_window_q <= 1'b0;
+        end
+    end
+`endif
 endmodule
 
 `default_nettype wire
