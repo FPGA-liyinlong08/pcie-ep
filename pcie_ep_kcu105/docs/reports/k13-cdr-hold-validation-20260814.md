@@ -32,34 +32,54 @@ assign as_cdr_hold_req = (ltssm_state == RECOVERY_SPEED);
 - Vivado 诊断实现：`K13_ILA_IMPL_PASS`。
 - 器件：`xcku040-ffva1156-2-e`。
 - GT：`GTHE3_CHANNEL_X0Y7` / `GTHE3_COMMON_X0Y1`。
-- 诊断 WNS：`-0.053 ns`。
+- 诊断 WNS：`-0.069 ns`。
 
 该 bit/LTX 仅用于诊断，不能作为正式实现版本。
 
 诊断 bit/LTX SHA256：
 
 ```text
-bit  e31eccff25b8c5a4366841273d25dbacec33978c18cf8983d91d532690b96b0e
-ltx  cdb4eee983c5854a8cf5fd27dcdc2aa5d9212cba195bceaf3fac0c7cdf2b60d4
+bit  7d5c8f2285c4b5fef32ac0d3bb56563a3e444dd02aec9912c34f459d4c13a81f
+ltx  87dbd596b43ebe21d59aaff932e8e84ebcbaa17bc37e1d3239ca2e4631aaea43
 ```
 
 实板采样文件：
 
-`fpga/kcu105/build_k13_gen3_ila_cdr_hold_gt_primitive/capture/20260814_114555_u_ila_pipe.csv`
+`fpga/kcu105/build_k13_gen3_ila_cdr_hold_gt_primitive/capture/20260814_162038_u_ila_pipe.csv`
 
 关键采样点：
 
 | Sample | 事件 |
 |---:|---|
-| 680 | `as_cdr_hold_req: 0 -> 1`，LTSSM 进入 `Recovery.Speed` |
-| 692 | `phy_rate: 0 -> 2`，`rxrate: 0 -> 2` |
-| 702 | `QPLL1LOCK: 1 -> 0`，实际 `QPLL1RESET: 0 -> 1` |
-| 707 | 实际 `QPLL1RESET: 1 -> 0` |
+| 704 | `phy_rate/rxrate` 即将切换，`as_cdr_hold_req=1` |
+| 716 | `phy_rate: 0 -> 2`，`rxrate: 0 -> 2` |
+| 726 | 实际 `QPLL1RESET: 0 -> 1`，`QPLL1LOCK: 1 -> 0` |
+| 731 | 实际 `QPLL1RESET: 1 -> 0`，`QPLL1LOCK` 未恢复 |
 | 4095 | `QPLL1LOCK` 仍为 0，`as_cdr_hold_req` 仍为 1 |
 
 `QPLL1PD` 全程为 0，`PCIERATEQPLLRESET` 按预期产生脉冲；但 QPLL1LOCK 没有在
 采样窗口内恢复。因此 CDR hold 已正确接入并生效，但没有阻止 QPLL1 在 Gen3
 rate change 时失锁。
+
+### 2.1 QPLL1 前置条件探针（本轮新增）
+
+本轮 ILA probe20 直接绑定综合网表中的 `GTHE3_COMMON` 和
+`GTHE3_CHANNEL` primitive pin，新增并验证了：
+
+- `QPLL1REFCLKSEL=3'b001`；这是单一 `GTREFCLK0` 输入时的合法选择；
+- `QPLL1PD=0`、`QPLL1LOCKEN=1`；
+- `TXPLLCLKSEL=2'b10`、`RXPLLCLKSEL=2'b10`；两者均选择 QPLL1；
+- `QPLL1REFCLKLOST=1`、`QPLL1FBCLKLOST=1` 在整个采样窗口保持为 1，且没有
+  在 `QPLL1RESET` 释放后清零。
+
+因此当前证据已从“helper FSM 输出了什么”推进到“实际 GT primitive 收到了什么”
+以及“QPLL1 lock detector 报告了什么”。UG576 定义两个 `*CLKLOST` 为高有效的
+参考/反馈时钟丢失指示，且定义 `QPLL1REFCLKSEL=001` 为 `GTREFCLK0`；本次硬件
+结果使“QPLL1 参考/反馈前置条件未满足或 lock-detector 时序不正确”成为新的第一
+嫌疑，但由于 Gen1/CPLL 基线中两个 loss 输出也保持高，尚不能单凭这一轮区分
+“QPLL1 未启用时的无效状态”和“Gen3 切速后的真实丢时钟”。
+
+Root Port 在本轮采样后仍未枚举 `01:00.0`，所以本证据仍不构成 Gen3 PASS。
 
 ## 3. 已知限制
 
@@ -85,13 +105,15 @@ rate change 时失锁。
 
 ## 5. 下一步优先级
 
-1. 观察 `PCIEUSERRATESTART`、`PCIEUSERRATEDONE`、`PCIEUSERGEN3RDY` 的真实
-   rate-handshake 时序；
-2. 核对生成 PHY 内部 rate FSM/pipeline 与 `GTHE3_CHANNEL` rate 端口的对应关系；
-3. 核对 `QPLL1RESET` 脉冲后的参考时钟、复位释放和 lock-detector 恢复条件；
+1. 增加 `QPLL1LOCKDETCLK`、实际 `QPLL1REFCLK`/`QPLL1OUTREFCLK` 可观测性，确认
+   `*CLKLOST` 在 QPLL1 被选中后是否仍为高；
+2. 观察 `PCIEUSERRATESTART`、`PCIEUSERRATEDONE`、`PCIEUSERGEN3RDY` 的真实
+   rate-handshake 时序，并核对生成 PHY 内部 rate FSM/pipeline；
+3. 进行 Gen2-CPLL、Gen2-QPLL1、Gen3-QPLL1 的最小 A/B，隔离 PLL 选择和动态
+   rate-change 复位问题；
 4. 在上述门禁通过后，再恢复 RXEQ、Ordered-Set 和正式 Gen3 验收。
 
-源码诊断提交：
+前序源码诊断提交：
 
 ```text
 5cbac7f K13: hold RX CDR during Recovery.Speed

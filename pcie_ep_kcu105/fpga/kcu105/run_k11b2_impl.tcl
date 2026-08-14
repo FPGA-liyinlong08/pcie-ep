@@ -18,11 +18,14 @@ set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RE
                                           $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
 set k13_gt_primitive_debug [expr {[info exists ::env(K13_GT_PRIMITIVE_DEBUG)] &&
                                   $::env(K13_GT_PRIMITIVE_DEBUG) eq "1"}]
+set k13_gt_qpll_prereq_debug [expr {[info exists ::env(K13_GT_QPLL_PREREQ_DEBUG)] &&
+                                    $::env(K13_GT_QPLL_PREREQ_DEBUG) eq "1"}]
 set k13_gt_rate_direct_source [expr {$k13_gt_rate_done_tie_high ||
                                      $k13_gt_rate_done_start_pulse ||
                                      $k13_gt_rate_done_reset_release_pulse ||
                                      $k13_gt_rate_qpll_reset_forward ||
-                                     $k13_gt_primitive_debug}]
+                                     $k13_gt_primitive_debug ||
+                                     $k13_gt_qpll_prereq_debug}]
 set ila_pipe_only [expr {$ila_debug && [info exists ::env(K11B2_ILA_PIPE_ONLY)] &&
                          $::env(K11B2_ILA_PIPE_ONLY) eq "1"}]
 set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
@@ -53,6 +56,9 @@ if {$ila_debug && $g2_gen1_only} {
 }
 if {$k13_gt_primitive_debug && (!$k13_enable || !$ila_debug)} {
   error "K13_GT_PRIMITIVE_DEBUG requires K13_ENABLE=1 and K11B2_ILA_DEBUG=1"
+}
+if {$k13_gt_qpll_prereq_debug && (!$k13_enable || !$ila_debug || !$k13_gt_primitive_debug)} {
+  error "K13_GT_QPLL_PREREQ_DEBUG requires K13_ENABLE=1, K11B2_ILA_DEBUG=1 and K13_GT_PRIMITIVE_DEBUG=1"
 }
 if {$g7_rx_p0_quiet && !$ila_debug} {
   error "G7 Detect.Quiet P0诊断必须启用K11B2_ILA_DEBUG"
@@ -194,7 +200,8 @@ set k13_gt_rate_direct_source [expr {$k13_gt_rate_done_tie_high ||
                                       $k13_gt_rate_done_start_pulse ||
                                       $k13_gt_rate_done_reset_release_pulse ||
                                       $k13_gt_rate_qpll_reset_forward ||
-                                      $k13_gt_primitive_debug}]
+                                      $k13_gt_primitive_debug ||
+                                      $k13_gt_qpll_prereq_debug}]
 
 # Diagnostic-only A variant. The generated PHY currently hardwires
 # GT_PCIEUSERRATEDONE low; patch only this dedicated generated source so the
@@ -549,16 +556,33 @@ if {$ila_debug} {
     if {[llength $cells] != 1} {
       error "K13 primitive cell不存在或不唯一：$cell_ref，实际[llength $cells]"
     }
-    set pins {}
+    set pin_pairs {}
     foreach pin [get_pins -quiet -of_objects [lindex $cells 0]] {
       set ref_pin [get_property REF_PIN_NAME $pin]
       if {$expected_width == 1} {
-        if {$ref_pin eq $pin_pattern} { lappend pins $pin }
+        if {$ref_pin eq $pin_pattern} {
+          set pin_nets [get_nets -quiet -of_objects $pin]
+          if {[llength $pin_nets] != 1} {
+            error "K13 primitive端口无唯一网络：$cell_ref/$ref_pin"
+          }
+          lappend pin_pairs [list $ref_pin [lindex $pin_nets 0]]
+        }
       } elseif {[regexp "^${pin_pattern}\\\[[0-9]+\\\]$" $ref_pin]} {
-        lappend pins $pin
+        set pin_nets [get_nets -quiet -of_objects $pin]
+        if {[llength $pin_nets] != 1} {
+          error "K13 primitive端口无唯一网络：$cell_ref/$ref_pin"
+        }
+        # Preserve one entry per primitive pin.  Synthesis can legally merge
+        # multiple vector bits onto the same constant net (for example
+        # QPLL1REFCLKSEL[2:0]); an ILA bus still needs those repeated bits.
+        lappend pin_pairs [list $ref_pin [lindex $pin_nets 0]]
       }
     }
-    set nets [lsort -dictionary [get_nets -quiet -of_objects $pins]]
+    set pin_pairs [lsort -dictionary -index 0 $pin_pairs]
+    set nets {}
+    foreach pin_pair $pin_pairs {
+      lappend nets [lindex $pin_pair 1]
+    }
     if {[llength $nets] != $expected_width} {
       error "K13 primitive端口宽度错误：$cell_ref/$pin_pattern，实际[llength $nets]，期望$expected_width"
     }
@@ -711,6 +735,14 @@ if {$ila_debug} {
       [phy_primitive_pin_nets GTHE3_CHANNEL RXPLLCLKSEL 2] \
       [phy_primitive_pin_nets GTHE3_CHANNEL TXRATE 3] \
       [phy_primitive_pin_nets GTHE3_CHANNEL RXRATE 3]]
+    if {$k13_gt_qpll_prereq_debug} {
+      # QPLL1 lock prerequisite evidence: low-to-high order is
+      # QPLL1REFCLKSEL[2:0], QPLL1REFCLKLOST, QPLL1FBCLKLOST.
+      set gt_primitive_probe_nets [concat $gt_primitive_probe_nets \
+        [phy_primitive_pin_nets GTHE3_COMMON QPLL1REFCLKSEL 3] \
+        [phy_primitive_pin_nets GTHE3_COMMON QPLL1REFCLKLOST 1] \
+        [phy_primitive_pin_nets GTHE3_COMMON QPLL1FBCLKLOST 1]]
+    }
     if {$k13_gt_rate_done_start_pulse || $k13_gt_rate_done_reset_release_pulse} {
       set gt_primitive_probe_nets [concat $gt_primitive_probe_nets \
         [debug_bus_nets {.*gt_pcieuserratedone_diag.*} 1]]
@@ -872,6 +904,7 @@ puts $summary_file "K13_GT_RATE_DONE_TIE_HIGH=$k13_gt_rate_done_tie_high"
 puts $summary_file "K13_GT_RATE_DONE_START_PULSE=$k13_gt_rate_done_start_pulse"
 puts $summary_file "K13_GT_RATE_DONE_RESET_RELEASE_PULSE=$k13_gt_rate_done_reset_release_pulse"
 puts $summary_file "K13_CDR_HOLD_RECOVERY=$k13_cdr_hold_recovery"
+puts $summary_file "K13_GT_QPLL_PREREQ_DEBUG=$k13_gt_qpll_prereq_debug"
 puts $summary_file "K13_GT_RATE_QPLL_RESET_FORWARD=$k13_gt_rate_qpll_reset_forward"
 puts $summary_file "G7_RX_P0_QUIET=$g7_rx_p0_quiet"
 puts $summary_file "G8_FAST_DETECT=$g8_fast_detect"

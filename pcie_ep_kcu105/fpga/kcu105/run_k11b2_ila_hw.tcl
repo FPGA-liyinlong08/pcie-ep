@@ -27,6 +27,8 @@ set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RE
                                           $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
 set k13_gt_primitive_debug [expr {[info exists ::env(K13_GT_PRIMITIVE_DEBUG)] &&
                                   $::env(K13_GT_PRIMITIVE_DEBUG) eq "1"}]
+set k13_gt_qpll_prereq_debug [expr {[info exists ::env(K13_GT_QPLL_PREREQ_DEBUG)] &&
+                                    $::env(K13_GT_QPLL_PREREQ_DEBUG) eq "1"}]
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }

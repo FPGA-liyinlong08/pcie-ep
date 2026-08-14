@@ -12,12 +12,14 @@ k13_gt_rate_done_reset_release_pulse="${K13_GT_RATE_DONE_RESET_RELEASE_PULSE:-0}
 k13_cdr_hold_recovery="${K13_CDR_HOLD_RECOVERY:-0}"
 k13_gt_rate_qpll_reset_forward="${K13_GT_RATE_QPLL_RESET_FORWARD:-0}"
 k13_gt_primitive_debug="${K13_GT_PRIMITIVE_DEBUG:-0}"
+k13_gt_qpll_prereq_debug="${K13_GT_QPLL_PREREQ_DEBUG:-0}"
 k13_gt_rate_direct_source="0"
 if [[ "${k13_gt_rate_done_tie_high}" == "1" ||
       "${k13_gt_rate_done_start_pulse}" == "1" ||
       "${k13_gt_rate_done_reset_release_pulse}" == "1" ||
       "${k13_gt_rate_qpll_reset_forward}" == "1" ||
-      "${k13_gt_primitive_debug}" == "1" ]]; then
+      "${k13_gt_primitive_debug}" == "1" ||
+      "${k13_gt_qpll_prereq_debug}" == "1" ]]; then
   k13_gt_rate_direct_source="1"
 fi
 build_variant="build_k11b2"
@@ -124,9 +126,6 @@ $(if [[ "${K11B2_ILA_RESUME:-0}" != "1" ]]; then
 fi)
 $(if [[ "${ila_debug}" == "1" ]]; then
   printf '%s\n' 'Timing 38-164'
-  if [[ "${k13_gt_rate_direct_source}" == "1" ]]; then
-    printf '%s\n' 'Timing 38-252' 'Timing 38-277'
-  fi
   printf '%s\n' 'Timing 38-436'
 fi)
 Vivado 12-975
