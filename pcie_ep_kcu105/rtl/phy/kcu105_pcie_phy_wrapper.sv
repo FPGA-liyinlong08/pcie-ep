@@ -58,7 +58,7 @@ module kcu105_pcie_phy_wrapper #(
     output wire        phy_rxstart_block,
     output wire [1:0]  phy_rxsync_header,
     output wire        phy_rxvalid,
-    output wire        phy_phystatus,
+    (* mark_debug = "true" *) output wire phy_phystatus,
     output wire        phy_phystatus_rst,
     output wire        phy_rxelecidle,
     output wire [2:0]  phy_rxstatus,

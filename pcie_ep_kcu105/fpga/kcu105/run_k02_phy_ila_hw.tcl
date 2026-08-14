@@ -3,13 +3,29 @@
 # mode the trigger is a dedicated scalar TXEQ-state marker, so the capture
 # includes the first pre-Gen3 divergence without bus compare ambiguity.
 set script_dir  [file dirname [file normalize [info script]]]
+set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
+                            $::env(K02_DIRECT_GEN3) eq "1"}]
 set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
                             $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
-set build_dir   [file join $script_dir [expr {$k02_dynamic_rate ?
-                                             "build_k02_dynamic" : "build_k02"}]]
+set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
+                           $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
+if {$k02_coeff_query} { set k02_dynamic_rate 1 }
+if {$k02_direct_gen3} {
+  set build_dir [file join $script_dir build_k02_gen3]
+  set bit_stem k02_pcie_phy_bringup_gen3
+} elseif {$k02_dynamic_rate} {
+  if {$k02_coeff_query} {
+    set build_dir [file join $script_dir build_k02_dynamic_query]
+    set bit_stem k02_pcie_phy_bringup_dynamic_query
+  } else {
+    set build_dir [file join $script_dir build_k02_dynamic]
+    set bit_stem k02_pcie_phy_bringup_dynamic
+  }
+} else {
+  set build_dir [file join $script_dir build_k02]
+  set bit_stem k02_pcie_phy_bringup
+}
 set capture_dir [file join $build_dir capture]
-set bit_stem    [expr {$k02_dynamic_rate ? "k02_pcie_phy_bringup_dynamic" :
-                                      "k02_pcie_phy_bringup"}]
 set bit_path    [file join $build_dir ${bit_stem}_ila.bit]
 set ltx_path    [file join $build_dir ${bit_stem}_ila.ltx]
 

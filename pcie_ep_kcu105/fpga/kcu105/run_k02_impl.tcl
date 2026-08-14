@@ -10,11 +10,27 @@ set k02_gen3_test [expr {![info exists ::env(K02_GEN3_TEST)] ||
                           $::env(K02_GEN3_TEST) eq "1"}]
 set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
                             $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
+set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
+                           $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
+if {$k02_coeff_query} { set k02_dynamic_rate 1 }
+set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
+                            $::env(K02_DIRECT_GEN3) eq "1"}]
 set k02_dynamic_start_delay [expr {$k02_dynamic_rate ? 1000000000 : 1024}]
-set build_dir [file join $script_dir [expr {$k02_dynamic_rate ?
-                                            "build_k02_dynamic" : "build_k02"}]]
-set bit_stem [expr {$k02_dynamic_rate ? "k02_pcie_phy_bringup_dynamic" :
-                                      "k02_pcie_phy_bringup"}]
+if {$k02_direct_gen3} {
+    set build_dir [file join $script_dir build_k02_gen3]
+    set bit_stem k02_pcie_phy_bringup_gen3
+} elseif {$k02_dynamic_rate} {
+    if {$k02_coeff_query} {
+        set build_dir [file join $script_dir build_k02_dynamic_query]
+        set bit_stem k02_pcie_phy_bringup_dynamic_query
+    } else {
+        set build_dir [file join $script_dir build_k02_dynamic]
+        set bit_stem k02_pcie_phy_bringup_dynamic
+    }
+} else {
+    set build_dir [file join $script_dir build_k02]
+    set bit_stem k02_pcie_phy_bringup
+}
 
 file mkdir $build_dir
 
@@ -43,6 +59,8 @@ read_xdc [file join $script_dir k02_pcie_phy_bringup.xdc]
 synth_design -top $top_name -part $part_name \
     -generic GEN3_TEST_MODE=$k02_gen3_test \
     -generic DYNAMIC_RATE_TEST_MODE=$k02_dynamic_rate \
+    -generic DYNAMIC_COEFF_QUERY_MODE=$k02_coeff_query \
+    -generic DIRECT_GEN3_MODE=$k02_direct_gen3 \
     -generic DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay
 
 if {$k02_ila_debug} {
@@ -132,14 +150,20 @@ if {$k02_ila_debug} {
         [k02_net [format {%sqpll1lock_out\[0\]$} $k02_gt_prefix]] \
         [k02_primitive_pin GTHE3_COMMON QPLL1RESET] \
         [k02_primitive_pin GTHE3_COMMON QPLL1PD] \
+        [k02_primitive_pin GTHE3_COMMON QPLL1LOCKEN] \
+        [k02_primitive_pin GTHE3_COMMON QPLL1LOCKDETCLK] \
+        [k02_primitive_pin GTHE3_COMMON QPLL1REFCLKLOST] \
+        [k02_primitive_pin GTHE3_COMMON QPLL1FBCLKLOST] \
+        [k02_primitive_bus_pin GTHE3_COMMON QPLL1REFCLKSEL 3] \
+        [k02_primitive_pin GTHE3_CHANNEL GTPOWERGOOD] \
         [k02_bus {.*phy_rate_debug\[0\]$} 1] \
         [k02_bus {.*phy_rate_debug\[1\]$} 1] \
         [k02_bus {.*phy_powerdown_debug\[0\]$} 1] \
         [k02_bus {.*phy_powerdown_debug\[1\]$} 1] \
         [k02_net {.*phy_txelecidle_debug$}] \
         [k02_net [format {%spcierategen3_out\[0\]$} $k02_gt_prefix]] \
-        [k02_net [format {%spcierateqpllreset_out\[0\]$} $k02_gt_prefix]] \
-        [k02_net [format {%spcierateqpllpd_out\[0\]$} $k02_gt_prefix]] \
+        [k02_primitive_bus_pin GTHE3_CHANNEL PCIERATEQPLLRESET 2] \
+        [k02_primitive_bus_pin GTHE3_CHANNEL PCIERATEQPLLPD 2] \
         [k02_primitive_pin GTHE3_CHANNEL PCIERATEIDLE] \
         [k02_primitive_bus_pin GTHE3_CHANNEL TXPLLCLKSEL 2] \
         [k02_primitive_bus_pin GTHE3_CHANNEL RXPLLCLKSEL 2] \
@@ -149,6 +173,7 @@ if {$k02_ila_debug} {
         [k02_bus {.*phy_txeq_preset_debug\[[0-3]\]$} 4] \
         [k02_net {.*as_cdr_hold_debug$}] \
         [k02_net {.*phy_txeq_done_debug$}] \
+        [k02_bus {.*phy_txeq_new_coeff_debug\[[0-9]+\]$} 18] \
         [k02_primitive_pin GTHE3_CHANNEL PCIEUSERGEN3RDY] \
         [k02_primitive_pin GTHE3_CHANNEL PCIEUSERRATESTART] \
         [k02_net [format {%srxresetdone_out\[0\]$} $k02_gt_prefix]] \
@@ -164,11 +189,12 @@ if {$k02_ila_debug} {
         [k02_net {.*gen3_test_active$}] \
         [k02_bus {.*dynamic_rate_state\[[0-3]\]$} 4] \
         [k02_net {.*dynamic_rate_txeq_active$}] \
+        [k02_net {.*dynamic_rate_txeq_query_active$}] \
         [k02_net {.*dynamic_rate_pass$}] \
         [k02_net {.*dynamic_rate_fail$}]]
     set k02_probe0 [concat {*}$k02_probe0]
-    if {[llength $k02_probe0] != 49} {
-        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望49"
+    if {[llength $k02_probe0] != 78} {
+        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望78"
     }
     k02_add_probe u_ila_k02 0 $k02_probe0
 
@@ -181,7 +207,7 @@ if {$k02_ila_debug} {
         [k02_net {.*unexpected_status$}] \
         [k02_bus {.*detected_rxstatus\[[0-2]\]$} 3]]
     k02_add_probe u_ila_k02 1 $k02_probe1
-    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test dynamic_rate=$k02_dynamic_rate"
+    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test dynamic_rate=$k02_dynamic_rate coeff_query=$k02_coeff_query direct_gen3=$k02_direct_gen3"
 }
 write_checkpoint -force [file join $build_dir k02_synth.dcp]
 report_utilization -file [file join $build_dir utilization_synth.rpt]
@@ -274,6 +300,8 @@ puts $summary_file "WNS=$wns"
 puts $summary_file "K02_ILA_DEBUG=$k02_ila_debug"
 puts $summary_file "GEN3_TEST_MODE=$k02_gen3_test"
 puts $summary_file "DYNAMIC_RATE_TEST_MODE=$k02_dynamic_rate"
+puts $summary_file "DYNAMIC_COEFF_QUERY_MODE=$k02_coeff_query"
+puts $summary_file "DIRECT_GEN3_MODE=$k02_direct_gen3"
 puts $summary_file "DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file

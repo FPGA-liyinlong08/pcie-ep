@@ -3,8 +3,8 @@
 	k00-m02-verilator k00-m02-verilator-signoff k00-m02-vcs \
 	k00-m02-vivado k00-m02 \
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
-	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado \
-	k02-hw-probe k02-hw-program k02 \
+	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado k02-gen3-vivado \
+	k02-hw-probe k02-hw-program k02-gen3-hw-probe k02-gen3-hw-program k02 \
 	k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
 	k03-lint k03-verilator k03-vivado k03 \
 	k04-checker-selftest k04-lint k04-verilator k04-verilator-signoff \
@@ -162,8 +162,20 @@ k02-ip:
 k02-vcs:
 	./sim/vcs/run_k02.sh
 
+k02-query-vcs:
+	K02_VCS_DYNAMIC_TXEQ=1 K02_VCS_QUERY=1 ./sim/vcs/run_k02.sh
+
+k02-gen3-vcs:
+	K02_VCS_GEN3_STEADY=1 ./sim/vcs/run_k02.sh
+
 k02-vivado:
 	./fpga/kcu105/run_k02_impl.sh
+
+k02-gen3-vivado:
+	K02_DIRECT_GEN3=1 ./fpga/kcu105/run_k02_impl.sh
+
+k02-query-vivado:
+	K02_DYNAMIC_GEN1_TO_GEN3=1 K02_DYNAMIC_COEFF_QUERY=1 ./fpga/kcu105/run_k02_impl.sh
 
 k02-hw-probe:
 	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
@@ -175,6 +187,18 @@ k02-hw-program:
 	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
 		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
 		-log fpga/kcu105/build_k02/hw_program.log \
+		-tclargs localhost:3122 program
+
+k02-gen3-hw-probe:
+	K02_DIRECT_GEN3=1 /home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
+		-log fpga/kcu105/build_k02_gen3/hw_probe.log \
+		-tclargs localhost:3122 probe
+
+k02-gen3-hw-program:
+	K02_DIRECT_GEN3=1 /home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
+		-log fpga/kcu105/build_k02_gen3/hw_program.log \
 		-tclargs localhost:3122 program
 
 k02: k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado

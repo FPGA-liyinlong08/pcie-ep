@@ -8,12 +8,54 @@ vivado_home="${VIVADO_HOME:-/home/Xilinx/Vivado/2021.2}"
 ip_dir="${project_dir}/fpga/kcu105/ip/pcie_phy_x1_gen3"
 simlib_dir="/home/wx/Documents/vcs_compile_simlib"
 license_timeout="${VCS_LICENSE_TIMEOUT:-300}"
+license_server="${VCS_LICENSE_SERVER:-27000@wx-linux}"
+license_lmutil="${VCS_LICENSE_LMUTIL:-/home/questasim/linux_x86_64/lmutil}"
 
 export VCS_HOME="${vcs_home}"
 export VCS_ARCH_OVERRIDE=linux
+export SNPSLMD_LICENSE_FILE="${SNPSLMD_LICENSE_FILE:-${license_server}}"
+if [[ ":${LM_LICENSE_FILE:-}:" != *":${license_server}:"* ]]; then
+    export LM_LICENSE_FILE="${license_server}${LM_LICENSE_FILE:+:${LM_LICENSE_FILE}}"
+fi
 
 cd "${script_dir}"
 ./check_env.sh
+mkdir -p build
+if [[ "${VCS_LICENSE_PREFLIGHT:-1}" == "1" && -x "${license_lmutil}" ]]; then
+    set +e
+    timeout --foreground 10 "${license_lmutil}" lmstat \
+        -f VCSCompiler_Net -c "${license_server}" \
+        > build/vcs_license_preflight.log 2>&1
+    license_preflight_status=$?
+    set -e
+    if [[ ${license_preflight_status} -ne 0 ]]; then
+        cat build/vcs_license_preflight.log >&2
+        echo "错误：无法访问 Synopsys 许可证服务 ${license_server}；请检查本地 license 环境" >&2
+        exit 69
+    fi
+fi
+if [[ "${K02_VCS_DYNAMIC_TXEQ:-0}" == "1" ]]; then
+    tb_name=k02_dynamic_txeq_tb
+    tb_source="${script_dir}/k02_dynamic_txeq_tb.sv"
+    sim_log=build/k02_dynamic_txeq_simulate.log
+    elaborate_log=build/k02_dynamic_txeq_elaborate.log
+    sim_exe_name=k02_dynamic_txeq_simv
+    pass_marker=K02_VCS_DYNAMIC_TXEQ_PASS
+elif [[ "${K02_VCS_GEN3_STEADY:-0}" == "1" ]]; then
+    tb_name=k02_gen3_steady_tb
+    tb_source="${script_dir}/k02_gen3_steady_tb.sv"
+    sim_log=build/k02_gen3_steady_simulate.log
+    elaborate_log=build/k02_gen3_steady_elaborate.log
+    sim_exe_name=k02_gen3_steady_simv
+    pass_marker=K02_VCS_GEN3_STEADY_PASS
+else
+    tb_name=k02_pcie_phy_tb
+    tb_source="${script_dir}/k02_pcie_phy_tb.sv"
+    sim_log=build/k02_simulate.log
+    elaborate_log=build/k02_elaborate.log
+    sim_exe_name=k02_simv
+    pass_marker=K02_VCS_PHY_PASS
+fi
 if [[ "${K02_SKIP_IP_GENERATION:-0}" == "1" ]]; then
     test -s "${ip_dir}/pcie_phy_x1_gen3.xci"
     test -s "${ip_dir}/sim/pcie_phy_x1_gen3.v"
@@ -61,19 +103,19 @@ export SYNOPSYS_SIM_SETUP="${setup_file}"
     "${project_dir}/rtl/phy/kcu105_refclk_reset.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_phy_wrapper.sv" \
     "${vivado_home}/data/verilog/src/glbl.v" \
-    "${script_dir}/k02_pcie_phy_tb.sv" \
+    "${tb_source}" \
     -l build/k02_tb_vlogan.log
 
 set +e
 timeout --foreground "${license_timeout}" "${vcs_home}/bin/vcs" -full64 \
-    xil_defaultlib.k02_pcie_phy_tb xil_defaultlib.glbl \
+    "xil_defaultlib.${tb_name}" xil_defaultlib.glbl \
     -Lgtwizard_ultrascale_v1_7_12 \
     -Lsecureip -Lunisims_ver -Lxpm \
     -debug_access+pp+dmptf -t ps -licqueue \
     -LDFLAGS "-Wl,--no-as-needed" \
     -Mdir="${run_dir}/csrc_k02" \
-    -o "${run_dir}/k02_simv" \
-    -l build/k02_elaborate.log
+    -o "${run_dir}/${sim_exe_name}" \
+    -l "${elaborate_log}"
 elaborate_status=$?
 set -e
 if [[ ${elaborate_status} -eq 124 ]]; then
@@ -83,9 +125,14 @@ elif [[ ${elaborate_status} -ne 0 ]]; then
     exit "${elaborate_status}"
 fi
 
+sim_plusargs=()
+if [[ "${K02_VCS_QUERY:-0}" == "1" ]]; then
+    sim_plusargs+=(+K02_QUERY=1)
+fi
+
 set +e
 timeout --foreground "${license_timeout}" \
-    "${run_dir}/k02_simv" -licqueue -l build/k02_simulate.log
+    "${run_dir}/${sim_exe_name}" -licqueue "${sim_plusargs[@]}" -l "${sim_log}"
 simulate_status=$?
 set -e
 if [[ ${simulate_status} -eq 124 ]]; then
@@ -94,6 +141,6 @@ if [[ ${simulate_status} -eq 124 ]]; then
 elif [[ ${simulate_status} -ne 0 ]]; then
     exit "${simulate_status}"
 fi
-grep -q 'K02_VCS_PHY_PASS' build/k02_simulate.log
+grep -q "${pass_marker}" "${sim_log}"
 
-echo "K02_VCS_REAL_IP_PASS run_dir=${run_dir}"
+echo "K02_VCS_REAL_IP_PASS mode=${tb_name} run_dir=${run_dir}"

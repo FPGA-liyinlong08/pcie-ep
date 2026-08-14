@@ -3,10 +3,14 @@
 
 // K02 专用上板顶层：执行一次 Receiver Detect，并可在成功后进入受控
 // Gen3 PHY/GT 诊断模式；不包含任何 LTSSM、TS1/TS2 或链路训练功能。
+// DIRECT_GEN3_MODE 用于独立验证 Gen3 steady-state：复位释放后直接请求
+// P0/Gen3，不执行 Receiver Detect 和 Gen1->Gen3 dynamic rate transition。
 module kcu105_pcie_phy_bringup_top #(
     parameter integer DETECT_TIMEOUT_CYCLES = 16_000_000,
     parameter integer GEN3_TEST_MODE        = 1,
     parameter integer DYNAMIC_RATE_TEST_MODE = 0,
+    parameter integer DYNAMIC_COEFF_QUERY_MODE = 0,
+    parameter integer DIRECT_GEN3_MODE      = 0,
     parameter integer DYNAMIC_START_DELAY_CYCLES = 1024,
     parameter integer DYNAMIC_GEN1_STABLE_CYCLES = 1024,
     parameter integer DYNAMIC_TXEQ_TIMEOUT_CYCLES = 8192,
@@ -34,6 +38,9 @@ module kcu105_pcie_phy_bringup_top #(
     localparam logic [3:0] DYN_GEN3_WAIT   = 4'd3;
     localparam logic [3:0] DYN_PASS        = 4'd4;
     localparam logic [3:0] DYN_FAIL        = 4'd5;
+    localparam logic [3:0] DYN_TXEQ_GAP    = 4'd6;
+    localparam logic [3:0] DYN_QUERY       = 4'd7;
+    localparam logic [3:0] DYN_QUERY_GAP   = 4'd8;
     localparam logic [23:0] DETECT_TIMEOUT_LIMIT =
         DETECT_TIMEOUT_CYCLES[23:0] - 24'd1;
 
@@ -83,10 +90,12 @@ module kcu105_pcie_phy_bringup_top #(
     (* mark_debug = "true" *) logic       phy_txelecidle_debug;
     (* mark_debug = "true" *) logic [1:0] phy_txeq_ctrl_debug;
     (* mark_debug = "true" *) logic [3:0] phy_txeq_preset_debug;
+    (* mark_debug = "true" *) logic [17:0] phy_txeq_new_coeff_debug;
     (* mark_debug = "true" *) logic       as_cdr_hold_debug;
     (* mark_debug = "true" *) logic       phy_txeq_done_debug;
     (* mark_debug = "true" *) logic [3:0] dynamic_rate_state;
     (* mark_debug = "true" *) logic       dynamic_rate_txeq_active;
+    (* mark_debug = "true" *) logic       dynamic_rate_txeq_query_active;
     (* mark_debug = "true" *) logic       dynamic_rate_pass;
     (* mark_debug = "true" *) logic       dynamic_rate_fail;
     logic [31:0] dynamic_rate_count;
@@ -109,11 +118,18 @@ module kcu105_pcie_phy_bringup_top #(
         phy_txeq_ctrl_cmd  = 2'b00;
         phy_txeq_preset_cmd = 4'd0;
         as_cdr_hold_cmd    = 1'b0;
-        if ((bup_state == BUP_DETECT) ||
-            (bup_state == BUP_WAIT_STATUS)) begin
+        if ((DIRECT_GEN3_MODE == 0) &&
+            ((bup_state == BUP_DETECT) ||
+             (bup_state == BUP_WAIT_STATUS))) begin
             phy_txdetectrx = 1'b1;
         end
-        if ((GEN3_TEST_MODE != 0) && gen3_test_active) begin
+        if ((DIRECT_GEN3_MODE != 0) && pipe_rst_n) begin
+            // 直接进入 Gen3 steady-state。TX 保持 Electrical Idle，避免在
+            // 没有 TS/Ordered Set 发送器时把零数据误认为协议流量。
+            phy_powerdown      = 2'b00;
+            phy_rate_cmd       = 2'b10;
+            phy_txelecidle_cmd = 1'b1;
+        end else if ((GEN3_TEST_MODE != 0) && gen3_test_active) begin
             // K02 不实现 LTSSM/TS1/TS2；这里只把 standalone PHY 置于
             // P0 并执行稳态 Gen3 或受控 Gen1->Gen3 rate-change 诊断。
             phy_powerdown      = 2'b00;
@@ -125,6 +141,23 @@ module kcu105_pcie_phy_bringup_top #(
                         phy_txeq_ctrl_cmd   = 2'b01;
                         phy_txeq_preset_cmd = 4'd4;
                         as_cdr_hold_cmd     = 1'b1;
+                    end
+                    DYN_TXEQ_GAP: begin
+                        // PG239 requires TXEQ_CTRL to return to Idle after
+                        // TXEQ_DONE.  Keep one complete pclk gap before the
+                        // optional query so the two PHY commands cannot
+                        // merge at the interface.
+                        phy_rate_cmd    = 2'b00;
+                        as_cdr_hold_cmd = 1'b1;
+                    end
+                    DYN_QUERY: begin
+                        phy_rate_cmd    = 2'b00;
+                        phy_txeq_ctrl_cmd = 2'b11;
+                        as_cdr_hold_cmd = 1'b1;
+                    end
+                    DYN_QUERY_GAP: begin
+                        phy_rate_cmd    = 2'b00;
+                        as_cdr_hold_cmd = 1'b1;
                     end
                     DYN_GEN3_WAIT: begin
                         phy_rate_cmd    = 2'b10;
@@ -148,10 +181,13 @@ module kcu105_pcie_phy_bringup_top #(
     assign phy_txelecidle_debug = phy_txelecidle_cmd;
     assign phy_txeq_ctrl_debug  = phy_txeq_ctrl_cmd;
     assign phy_txeq_preset_debug = phy_txeq_preset_cmd;
+    assign phy_txeq_new_coeff_debug = phy_txeq_new_coeff;
     assign as_cdr_hold_debug    = as_cdr_hold_cmd;
     assign phy_txeq_done_debug  = phy_txeq_done;
     assign dynamic_rate_txeq_active =
         (dynamic_rate_state == DYN_TXEQ);
+    assign dynamic_rate_txeq_query_active =
+        (dynamic_rate_state == DYN_QUERY);
 
     always_ff @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) begin
@@ -172,7 +208,7 @@ module kcu105_pcie_phy_bringup_top #(
         end else begin
             heartbeat_count <= heartbeat_count + 1'b1;
 
-            if (DYNAMIC_RATE_TEST_MODE == 0) begin
+            if (DYNAMIC_RATE_TEST_MODE == 0 || DIRECT_GEN3_MODE != 0) begin
                 dynamic_rate_state <= DYN_PASS;
                 dynamic_rate_count <= '0;
                 dynamic_rate_pass  <= 1'b0;
@@ -204,7 +240,9 @@ module kcu105_pcie_phy_bringup_top #(
                     end
                     DYN_TXEQ: begin
                         if (phy_txeq_done) begin
-                            dynamic_rate_state <= DYN_GEN3_WAIT;
+                            dynamic_rate_state <=
+                                (DYNAMIC_COEFF_QUERY_MODE != 0) ?
+                                DYN_TXEQ_GAP : DYN_GEN3_WAIT;
                             dynamic_rate_count <= '0;
                         end else if ((DYNAMIC_TXEQ_TIMEOUT_CYCLES <= 1) ||
                                      (dynamic_rate_count >= DYNAMIC_TXEQ_TIMEOUT_CYCLES - 1)) begin
@@ -214,6 +252,27 @@ module kcu105_pcie_phy_bringup_top #(
                         end else begin
                             dynamic_rate_count <= dynamic_rate_count + 1'b1;
                         end
+                    end
+                    DYN_TXEQ_GAP: begin
+                        dynamic_rate_state <= DYN_QUERY;
+                        dynamic_rate_count <= '0;
+                    end
+                    DYN_QUERY: begin
+                        if (phy_txeq_done) begin
+                            dynamic_rate_state <= DYN_QUERY_GAP;
+                            dynamic_rate_count <= '0;
+                        end else if ((DYNAMIC_TXEQ_TIMEOUT_CYCLES <= 1) ||
+                                     (dynamic_rate_count >= DYNAMIC_TXEQ_TIMEOUT_CYCLES - 1)) begin
+                            dynamic_rate_state <= DYN_FAIL;
+                            dynamic_rate_count <= '0;
+                            dynamic_rate_fail  <= 1'b1;
+                        end else begin
+                            dynamic_rate_count <= dynamic_rate_count + 1'b1;
+                        end
+                    end
+                    DYN_QUERY_GAP: begin
+                        dynamic_rate_state <= DYN_GEN3_WAIT;
+                        dynamic_rate_count <= '0;
                     end
                     DYN_GEN3_WAIT: begin
                         if (phy_phystatus) begin
@@ -240,7 +299,16 @@ module kcu105_pcie_phy_bringup_top #(
                 endcase
             end
 
-            case (bup_state)
+            if (DIRECT_GEN3_MODE != 0) begin
+                // 该模式不把 Receiver Detect 当作 Gen3 steady-state 的前置
+                // 条件；LED 仅表示 PHY/PIPE/Core 已脱离复位，Detect 结果无效。
+                bup_state         <= BUP_DONE;
+                gen3_test_active  <= 1'b1;
+                detect_done       <= 1'b0;
+                receiver_present  <= 1'b0;
+                detect_timeout    <= 1'b0;
+                unexpected_status <= 1'b0;
+            end else case (bup_state)
                 BUP_RESET: begin
                     settle_count <= '0;
                     bup_state    <= BUP_SETTLE;

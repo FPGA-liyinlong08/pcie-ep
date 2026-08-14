@@ -87,3 +87,42 @@ VCS_LICENSE_TIMEOUT=300 K11B_SIM_TIMEOUT=300 \
 
 本轮修正环境后，K13真实PHY工程完成357个模块的elaboration和
 link，生成`simv`；整个阶段约14秒，证明原90秒超时不属于RTL错误。
+
+## 2026-08-14 direct Gen3 steady-state 重试
+
+新增 `sim/vcs/k02_gen3_steady_tb.sv` 后执行：
+
+```bash
+K02_VCS_GEN3_STEADY=1 VCS_LICENSE_TIMEOUT=300 ./sim/vcs/run_k02.sh
+```
+
+本轮 `vlogan` 已完成真实 PHY/GT Wizard、wrapper、`glbl` 和 steady-state
+testbench 编译；在 common elaboration 阶段等待 `VCSCompiler_Net` 300 秒后由脚本以
+状态码 124 退出。由于没有生成并运行 `simv`，本轮不能记为 VCS PASS，也不能用
+steady-state bitgen/上板结果替代 VCS 门禁。许可证服务恢复且当前执行环境允许访问
+`27000@wx-linux` 后，应使用上述命令重跑。
+
+## 2026-08-14 K02 Query B 重跑结果
+
+此前 K02 脚本没有复用 K11B 的本地 FlexNet 设置，导致在 common elaboration 阶段
+看起来像 `VCSCompiler_Net` 排队。本轮已将本地解决方法接入
+`sim/vcs/run_k02.sh`：默认设置 `SNPSLMD_LICENSE_FILE=27000@wx-linux`，向
+`LM_LICENSE_FILE` 追加该 server，并在编译前执行：
+
+```bash
+/home/questasim/linux_x86_64/lmutil lmstat \
+  -f VCSCompiler_Net -c 27000@wx-linux
+```
+
+随后 K02 Query B 完成真实 Xilinx PHY/GT Wizard/SecureIP 编译、elaboration、link
+和运行，结果为：
+
+```text
+K02_VCS_TXEQ_DONE op=PresetApply
+K02_VCS_TXEQ_DONE op=CoefficientQuery
+K02_VCS_DYNAMIC_TXEQ_PASS query=1
+K02_VCS_REAL_IP_PASS mode=k02_dynamic_txeq_tb
+```
+
+结论：本地 license 解决方法有效；Query B 的后续硬件失败不是由 VCS license
+阻塞造成的。
