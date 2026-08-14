@@ -156,8 +156,82 @@ target，但 `open_hw_target` 报告 JTAG 链上没有 device。通常表示开�
 7. 保存 Hardware Manager/ILA 记录后，把本报告状态改为 PASS 并冻结 K02。
 
 工程提供 `make k02-hw-probe` 和 `make k02-hw-program`；二者默认连接本机
-`hw_server` 的 `localhost:3122`，前者只读探测，后者才会下载 bitstream。启动命令为
-`/home/Xilinx/Vivado/2021.2/bin/hw_server -d -p0 -I60 -stcp::3122`。
+`hw_server` 的 `127.0.0.1:3122`，前者只读探测，后者才会下载 bitstream。持续运行
+服务可使用 `/home/Xilinx/Vivado/2021.2/bin/hw_server -p0 -I300 -stcp::3122`。
+
+## 7.1 K02 Gen3 PHY ILA 实板验证（2026-08-14）
+
+为直接验证 QPLL1 和 Gen3 PHY ready 状态，本轮将 K02 bring-up 顶层改为：
+Receiver Detect 成功后进入受控 Gen3 PHY 测试模式（`P0`、`phy_rate=2'b10`、
+TX 保持 Electrical Idle）。K02 仍然不实现 LTSSM、TS1/TS2、Equalization 或
+Endpoint 枚举，因此该模式验证的是 PHY/GT，不把它等同于完整 PCIe Gen3 链路。
+
+新增 ILA `u_ila_k02`，采样同一 `phy_pclk` 域的以下信号：
+
+- GTHE3_COMMON primitive 的 `QPLL1LOCK`、`QPLL1RESET`、`QPLL1PD`，以及
+  GT Wizard `qpll1lock_out`；
+- `phy_rate`、`phy_powerdown`、`PCIERATEGEN3`、QPLL rate-reset/PD、
+  `PCIEUSERGEN3RDY`、`PCIEUSERRATESTART`；
+- `RXRESETDONE`、`RXELECIDLE`、`RXVALID`、`RXSTATUS`、`PhyStatus`；
+- bring-up FSM、Detect 结果和 Gen3 测试状态。
+
+重新实现结果：
+
+```text
+K02_IMPL_PASS
+GTHE3_CHANNEL_LOC=GTHE3_CHANNEL_X0Y7
+GTHE3_COMMON_LOC=GTHE3_COMMON_X0Y1
+WNS=0.977 ns
+GEN3_TEST_MODE=1
+```
+
+bit/LTX：
+
+```text
+fpga/kcu105/build_k02/k02_pcie_phy_bringup_ila.bit
+SHA256 5bc536bcdfb75279ac4ce2b484fde5eb962acc746e61aac1b2bc9ef46b69cb6f
+
+fpga/kcu105/build_k02/k02_pcie_phy_bringup_ila.ltx
+SHA256 818de8b04b006e7529edf6685f805335a97327af2c19d4e6ffadd877fb5cab50
+```
+
+实板 ILA 采样：
+
+```text
+fpga/kcu105/build_k02/capture/20260814_200635_k02_phy.csv
+fpga/kcu105/build_k02/capture/20260814_200635_k02_phy.ila
+```
+
+8192 点窗口的关键结果如下，所有状态在窗口内均无变化：
+
+| 信号 | 结果 | 结论 |
+|---|---:|---|
+| GTHE3_COMMON `QPLL1LOCK` | `1` 全程 | QPLL1 已锁定 |
+| GT Wizard `qpll1lock_out` | `1` 全程 | PHY 内部也观察到 QPLL1 lock |
+| `QPLL1RESET` / `QPLL1PD` | `0 / 0` 全程 | 未处于 QPLL1 reset/powerdown |
+| `phy_rate` | `2` 全程 | PHY 请求 Gen3（8.0 GT/s） |
+| `PCIERATEGEN3` | `1` 全程 | GT 已处于 Gen3 rate 模式 |
+| `PCIEUSERGEN3RDY` | `1` 全程 | GT 报告 Gen3 ready |
+| `RXRESETDONE` | `1` 全程 | RX 初始化完成 |
+| `RXVALID` / `RXSTATUS` | `0 / 0` | 没有收到协议数据 |
+| Detect | `receiver_present=1`、`rxstatus=3` | Root Port 终端检测成功 |
+
+本轮因此确认：**QPLL1 已锁定，Gen3 PHY ready 正常**。但由于 K02 demo 没有
+PCIe 协议训练状态机，`RXVALID=0` 是没有 TS/Ordered Set 驱动时的预期结果，不能
+据此宣称 Gen3 x1 链路已经进入 L0。完整 Gen3 链路仍需使用 K11/K13 Endpoint
+构建，通过 Root Port 枚举、Recovery.Speed、Equalization 和 L0 结果验收。
+
+复现命令：
+
+```bash
+make k02-vivado
+/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+  -source fpga/kcu105/run_k02_phy_ila_hw.tcl -nojournal \
+  -tclargs 127.0.0.1:3122 program-arm
+/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+  -source fpga/kcu105/run_k02_phy_ila_hw.tcl -nojournal \
+  -tclargs 127.0.0.1:3122 capture-wait
+```
 
 ## 8. 复现命令
 

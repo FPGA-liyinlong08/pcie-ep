@@ -1,9 +1,11 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// K02 专用上板顶层：只执行一次 Receiver Detect，不包含任何 LTSSM 功能。
+// K02 专用上板顶层：执行一次 Receiver Detect，并可在成功后进入受控
+// Gen3 PHY/GT 诊断模式；不包含任何 LTSSM、TS1/TS2 或链路训练功能。
 module kcu105_pcie_phy_bringup_top #(
-    parameter integer DETECT_TIMEOUT_CYCLES = 16_000_000
+    parameter integer DETECT_TIMEOUT_CYCLES = 16_000_000,
+    parameter integer GEN3_TEST_MODE        = 1
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -34,6 +36,8 @@ module kcu105_pcie_phy_bringup_top #(
 
     logic       phy_txdetectrx;
     logic [1:0] phy_powerdown;
+    logic [1:0] phy_rate_cmd;
+    logic       phy_txelecidle_cmd;
     wire        phy_phystatus;
     wire [2:0]  phy_rxstatus;
 
@@ -59,6 +63,10 @@ module kcu105_pcie_phy_bringup_top #(
     (* mark_debug = "true" *) logic       receiver_present;
     (* mark_debug = "true" *) logic       detect_timeout;
     (* mark_debug = "true" *) logic       unexpected_status;
+    (* mark_debug = "true" *) logic       gen3_test_active;
+    (* mark_debug = "true" *) logic [1:0] phy_rate_debug;
+    (* mark_debug = "true" *) logic [1:0] phy_powerdown_debug;
+    (* mark_debug = "true" *) logic       phy_txelecidle_debug;
     logic [4:0]  settle_count;
     logic [23:0] timeout_count;
     logic [24:0] heartbeat_count;
@@ -71,13 +79,26 @@ module kcu105_pcie_phy_bringup_top #(
     endgenerate
 
     always_comb begin
-        phy_powerdown  = 2'b10;
-        phy_txdetectrx = 1'b0;
+        phy_powerdown      = 2'b10;
+        phy_txdetectrx     = 1'b0;
+        phy_rate_cmd       = 2'b00;
+        phy_txelecidle_cmd = 1'b1;
         if ((bup_state == BUP_DETECT) ||
             (bup_state == BUP_WAIT_STATUS)) begin
             phy_txdetectrx = 1'b1;
         end
+        if ((GEN3_TEST_MODE != 0) && gen3_test_active) begin
+            // K02 不实现 LTSSM/TS1/TS2；这里只把 standalone PHY 置于
+            // P0 并请求 Gen3，用于直接观察 QPLL1 与 PHY rate handshake。
+            phy_powerdown      = 2'b00;
+            phy_rate_cmd       = 2'b10;
+            phy_txelecidle_cmd = 1'b1;
+        end
     end
+
+    assign phy_rate_debug       = phy_rate_cmd;
+    assign phy_powerdown_debug  = phy_powerdown;
+    assign phy_txelecidle_debug = phy_txelecidle_cmd;
 
     always_ff @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) begin
@@ -89,6 +110,7 @@ module kcu105_pcie_phy_bringup_top #(
             receiver_present   <= 1'b0;
             detect_timeout     <= 1'b0;
             unexpected_status  <= 1'b0;
+            gen3_test_active   <= 1'b0;
             heartbeat_count    <= '0;
         end else begin
             heartbeat_count <= heartbeat_count + 1'b1;
@@ -128,6 +150,8 @@ module kcu105_pcie_phy_bringup_top #(
                 end
 
                 BUP_DONE: begin
+                    if (GEN3_TEST_MODE != 0)
+                        gen3_test_active <= 1'b1;
                     bup_state <= BUP_DONE;
                 end
 
@@ -165,11 +189,11 @@ module kcu105_pcie_phy_bringup_top #(
         .phy_txstart_block      (1'b0),
         .phy_txsync_header      (2'b0),
         .phy_txdetectrx         (phy_txdetectrx),
-        .phy_txelecidle         (1'b1),
+        .phy_txelecidle         (phy_txelecidle_cmd),
         .phy_txcompliance       (1'b0),
         .phy_rxpolarity         (1'b0),
         .phy_powerdown          (phy_powerdown),
-        .phy_rate               (2'b00),
+        .phy_rate               (phy_rate_cmd),
         .phy_txmargin           (3'b0),
         .phy_txswing            (1'b0),
         .phy_txdeemph           (1'b0),

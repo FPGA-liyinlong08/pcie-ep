@@ -5,6 +5,11 @@ set xci_path    [file join $script_dir ip pcie_phy_x1_gen3 pcie_phy_x1_gen3.xci]
 set part_name   xcku040-ffva1156-2-e
 set top_name    kcu105_pcie_phy_bringup_top
 
+set k02_ila_debug [expr {![info exists ::env(K02_ILA_DEBUG)] ||
+                          $::env(K02_ILA_DEBUG) eq "1"}]
+set k02_gen3_test [expr {![info exists ::env(K02_GEN3_TEST)] ||
+                          $::env(K02_GEN3_TEST) eq "1"}]
+
 file mkdir $build_dir
 
 if {![file exists $xci_path]} {
@@ -29,7 +34,108 @@ read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_wrapper.sv]
 read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_bringup_top.sv]
 read_xdc [file join $script_dir k02_pcie_phy_bringup.xdc]
 
-synth_design -top $top_name -part $part_name
+synth_design -top $top_name -part $part_name \
+    -generic GEN3_TEST_MODE=$k02_gen3_test
+
+if {$k02_ila_debug} {
+    # K02 standalone PHY 没有协议层 ILA；这里直接从综合网表中的 GT Wizard
+    # 网络/primitive pin 建立一个同一 phy_pclk 域的诊断 ILA。所有连接失败
+    # 都让构建失败，避免生成“看似有 ILA、实际没有 QPLL1LOCK”的假 bit。
+    proc k02_net {regexp_pattern} {
+        set nets [get_nets -hierarchical -quiet -regexp $regexp_pattern]
+        if {[llength $nets] != 1} {
+            error "K02 ILA网络不存在或不唯一：$regexp_pattern，实际[llength $nets]，候选=[join $nets { | }]"
+        }
+        set_property MARK_DEBUG TRUE $nets
+        return $nets
+    }
+    proc k02_primitive_pin {cell_ref ref_pin} {
+        set cells [get_cells -hierarchical -quiet -filter "REF_NAME == $cell_ref"]
+        if {[llength $cells] != 1} {
+            error "K02 ILA primitive不存在或不唯一：$cell_ref，实际[llength $cells]"
+        }
+        set pins [get_pins -quiet -of_objects [lindex $cells 0] \
+                    -filter "REF_PIN_NAME == $ref_pin"]
+        if {[llength $pins] != 1} {
+            error "K02 ILA primitive pin不存在或不唯一：$cell_ref/$ref_pin，实际[llength $pins]"
+        }
+        set nets [get_nets -quiet -of_objects $pins]
+        if {[llength $nets] != 1} {
+            error "K02 ILA primitive pin无唯一网络：$cell_ref/$ref_pin"
+        }
+        set_property MARK_DEBUG TRUE $nets
+        return $nets
+    }
+    proc k02_bus {regexp_pattern expected_width} {
+        set nets [lsort -dictionary [get_nets -hierarchical -quiet -regexp $regexp_pattern]]
+        if {[llength $nets] != $expected_width} {
+            error "K02 ILA总线宽度错误：$regexp_pattern，实际[llength $nets]，期望$expected_width"
+        }
+        set_property MARK_DEBUG TRUE $nets
+        return $nets
+    }
+    proc k02_add_probe {core_name probe_index nets} {
+        if {$probe_index != 0} { create_debug_port $core_name probe }
+        set port [get_debug_ports ${core_name}/probe${probe_index}]
+        set_property port_width [llength $nets] $port
+        connect_debug_port $port $nets
+    }
+
+    create_debug_core u_ila_k02 ila
+    set_property C_DATA_DEPTH 8192 [get_debug_cores u_ila_k02]
+    set_property C_TRIGIN_EN false [get_debug_cores u_ila_k02]
+    set_property C_TRIGOUT_EN false [get_debug_cores u_ila_k02]
+    set_property C_INPUT_PIPE_STAGES 1 [get_debug_cores u_ila_k02]
+    connect_debug_port u_ila_k02/clk [k02_net {(^|/)phy_pclk$}]
+    set k02_gt_prefix {^u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/}
+
+    # probe0 低到高位映射：
+    # QPLL1LOCK(primitive)、QPLL1LOCK(Wizard)、QPLL1RESET、QPLL1PD、
+    # PHY rate/powerdown/TX idle、Gen3 rate handshake、RX reset/data 状态、
+    # PHY PhyStatus/复位和 Gen3 测试状态。
+    set k02_probe0 [list \
+        [k02_primitive_pin GTHE3_COMMON QPLL1LOCK] \
+        [k02_net [format {%sqpll1lock_out\[0\]$} $k02_gt_prefix]] \
+        [k02_primitive_pin GTHE3_COMMON QPLL1RESET] \
+        [k02_primitive_pin GTHE3_COMMON QPLL1PD] \
+        [k02_bus {.*phy_rate_debug\[0\]$} 1] \
+        [k02_bus {.*phy_rate_debug\[1\]$} 1] \
+        [k02_bus {.*phy_powerdown_debug\[0\]$} 1] \
+        [k02_bus {.*phy_powerdown_debug\[1\]$} 1] \
+        [k02_net {.*phy_txelecidle_debug$}] \
+        [k02_net [format {%spcierategen3_out\[0\]$} $k02_gt_prefix]] \
+        [k02_net [format {%spcierateqpllreset_out\[0\]$} $k02_gt_prefix]] \
+        [k02_net [format {%spcierateqpllpd_out\[0\]$} $k02_gt_prefix]] \
+        [k02_primitive_pin GTHE3_CHANNEL PCIEUSERGEN3RDY] \
+        [k02_primitive_pin GTHE3_CHANNEL PCIEUSERRATESTART] \
+        [k02_net [format {%srxresetdone_out\[0\]$} $k02_gt_prefix]] \
+        [k02_net [format {%srxelecidle_out\[0\]$} $k02_gt_prefix]] \
+        [k02_net [format {%srxvalid_out\[0\]$} $k02_gt_prefix]] \
+        [k02_bus [format {%srxstatus_out\[0\]$} $k02_gt_prefix] 1] \
+        [k02_bus [format {%srxstatus_out\[1\]$} $k02_gt_prefix] 1] \
+        [k02_bus [format {%srxstatus_out\[2\]$} $k02_gt_prefix] 1] \
+        [k02_net {^u_phy_wrapper/phy_phystatus$}] \
+        [k02_net {^u_phy_wrapper/phy_phystatus_rst$}] \
+        [k02_bus {.*phy_rate_debug\[0\]$} 1] \
+        [k02_bus {.*phy_rate_debug\[1\]$} 1] \
+        [k02_net {.*gen3_test_active$}]]
+    set k02_probe0 [concat {*}$k02_probe0]
+    if {[llength $k02_probe0] != 25} {
+        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望25"
+    }
+    k02_add_probe u_ila_k02 0 $k02_probe0
+
+    # probe1：bring-up FSM 和 Detect 结果，便于把 QPLL1 变化对齐到状态转换。
+    set k02_probe1 [concat \
+        [k02_bus {.*bup_state\[[0-2]\]$} 3] \
+        [k02_net {.*detect_done$}] \
+        [k02_net {.*receiver_present$}] \
+        [k02_net {.*detect_timeout$}] \
+        [k02_net {.*unexpected_status$}] \
+        [k02_bus {.*detected_rxstatus\[[0-2]\]$} 3]]
+    k02_add_probe u_ila_k02 1 $k02_probe1
+    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test"
+}
 write_checkpoint -force [file join $build_dir k02_synth.dcp]
 report_utilization -file [file join $build_dir utilization_synth.rpt]
 report_cdc -details -file [file join $build_dir cdc_synth.rpt]
@@ -100,7 +206,12 @@ if {$wns < 0.0} {
     error "K02 Route 后时序失败：WNS=$wns"
 }
 
-write_bitstream -force [file join $build_dir k02_pcie_phy_bringup.bit]
+set bit_name [expr {$k02_ila_debug ? "k02_pcie_phy_bringup_ila.bit" :
+                                      "k02_pcie_phy_bringup.bit"}]
+write_bitstream -force [file join $build_dir $bit_name]
+if {$k02_ila_debug} {
+    write_debug_probes -force [file join $build_dir k02_pcie_phy_bringup_ila.ltx]
+}
 
 set summary_path [file join $build_dir impl_summary.txt]
 set summary_file [open $summary_path w]
@@ -113,7 +224,9 @@ puts $summary_file "GTHE3_COMMON_COUNT=[llength $gth_commons]"
 puts $summary_file "GTHE3_COMMON_LOC=$common_loc"
 puts $summary_file "PCIE_HARD_BLOCK_COUNT=$hard_pcie_count"
 puts $summary_file "WNS=$wns"
-puts $summary_file "bitstream=[file join $build_dir k02_pcie_phy_bringup.bit]"
+puts $summary_file "K02_ILA_DEBUG=$k02_ila_debug"
+puts $summary_file "GEN3_TEST_MODE=$k02_gen3_test"
+puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
 
 puts "K02_IMPL_PASS channel=$channel_loc common=$common_loc WNS=$wns"

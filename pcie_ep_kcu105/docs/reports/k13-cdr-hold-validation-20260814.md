@@ -81,6 +81,81 @@ rate change 时失锁。
 
 Root Port 在本轮采样后仍未枚举 `01:00.0`，所以本证据仍不构成 Gen3 PASS。
 
+### 2.2 基于 `1ab305c` 的重新实现、重上板与同触发器复测
+
+为验证提交 `1ab305c` 是否改变 `Recovery.Speed` 的实际 rate-change 行为，按原
+构建参数重新执行了完整流程：
+
+```text
+K13_ENABLE=1
+K11B2_ILA_DEBUG=1
+K13_RXEQ_BOOTSTRAP=1
+K13_CDR_HOLD_RECOVERY=1
+K13_GT_PRIMITIVE_DEBUG=1
+K13_GT_QPLL_PREREQ_DEBUG=1
+```
+
+执行顺序如下：
+
+1. 以 `1ab305c` 为源码基线，运行 `fpga/kcu105/run_k11b2_impl.sh`，重新综合、
+   实现并生成 bit/LTX；Vivado 输出 `K13_ILA_IMPL_PASS`，bitgen 成功。
+2. 启动 `hw_server`，通过 `127.0.0.1:3122` 连接 KCU105，并使用
+   `fpga/kcu105/run_k11b2_ila_hw.tcl program-arm-k13-recovery` 下载新的 bit/LTX
+   后同时 arm PIPE/Core 两个 ILA。
+3. 对 Root Port `wx@192.168.11.126` 执行远程 PCIe 设备重启，等待 SSH 恢复；
+   本次 `REMOTE_SSH_READY` 在 36 s 后返回。
+4. 使用与上一轮完全相同的 PIPE ILA 触发器 `dbg_pipe_top[57]=1`、512 点
+   pre-trigger 上传采样；Vivado 报告 PIPE 和 Core 两个 ILA 均已触发并完成上传。
+
+本轮实现结果：
+
+```text
+build:  fpga/kcu105/build_k13_gen3_ila_cdr_hold_gt_primitive
+WNS:    -0.228 ns
+bit:    k11b2_gen1_endpoint_ila.bit
+bit SHA256: f717523e41a62a086b8b936ec959373ec7ae9953b19002384cf5d2d87be8d94a
+ltx:    k11b2_gen1_endpoint_ila.ltx
+ltx SHA256: 87dbd596b43ebe21d59aaff932e8e84ebcbaa17bc37e1d3239ca2e4631aaea43
+```
+
+采样文件：
+
+```text
+fpga/kcu105/build_k13_gen3_ila_cdr_hold_gt_primitive/capture/20260814_192611_u_ila_pipe.csv
+fpga/kcu105/build_k13_gen3_ila_cdr_hold_gt_primitive/capture/20260814_192611_u_ila_pipe.ila
+fpga/kcu105/build_k13_gen3_ila_cdr_hold_gt_primitive/capture/20260814_192611_u_ila_core.csv
+fpga/kcu105/build_k13_gen3_ila_cdr_hold_gt_primitive/capture/20260814_192611_u_ila_core.ila
+```
+
+PIPE ILA 解码结果：
+
+| Sample | 事件 |
+|---:|---|
+| 682 | LTSSM 进入 `Recovery.Speed`，最终状态保持 `0x12` |
+| 694 | `phy_rate/rxrate: 0 -> 2`，进入 Gen3 rate 目标 |
+| 702 | `PCIERATEIDLE: 1 -> 0` |
+| 704 | `QPLL1RESET: 0 -> 1`，同时 `QPLL1LOCK: 1 -> 0` |
+| 709 | `QPLL1RESET: 1 -> 0`，`QPLL1LOCK` 未恢复 |
+| 712–720 | `PCIEUSERRATESTART` 产生脉冲 |
+| 715 | `PCIERATEGEN3: 0 -> 1` |
+| 4095 | `PCIEUSERGEN3RDY=0`、`PhyStatus=0`、`data_valid=0`，仍停在 `Recovery.Speed` |
+
+窗口统计为：`recovery_samples=3584`、`eq_active_samples=0`、
+`speed_timeout=0`、`cdr_loss=0`；PHY RX `valid_samples=697`，但
+`data_valid_samples=0`。Core ILA 未观察到 CFG request/response handshake，最终
+`bdf_valid=0`，符合 Root Port 未完成 Endpoint 枚举的现象。
+
+与上一轮 `20260814_162038` 采样对比，新的 `1ab305c` 版本已经能观察到
+`PCIEUSERRATESTART` 和 `PCIERATEGEN3` 的实际脉冲/置位，说明 rate-change
+握手比上一轮前进了一步；但 `QPLL1LOCK` 仍在 QPLL1 reset 脉冲处丢失且在窗口内
+没有恢复，`PCIEUSERGEN3RDY`、`PhyStatus` 和 Gen3 RX `data_valid` 仍未有效。
+因此本轮确认了“控制序列发生了变化”，但仍不能判定 Recovery.Speed 或 Gen3
+链路通过，当前首要故障点仍是 QPLL1 lock/其前置条件与后续 rate-handshake。
+
+注意：该轮 Vivado 本身已完成实现和 bitgen；外层 shell 最后返回非零，是因为
+现有 warning allowlist 尚未包含新的 `Timing 38-252`、`Timing 38-277` 两类
+诊断告警，不代表 bit/LTX 生成失败。
+
 ## 3. 已知限制
 
 - 当前结果是诊断构建，WNS 为负，不能作为正式实现时序通过。

@@ -39,6 +39,13 @@ expected_warning_ids="$(printf '%s\n' \
     'Synth 8-7071' \
     'Synth 8-7080' \
     'Synth 8-7129')"
+if [[ "${K02_ILA_DEBUG:-1}" == "1" ]]; then
+    expected_warning_ids="$(printf '%s\n' \
+        "${expected_warning_ids}" \
+        'DRC PDCN-1569' \
+        'DRC RTSTAT-10' \
+        'Timing 38-436' | sort -u)"
+fi
 if [[ "${actual_warning_ids}" != "${expected_warning_ids}" ]]; then
     echo "错误：K02 Vivado Warning ID 集合与固定 allowlist 不一致" >&2
     echo "实际：" >&2
