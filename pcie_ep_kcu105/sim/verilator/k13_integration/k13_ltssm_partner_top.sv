@@ -50,6 +50,7 @@ module k13_ltssm_partner_top #(
     output wire [31:0] timeout_count,
     output wire [2:0]  speed_state,
     output wire        recovery_active,
+    output wire        as_cdr_hold_req,
     output wire        eq_active,
     output wire        eq_done,
     output wire        eq_failed,
@@ -73,7 +74,7 @@ module k13_ltssm_partner_top #(
     wire phy_txcompliance, phy_rxpolarity;
     wire [2:0] phy_txmargin;
     wire phy_txswing, phy_txdeemph;
-    wire as_mac_in_detect, as_cdr_hold_req;
+    wire as_mac_in_detect;
     wire [15:0] rx_pkt_data;
     wire [1:0] rx_pkt_keep;
     wire rx_pkt_valid, rx_pkt_sop, rx_pkt_eop, rx_pkt_is_dllp;

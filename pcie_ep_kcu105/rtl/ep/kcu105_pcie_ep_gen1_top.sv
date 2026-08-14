@@ -207,7 +207,7 @@ module kcu105_pcie_ep_gen1_top #(
             phy_txdata_valid, phy_txstart_block, phy_txsync_header,
             phy_rxdata_valid, phy_rxstart_block, phy_rxsync_header,
             phy_rxelecidle, phy_phystatus, phy_rxstatus,
-            ltssm_state, 6'd0
+            ltssm_state, 5'd0, as_cdr_hold_req
         };
     end endgenerate
 

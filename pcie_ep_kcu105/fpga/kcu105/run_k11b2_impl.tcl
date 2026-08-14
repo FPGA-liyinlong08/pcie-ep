@@ -8,8 +8,21 @@ set k13_rxeq_bootstrap [expr {![info exists ::env(K13_RXEQ_BOOTSTRAP)] ||
                               $::env(K13_RXEQ_BOOTSTRAP) ne "0"}]
 set k13_gt_rate_done_tie_high [expr {[info exists ::env(K13_GT_RATE_DONE_TIE_HIGH)] &&
                                      $::env(K13_GT_RATE_DONE_TIE_HIGH) eq "1"}]
+set k13_gt_rate_done_start_pulse [expr {[info exists ::env(K13_GT_RATE_DONE_START_PULSE)] &&
+                                        $::env(K13_GT_RATE_DONE_START_PULSE) eq "1"}]
+set k13_gt_rate_done_reset_release_pulse [expr {[info exists ::env(K13_GT_RATE_DONE_RESET_RELEASE_PULSE)] &&
+                                                $::env(K13_GT_RATE_DONE_RESET_RELEASE_PULSE) eq "1"}]
+set k13_cdr_hold_recovery [expr {[info exists ::env(K13_CDR_HOLD_RECOVERY)] &&
+                                  $::env(K13_CDR_HOLD_RECOVERY) eq "1"}]
 set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RESET_FORWARD)] &&
                                           $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
+set k13_gt_primitive_debug [expr {[info exists ::env(K13_GT_PRIMITIVE_DEBUG)] &&
+                                  $::env(K13_GT_PRIMITIVE_DEBUG) eq "1"}]
+set k13_gt_rate_direct_source [expr {$k13_gt_rate_done_tie_high ||
+                                     $k13_gt_rate_done_start_pulse ||
+                                     $k13_gt_rate_done_reset_release_pulse ||
+                                     $k13_gt_rate_qpll_reset_forward ||
+                                     $k13_gt_primitive_debug}]
 set ila_pipe_only [expr {$ila_debug && [info exists ::env(K11B2_ILA_PIPE_ONLY)] &&
                          $::env(K11B2_ILA_PIPE_ONLY) eq "1"}]
 set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
@@ -37,6 +50,9 @@ if {$ila_debug &&
 }
 if {$ila_debug && $g2_gen1_only} {
   error "G2 Gen1/CPLL诊断构建不支持ILA模式"
+}
+if {$k13_gt_primitive_debug && (!$k13_enable || !$ila_debug)} {
+  error "K13_GT_PRIMITIVE_DEBUG requires K13_ENABLE=1 and K11B2_ILA_DEBUG=1"
 }
 if {$g7_rx_p0_quiet && !$ila_debug} {
   error "G7 Detect.Quiet P0诊断必须启用K11B2_ILA_DEBUG"
@@ -92,7 +108,11 @@ if {$k13_enable} {
   set build_variant [expr {$ila_debug ? "build_k13_gen3_ila" : "build_k13_gen3"}]
   if {!$k13_rxeq_bootstrap} { set build_variant "${build_variant}_rxeq_off" }
   if {$k13_gt_rate_done_tie_high} { set build_variant "${build_variant}_gt_rate_done1" }
+  if {$k13_gt_rate_done_start_pulse} { set build_variant "${build_variant}_gt_rate_done_start" }
+  if {$k13_gt_rate_done_reset_release_pulse} { set build_variant "${build_variant}_gt_rate_done_reset_release" }
+  if {$k13_cdr_hold_recovery} { set build_variant "${build_variant}_cdr_hold" }
   if {$k13_gt_rate_qpll_reset_forward} { set build_variant "${build_variant}_gt_qpllreset" }
+  if {$k13_gt_primitive_debug} { set build_variant "${build_variant}_gt_primitive" }
 }
 set build_dir   [file join $script_dir $build_variant impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
@@ -170,7 +190,11 @@ if {$k13_gt_rate_qpll_reset_forward} {
   close $qpll_reset_f
   puts "K13_GT_RATE_QPLL_RESET_FORWARD_PATCH=$qpll_reset_src"
 }
-set k13_gt_rate_direct_source [expr {$k13_gt_rate_done_tie_high || $k13_gt_rate_qpll_reset_forward}]
+set k13_gt_rate_direct_source [expr {$k13_gt_rate_done_tie_high ||
+                                      $k13_gt_rate_done_start_pulse ||
+                                      $k13_gt_rate_done_reset_release_pulse ||
+                                      $k13_gt_rate_qpll_reset_forward ||
+                                      $k13_gt_primitive_debug}]
 
 # Diagnostic-only A variant. The generated PHY currently hardwires
 # GT_PCIEUSERRATEDONE low; patch only this dedicated generated source so the
@@ -205,6 +229,120 @@ if {$k13_gt_rate_direct_source} {
   puts -nonewline $rate_done_f $rate_done_text
   close $rate_done_f
   puts "K13_GT_RATE_DONE_TIE_HIGH_PATCH=$rate_done_src"
+  }
+
+  if {$k13_gt_rate_done_start_pulse} {
+    set rate_done_src [file join $phy_ip_root $phy_module source pcie_phy_x1_gen3_core_top.v]
+    if {![file exists $rate_done_src]} {
+      error "GT START/DONE diagnostic source not found: $rate_done_src"
+    }
+    set rate_done_f [open $rate_done_src r]
+    set rate_done_text [read $rate_done_f]
+    close $rate_done_f
+
+    # The generated wrapper exposes USERRATESTART from the GT wizard but
+    # hardwires USERRATEDONE low.  Echo only the START rising edge one PCLK
+    # later, preserving a bounded handshake pulse for this diagnostic build.
+    set decl_old {   wire                          phy_pclk2;}
+    set decl_new {   wire                          phy_pclk2;
+   (* MARK_DEBUG = "TRUE", KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0] gt_pcieuserratestart_diag;
+   (* MARK_DEBUG = "TRUE", KEEP = "TRUE", DONT_TOUCH = "TRUE" *) reg  [PHY_LANE-1:0] gt_pcieuserratestart_diag_d;
+   (* MARK_DEBUG = "TRUE", KEEP = "TRUE", DONT_TOUCH = "TRUE" *) reg  [PHY_LANE-1:0] gt_pcieuserratedone_diag;
+   always @(posedge phy_pclk2) begin
+      if (phy_phystatus_rst_pclk2) begin
+         gt_pcieuserratestart_diag_d <= {PHY_LANE{1'b0}};
+         gt_pcieuserratedone_diag <= {PHY_LANE{1'b0}};
+      end else begin
+         gt_pcieuserratedone_diag <= gt_pcieuserratestart_diag &
+                                     ~gt_pcieuserratestart_diag_d;
+         gt_pcieuserratestart_diag_d <= gt_pcieuserratestart_diag;
+      end
+   end}
+    if {[string first $decl_old $rate_done_text] < 0} {
+      error "GT START/DONE diagnostic declaration anchor not found"
+    }
+    set rate_done_text [string map [list $decl_old $decl_new] $rate_done_text]
+
+    set done_old {.GT_PCIEUSERRATEDONE    ( {PHY_LANE{1'b0}} ),}
+    set done_new {.GT_PCIEUSERRATEDONE    ( gt_pcieuserratedone_diag ),}
+    if {[string first $done_old $rate_done_text] < 0} {
+      error "GT START/DONE diagnostic hardwired-low input not found"
+    }
+    set rate_done_text [string map [list $done_old $done_new] $rate_done_text]
+
+    set start_old {.GT_PCIEUSERRATESTART   (  ),}
+    set start_new {.GT_PCIEUSERRATESTART   ( gt_pcieuserratestart_diag ),}
+    if {[string first $start_old $rate_done_text] < 0} {
+      error "GT START/DONE diagnostic START output connection not found"
+    }
+    set rate_done_text [string map [list $start_old $start_new] $rate_done_text]
+
+    set rate_done_f [open $rate_done_src w]
+    puts -nonewline $rate_done_f $rate_done_text
+    close $rate_done_f
+    puts "K13_GT_RATE_DONE_START_PULSE_PATCH=$rate_done_src"
+  }
+
+  if {$k13_gt_rate_done_reset_release_pulse} {
+    set rate_done_src [file join $phy_ip_root $phy_module source pcie_phy_x1_gen3_core_top.v]
+    if {![file exists $rate_done_src]} {
+      error "GT delayed DONE diagnostic source not found: $rate_done_src"
+    }
+    set rate_done_f [open $rate_done_src r]
+    set rate_done_text [read $rate_done_f]
+    close $rate_done_f
+
+    # The GT primitive's USERRATESTART is an output status and was observed
+    # low throughout the real rate-change window.  Generate one diagnostic
+    # DONE pulse at the measured QPLL reset-release boundary instead of
+    # fabricating START.  This tests DONE timing without changing production
+    # rate or reset control.
+    set decl_old {   wire                          phy_pclk2;}
+    set decl_new {   wire                          phy_pclk2;
+   (* MARK_DEBUG = "TRUE", KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0] gt_pcieuserratestart_diag;
+   (* MARK_DEBUG = "TRUE", KEEP = "TRUE", DONT_TOUCH = "TRUE" *) reg  [1:0]          phy_rate_diag_d;
+   (* MARK_DEBUG = "TRUE", KEEP = "TRUE", DONT_TOUCH = "TRUE" *) reg  [4:0]          gt_pcieuserrate_done_delay;
+   (* MARK_DEBUG = "TRUE", KEEP = "TRUE", DONT_TOUCH = "TRUE" *) reg  [PHY_LANE-1:0] gt_pcieuserratedone_diag;
+   always @(posedge phy_pclk2) begin
+      if (phy_phystatus_rst_pclk2) begin
+         phy_rate_diag_d <= 2'b00;
+         gt_pcieuserrate_done_delay <= 5'd0;
+         gt_pcieuserratedone_diag <= {PHY_LANE{1'b0}};
+      end else begin
+         gt_pcieuserratedone_diag <= {PHY_LANE{1'b0}};
+         if ((phy_rate_32b == 2'b10) && (phy_rate_diag_d != 2'b10)) begin
+            gt_pcieuserrate_done_delay <= 5'd15;
+         end else if (gt_pcieuserrate_done_delay != 5'd0) begin
+            gt_pcieuserrate_done_delay <= gt_pcieuserrate_done_delay - 1'b1;
+            if (gt_pcieuserrate_done_delay == 5'd1)
+              gt_pcieuserratedone_diag <= {PHY_LANE{1'b1}};
+         end
+         phy_rate_diag_d <= phy_rate_32b;
+      end
+   end}
+    if {[string first $decl_old $rate_done_text] < 0} {
+      error "GT delayed DONE diagnostic declaration anchor not found"
+    }
+    set rate_done_text [string map [list $decl_old $decl_new] $rate_done_text]
+
+    set done_old {.GT_PCIEUSERRATEDONE    ( {PHY_LANE{1'b0}} ),}
+    set done_new {.GT_PCIEUSERRATEDONE    ( gt_pcieuserratedone_diag ),}
+    if {[string first $done_old $rate_done_text] < 0} {
+      error "GT delayed DONE diagnostic hardwired-low input not found"
+    }
+    set rate_done_text [string map [list $done_old $done_new] $rate_done_text]
+
+    set start_old {.GT_PCIEUSERRATESTART   (  ),}
+    set start_new {.GT_PCIEUSERRATESTART   ( gt_pcieuserratestart_diag ),}
+    if {[string first $start_old $rate_done_text] < 0} {
+      error "GT delayed DONE diagnostic START output connection not found"
+    }
+    set rate_done_text [string map [list $start_old $start_new] $rate_done_text]
+
+    set rate_done_f [open $rate_done_src w]
+    puts -nonewline $rate_done_f $rate_done_text
+    close $rate_done_f
+    puts "K13_GT_RATE_DONE_RESET_RELEASE_PULSE_PATCH=$rate_done_src delay=15"
   }
 
   # Direct-source synthesis otherwise removes the GT boundary nets before the
@@ -406,6 +544,27 @@ if {$ila_debug} {
     set_property MARK_DEBUG TRUE $result
     return $result
   }
+  proc phy_primitive_pin_nets {cell_ref pin_pattern expected_width} {
+    set cells [get_cells -hierarchical -quiet -filter "REF_NAME =~ ${cell_ref}*"]
+    if {[llength $cells] != 1} {
+      error "K13 primitive cell不存在或不唯一：$cell_ref，实际[llength $cells]"
+    }
+    set pins {}
+    foreach pin [get_pins -quiet -of_objects [lindex $cells 0]] {
+      set ref_pin [get_property REF_PIN_NAME $pin]
+      if {$expected_width == 1} {
+        if {$ref_pin eq $pin_pattern} { lappend pins $pin }
+      } elseif {[regexp "^${pin_pattern}\\\[[0-9]+\\\]$" $ref_pin]} {
+        lappend pins $pin
+      }
+    }
+    set nets [lsort -dictionary [get_nets -quiet -of_objects $pins]]
+    if {[llength $nets] != $expected_width} {
+      error "K13 primitive端口宽度错误：$cell_ref/$pin_pattern，实际[llength $nets]，期望$expected_width"
+    }
+    set_property MARK_DEBUG TRUE $nets
+    return $nets
+  }
   proc add_ila_probe {core_name probe_index nets} {
     if {$probe_index != 0} { create_debug_port $core_name probe }
     set port [get_debug_ports ${core_name}/probe${probe_index}]
@@ -540,6 +699,25 @@ if {$ila_debug} {
   # TX/RX first-block boundary evidence. The packed field order is in RTL.
   add_ila_probe u_ila_pipe 19 \
     [debug_bus_nets {.*dbg_k13_top.*\[[0-9]+\]$} 64]
+  if {$k13_gt_primitive_debug} {
+    # K13 probe20：直接从实际 GTHE3_COMMON/GTHE3_CHANNEL primitive 取样。
+    # 低到高依次为 QPLL1PD、QPLL1RESET、QPLL1LOCKEN、
+    # TX/RX PLLCLKSEL、TX/RX RATE，以及诊断版USERRATEDONE。
+    set gt_primitive_probe_nets [list \
+      [phy_primitive_pin_nets GTHE3_COMMON QPLL1PD 1] \
+      [phy_primitive_pin_nets GTHE3_COMMON QPLL1RESET 1] \
+      [phy_primitive_pin_nets GTHE3_COMMON QPLL1LOCKEN 1] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL TXPLLCLKSEL 2] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL RXPLLCLKSEL 2] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL TXRATE 3] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL RXRATE 3]]
+    if {$k13_gt_rate_done_start_pulse || $k13_gt_rate_done_reset_release_pulse} {
+      set gt_primitive_probe_nets [concat $gt_primitive_probe_nets \
+        [debug_bus_nets {.*gt_pcieuserratedone_diag.*} 1]]
+    }
+    set gt_primitive_probe_nets [concat {*}$gt_primitive_probe_nets]
+    add_ila_probe u_ila_pipe 20 $gt_primitive_probe_nets
+  }
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
@@ -691,6 +869,9 @@ puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
 puts $summary_file "K13_ENABLE=$k13_enable"
 puts $summary_file "K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap"
 puts $summary_file "K13_GT_RATE_DONE_TIE_HIGH=$k13_gt_rate_done_tie_high"
+puts $summary_file "K13_GT_RATE_DONE_START_PULSE=$k13_gt_rate_done_start_pulse"
+puts $summary_file "K13_GT_RATE_DONE_RESET_RELEASE_PULSE=$k13_gt_rate_done_reset_release_pulse"
+puts $summary_file "K13_CDR_HOLD_RECOVERY=$k13_cdr_hold_recovery"
 puts $summary_file "K13_GT_RATE_QPLL_RESET_FORWARD=$k13_gt_rate_qpll_reset_forward"
 puts $summary_file "G7_RX_P0_QUIET=$g7_rx_p0_quiet"
 puts $summary_file "G8_FAST_DETECT=$g8_fast_detect"

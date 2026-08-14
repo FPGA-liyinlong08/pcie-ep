@@ -236,6 +236,7 @@ async def production_ltssm_gen1_to_gen3_eq_closed_loop(dut):
     await wait_state(dut, RECOVERY_RCVRCFG)
     await send_ts(dut, 2, 8, link=0, lane=0, rate=0x8E)
     await wait_state(dut, RECOVERY_SPEED)
+    assert int(dut.as_cdr_hold_req.value) == 1
 
     phases = []
     saw_ts1 = saw_ts2 = False
@@ -260,6 +261,7 @@ async def production_ltssm_gen1_to_gen3_eq_closed_loop(dut):
         f"ltssm={int(dut.ltssm_state.value)} speed={int(dut.speed_state.value)}"
     )
     assert saw_recovery_idle
+    assert int(dut.as_cdr_hold_req.value) == 0
     assert int(dut.ts_reject.value) == 0
     assert int(dut.fallback_sticky.value) == 0
     assert int(dut.eq_failed.value) == 0
@@ -307,6 +309,7 @@ async def partner_initiated_speed_change_closes_recovery_and_eq(dut):
     await wait_state(dut, RECOVERY_RCVRCFG)
     await send_ts(dut, 2, 8, link=0, lane=0, rate=0x8E)
     await wait_state(dut, RECOVERY_SPEED)
+    assert int(dut.as_cdr_hold_req.value) == 1
 
     phases = []
     saw_ts1 = saw_ts2 = saw_eq_done = saw_recovery_idle = False
@@ -326,6 +329,7 @@ async def partner_initiated_speed_change_closes_recovery_and_eq(dut):
     assert int(dut.phy_rate.value) == 2
     assert saw_ts1 and saw_ts2
     assert saw_recovery_idle and saw_eq_done
+    assert int(dut.as_cdr_hold_req.value) == 0
     assert phases == [0, 1, 2, 3, 4]
     assert int(dut.ts_reject.value) == 0
     assert int(dut.fallback_sticky.value) == 0

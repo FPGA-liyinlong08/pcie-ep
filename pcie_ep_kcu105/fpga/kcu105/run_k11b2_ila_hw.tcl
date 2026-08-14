@@ -17,8 +17,16 @@ set k13_rxeq_bootstrap [expr {![info exists ::env(K13_RXEQ_BOOTSTRAP)] ||
                               $::env(K13_RXEQ_BOOTSTRAP) ne "0"}]
 set k13_gt_rate_done_tie_high [expr {[info exists ::env(K13_GT_RATE_DONE_TIE_HIGH)] &&
                                      $::env(K13_GT_RATE_DONE_TIE_HIGH) eq "1"}]
+set k13_gt_rate_done_start_pulse [expr {[info exists ::env(K13_GT_RATE_DONE_START_PULSE)] &&
+                                        $::env(K13_GT_RATE_DONE_START_PULSE) eq "1"}]
+set k13_gt_rate_done_reset_release_pulse [expr {[info exists ::env(K13_GT_RATE_DONE_RESET_RELEASE_PULSE)] &&
+                                                $::env(K13_GT_RATE_DONE_RESET_RELEASE_PULSE) eq "1"}]
+set k13_cdr_hold_recovery [expr {[info exists ::env(K13_CDR_HOLD_RECOVERY)] &&
+                                  $::env(K13_CDR_HOLD_RECOVERY) eq "1"}]
 set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RESET_FORWARD)] &&
                                           $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
+set k13_gt_primitive_debug [expr {[info exists ::env(K13_GT_PRIMITIVE_DEBUG)] &&
+                                  $::env(K13_GT_PRIMITIVE_DEBUG) eq "1"}]
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
@@ -43,7 +51,11 @@ if {$k13_enable} {
   set build_name "build_k13_gen3_ila"
   if {!$k13_rxeq_bootstrap} { set build_name "${build_name}_rxeq_off" }
   if {$k13_gt_rate_done_tie_high} { set build_name "${build_name}_gt_rate_done1" }
+  if {$k13_gt_rate_done_start_pulse} { set build_name "${build_name}_gt_rate_done_start" }
+  if {$k13_gt_rate_done_reset_release_pulse} { set build_name "${build_name}_gt_rate_done_reset_release" }
+  if {$k13_cdr_hold_recovery} { set build_name "${build_name}_cdr_hold" }
   if {$k13_gt_rate_qpll_reset_forward} { set build_name "${build_name}_gt_qpllreset" }
+  if {$k13_gt_primitive_debug} { set build_name "${build_name}_gt_primitive" }
 }
 set impl_dir    [file join $script_dir $build_name impl]
 set capture_dir [file join $script_dir $build_name capture]

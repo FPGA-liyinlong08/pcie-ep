@@ -596,7 +596,11 @@ module pcie_ltssm_mac_gen1 #(
                                 (ltssm_state == DETECT_ACTIVE) ||
                                 (ltssm_state == WAIT_REMOTE_DETECT) ||
                                 (ltssm_state == G9_DETECT_TIMEOUT);
-    assign as_cdr_hold_req    = 1'b0;
+    // PG239 PHY assist contract: hold the RX CDR while the LTSSM is
+    // changing rate in Recovery.Speed.  The current MAC does not yet
+    // implement the L1/Loopback states, so Recovery.Speed is the only
+    // applicable state in this integration.
+    assign as_cdr_hold_req    = (ltssm_state == RECOVERY_SPEED);
     assign link_up            = (ltssm_state == STATE_L0);
     assign negotiated_width   = ((ltssm_state >= STATE_L0 &&
                                   ltssm_state <= RECOVERY_IDLE) ||
