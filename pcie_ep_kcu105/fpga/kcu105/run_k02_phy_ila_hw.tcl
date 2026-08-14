@@ -1,12 +1,17 @@
 # K02 standalone PHY ILA programming/capture helper.
-# The ILA data bus contains the direct GTHE3_COMMON QPLL1LOCK pin. The trigger
-# uses the retained gen3_test_active scalar so it is independent of probe-port
-# naming in Vivado Hardware Manager.
+# The ILA data bus contains the direct GTHE3_COMMON QPLL1LOCK pin. In dynamic
+# mode the trigger is a dedicated scalar TXEQ-state marker, so the capture
+# includes the first pre-Gen3 divergence without bus compare ambiguity.
 set script_dir  [file dirname [file normalize [info script]]]
-set build_dir   [file join $script_dir build_k02]
+set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
+                            $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
+set build_dir   [file join $script_dir [expr {$k02_dynamic_rate ?
+                                             "build_k02_dynamic" : "build_k02"}]]
 set capture_dir [file join $build_dir capture]
-set bit_path    [file join $build_dir k02_pcie_phy_bringup_ila.bit]
-set ltx_path    [file join $build_dir k02_pcie_phy_bringup_ila.ltx]
+set bit_stem    [expr {$k02_dynamic_rate ? "k02_pcie_phy_bringup_dynamic" :
+                                      "k02_pcie_phy_bringup"}]
+set bit_path    [file join $build_dir ${bit_stem}_ila.bit]
+set ltx_path    [file join $build_dir ${bit_stem}_ila.ltx]
 
 set server_url 127.0.0.1:3122
 set action status
@@ -36,24 +41,39 @@ refresh_hw_device $device
 set ilas [get_hw_ilas -of_objects $device]
 if {[llength $ilas] != 1} { error "K02 PHY ILA期望唯一ILA，实际[llength $ilas]" }
 set ila [lindex $ilas 0]
-set trigger_probe [get_hw_probes -of_objects $ila -filter {NAME =~ "*gen3_test_active*"}]
+set trigger_probe {}
+set trigger_compare eq1'b1
+if {$k02_dynamic_rate} {
+  foreach probe [get_hw_probes -of_objects $ila] {
+    set probe_name [get_property NAME $probe]
+    if {$probe_name eq "dynamic_rate_txeq_active"} {
+      lappend trigger_probe $probe
+    }
+  }
+  set trigger_compare eq1'b1
+  set trigger_error "K02 PHY ILA dynamic_rate_txeq_active触发探针不存在或不唯一"
+} else {
+  set trigger_probe [get_hw_probes -of_objects $ila -filter {NAME =~ "*gen3_test_active*"}]
+  set trigger_error "K02 PHY ILA gen3_test_active触发探针不存在或不唯一"
+}
 if {[llength $trigger_probe] != 1} {
   puts "K02 PHY ILA available probes:"
   foreach probe [get_hw_probes -of_objects $ila] {
     puts "  [get_property NAME $probe]"
   }
-  error "K02 PHY ILA gen3_test_active触发探针不存在或不唯一"
+  error $trigger_error
 }
 set trigger_probe [lindex $trigger_probe 0]
 
 if {$action eq "program-arm"} {
-  set_property TRIGGER_COMPARE_VALUE eq1'b1 $trigger_probe
   set_property CONTROL.TRIGGER_POSITION 4096 $ila
   reset_hw_ila $ila
+  set_property TRIGGER_COMPARE_VALUE $trigger_compare $trigger_probe
   run_hw_ila $ila
-  puts "K02_PHY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe]"
+  puts "K02_PHY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe]"
 } elseif {$action eq "capture-wait"} {
-  wait_on_hw_ila -timeout 10 $ila
+  set capture_timeout [expr {$k02_dynamic_rate ? 20 : 10}]
+  wait_on_hw_ila -timeout $capture_timeout $ila
   set data [upload_hw_ila_data $ila]
   set timestamp [clock format [clock seconds] -format {%Y%m%d_%H%M%S}]
   set csv_path [file join $capture_dir ${timestamp}_k02_phy.csv]

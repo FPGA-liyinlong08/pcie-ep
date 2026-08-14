@@ -5,7 +5,12 @@
 // Gen3 PHY/GT 诊断模式；不包含任何 LTSSM、TS1/TS2 或链路训练功能。
 module kcu105_pcie_phy_bringup_top #(
     parameter integer DETECT_TIMEOUT_CYCLES = 16_000_000,
-    parameter integer GEN3_TEST_MODE        = 1
+    parameter integer GEN3_TEST_MODE        = 1,
+    parameter integer DYNAMIC_RATE_TEST_MODE = 0,
+    parameter integer DYNAMIC_START_DELAY_CYCLES = 1024,
+    parameter integer DYNAMIC_GEN1_STABLE_CYCLES = 1024,
+    parameter integer DYNAMIC_TXEQ_TIMEOUT_CYCLES = 8192,
+    parameter integer DYNAMIC_GEN3_TIMEOUT_CYCLES = 32768
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -23,6 +28,12 @@ module kcu105_pcie_phy_bringup_top #(
     localparam logic [2:0] BUP_WAIT_STATUS = 3'd3;
     localparam logic [2:0] BUP_DONE        = 3'd4;
     localparam logic [2:0] BUP_TIMEOUT     = 3'd5;
+    localparam logic [3:0] DYN_IDLE        = 4'd0;
+    localparam logic [3:0] DYN_GEN1_STABLE = 4'd1;
+    localparam logic [3:0] DYN_TXEQ        = 4'd2;
+    localparam logic [3:0] DYN_GEN3_WAIT   = 4'd3;
+    localparam logic [3:0] DYN_PASS        = 4'd4;
+    localparam logic [3:0] DYN_FAIL        = 4'd5;
     localparam logic [23:0] DETECT_TIMEOUT_LIMIT =
         DETECT_TIMEOUT_CYCLES[23:0] - 24'd1;
 
@@ -38,6 +49,9 @@ module kcu105_pcie_phy_bringup_top #(
     logic [1:0] phy_powerdown;
     logic [1:0] phy_rate_cmd;
     logic       phy_txelecidle_cmd;
+    logic [1:0] phy_txeq_ctrl_cmd;
+    logic [3:0] phy_txeq_preset_cmd;
+    logic       as_cdr_hold_cmd;
     wire        phy_phystatus;
     wire [2:0]  phy_rxstatus;
 
@@ -67,6 +81,15 @@ module kcu105_pcie_phy_bringup_top #(
     (* mark_debug = "true" *) logic [1:0] phy_rate_debug;
     (* mark_debug = "true" *) logic [1:0] phy_powerdown_debug;
     (* mark_debug = "true" *) logic       phy_txelecidle_debug;
+    (* mark_debug = "true" *) logic [1:0] phy_txeq_ctrl_debug;
+    (* mark_debug = "true" *) logic [3:0] phy_txeq_preset_debug;
+    (* mark_debug = "true" *) logic       as_cdr_hold_debug;
+    (* mark_debug = "true" *) logic       phy_txeq_done_debug;
+    (* mark_debug = "true" *) logic [3:0] dynamic_rate_state;
+    (* mark_debug = "true" *) logic       dynamic_rate_txeq_active;
+    (* mark_debug = "true" *) logic       dynamic_rate_pass;
+    (* mark_debug = "true" *) logic       dynamic_rate_fail;
+    logic [31:0] dynamic_rate_count;
     logic [4:0]  settle_count;
     logic [23:0] timeout_count;
     logic [24:0] heartbeat_count;
@@ -83,22 +106,52 @@ module kcu105_pcie_phy_bringup_top #(
         phy_txdetectrx     = 1'b0;
         phy_rate_cmd       = 2'b00;
         phy_txelecidle_cmd = 1'b1;
+        phy_txeq_ctrl_cmd  = 2'b00;
+        phy_txeq_preset_cmd = 4'd0;
+        as_cdr_hold_cmd    = 1'b0;
         if ((bup_state == BUP_DETECT) ||
             (bup_state == BUP_WAIT_STATUS)) begin
             phy_txdetectrx = 1'b1;
         end
         if ((GEN3_TEST_MODE != 0) && gen3_test_active) begin
             // K02 不实现 LTSSM/TS1/TS2；这里只把 standalone PHY 置于
-            // P0 并请求 Gen3，用于直接观察 QPLL1 与 PHY rate handshake。
+            // P0 并执行稳态 Gen3 或受控 Gen1->Gen3 rate-change 诊断。
             phy_powerdown      = 2'b00;
-            phy_rate_cmd       = 2'b10;
             phy_txelecidle_cmd = 1'b1;
+            if (DYNAMIC_RATE_TEST_MODE != 0) begin
+                case (dynamic_rate_state)
+                    DYN_TXEQ: begin
+                        phy_rate_cmd        = 2'b00;
+                        phy_txeq_ctrl_cmd   = 2'b01;
+                        phy_txeq_preset_cmd = 4'd4;
+                        as_cdr_hold_cmd     = 1'b1;
+                    end
+                    DYN_GEN3_WAIT: begin
+                        phy_rate_cmd    = 2'b10;
+                        as_cdr_hold_cmd = 1'b1;
+                    end
+                    DYN_PASS: begin
+                        phy_rate_cmd = 2'b10;
+                    end
+                    default: begin
+                        phy_rate_cmd = 2'b00;
+                    end
+                endcase
+            end else begin
+                phy_rate_cmd = 2'b10;
+            end
         end
     end
 
     assign phy_rate_debug       = phy_rate_cmd;
     assign phy_powerdown_debug  = phy_powerdown;
     assign phy_txelecidle_debug = phy_txelecidle_cmd;
+    assign phy_txeq_ctrl_debug  = phy_txeq_ctrl_cmd;
+    assign phy_txeq_preset_debug = phy_txeq_preset_cmd;
+    assign as_cdr_hold_debug    = as_cdr_hold_cmd;
+    assign phy_txeq_done_debug  = phy_txeq_done;
+    assign dynamic_rate_txeq_active =
+        (dynamic_rate_state == DYN_TXEQ);
 
     always_ff @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) begin
@@ -111,9 +164,81 @@ module kcu105_pcie_phy_bringup_top #(
             detect_timeout     <= 1'b0;
             unexpected_status  <= 1'b0;
             gen3_test_active   <= 1'b0;
+            dynamic_rate_state <= DYN_IDLE;
+            dynamic_rate_count <= '0;
+            dynamic_rate_pass  <= 1'b0;
+            dynamic_rate_fail  <= 1'b0;
             heartbeat_count    <= '0;
         end else begin
             heartbeat_count <= heartbeat_count + 1'b1;
+
+            if (DYNAMIC_RATE_TEST_MODE == 0) begin
+                dynamic_rate_state <= DYN_PASS;
+                dynamic_rate_count <= '0;
+                dynamic_rate_pass  <= 1'b0;
+                dynamic_rate_fail  <= 1'b0;
+            end else if (!gen3_test_active) begin
+                dynamic_rate_state <= DYN_IDLE;
+                dynamic_rate_count <= '0;
+                dynamic_rate_pass  <= 1'b0;
+                dynamic_rate_fail  <= 1'b0;
+            end else begin
+                case (dynamic_rate_state)
+                    DYN_IDLE: begin
+                        if ((DYNAMIC_START_DELAY_CYCLES <= 1) ||
+                            (dynamic_rate_count >= DYNAMIC_START_DELAY_CYCLES - 1)) begin
+                            dynamic_rate_state <= DYN_GEN1_STABLE;
+                            dynamic_rate_count <= '0;
+                        end else begin
+                            dynamic_rate_count <= dynamic_rate_count + 1'b1;
+                        end
+                    end
+                    DYN_GEN1_STABLE: begin
+                        if ((DYNAMIC_GEN1_STABLE_CYCLES <= 1) ||
+                            (dynamic_rate_count >= DYNAMIC_GEN1_STABLE_CYCLES - 1)) begin
+                            dynamic_rate_state <= DYN_TXEQ;
+                            dynamic_rate_count <= '0;
+                        end else begin
+                            dynamic_rate_count <= dynamic_rate_count + 1'b1;
+                        end
+                    end
+                    DYN_TXEQ: begin
+                        if (phy_txeq_done) begin
+                            dynamic_rate_state <= DYN_GEN3_WAIT;
+                            dynamic_rate_count <= '0;
+                        end else if ((DYNAMIC_TXEQ_TIMEOUT_CYCLES <= 1) ||
+                                     (dynamic_rate_count >= DYNAMIC_TXEQ_TIMEOUT_CYCLES - 1)) begin
+                            dynamic_rate_state <= DYN_FAIL;
+                            dynamic_rate_count <= '0;
+                            dynamic_rate_fail  <= 1'b1;
+                        end else begin
+                            dynamic_rate_count <= dynamic_rate_count + 1'b1;
+                        end
+                    end
+                    DYN_GEN3_WAIT: begin
+                        if (phy_phystatus) begin
+                            dynamic_rate_state <= DYN_PASS;
+                            dynamic_rate_count <= '0;
+                            dynamic_rate_pass  <= 1'b1;
+                        end else if ((DYNAMIC_GEN3_TIMEOUT_CYCLES <= 1) ||
+                                     (dynamic_rate_count >= DYNAMIC_GEN3_TIMEOUT_CYCLES - 1)) begin
+                            dynamic_rate_state <= DYN_FAIL;
+                            dynamic_rate_count <= '0;
+                            dynamic_rate_fail  <= 1'b1;
+                        end else begin
+                            dynamic_rate_count <= dynamic_rate_count + 1'b1;
+                        end
+                    end
+                    DYN_PASS,
+                    DYN_FAIL: begin
+                        dynamic_rate_state <= dynamic_rate_state;
+                    end
+                    default: begin
+                        dynamic_rate_state <= DYN_IDLE;
+                        dynamic_rate_count <= '0;
+                    end
+                endcase
+            end
 
             case (bup_state)
                 BUP_RESET: begin
@@ -197,13 +322,13 @@ module kcu105_pcie_phy_bringup_top #(
         .phy_txmargin           (3'b0),
         .phy_txswing            (1'b0),
         .phy_txdeemph           (1'b0),
-        .phy_txeq_ctrl          (2'b0),
-        .phy_txeq_preset        (4'd4),
+        .phy_txeq_ctrl          (phy_txeq_ctrl_cmd),
+        .phy_txeq_preset        (phy_txeq_preset_cmd),
         .phy_txeq_coeff         (6'b0),
         .phy_rxeq_ctrl          (2'b0),
         .phy_rxeq_txpreset      (4'b0),
         .as_mac_in_detect       (1'b1),
-        .as_cdr_hold_req        (1'b0),
+        .as_cdr_hold_req        (as_cdr_hold_cmd),
         .phy_coreclk            (phy_coreclk),
         .phy_userclk            (phy_userclk),
         .phy_mcapclk            (phy_mcapclk),

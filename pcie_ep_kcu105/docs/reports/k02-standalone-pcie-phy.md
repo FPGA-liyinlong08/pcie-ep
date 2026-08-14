@@ -233,6 +233,70 @@ make k02-vivado
   -tclargs 127.0.0.1:3122 capture-wait
 ```
 
+## 7.2 K02 Dynamic Gen1→Gen3 实板 ILA 验证（2026-08-14）
+
+本实验使用构建选项 `K02_DYNAMIC_GEN1_TO_GEN3=1`，在 K02 standalone PHY 中加入
+受控的 Gen1→Gen3 诊断序列。这里的 TXEQ 命令是 K02 测试控制器发出的受控替代序列，
+不是完整 PCIe LTSSM/Equalization；`TXEQ_DONE`、QPLL reset/lock、PLL/SYSCLKSEL 和
+Gen3 ready 均来自实际 PHY/GT 网络。
+
+构建结果：
+
+```text
+K02_PHY_ILA_INSERT_PASS probe0_width=49 probe1_width=10 depth=8192
+K02_IMPL_PASS channel=GTHE3_CHANNEL_X0Y7 common=GTHE3_COMMON_X0Y1 WNS=0.704 ns
+DYNAMIC_START_DELAY_CYCLES=1000000000
+```
+
+产物 SHA-256：
+
+```text
+52d46695b588899d4e4ef1cc02ffe09ef9c7033529028b196046607118068d7b  fpga/kcu105/build_k02_dynamic/k02_pcie_phy_bringup_dynamic_ila.bit
+138971c3c34351283c74784d7224e8713803764836755f098a614e46998f985a  fpga/kcu105/build_k02_dynamic/k02_pcie_phy_bringup_dynamic_ila.ltx
+bba6d1ebebeaf85ac8a80b9a25e8eb4eb54754d148865641d9a5f5bf039f862a  fpga/kcu105/build_k02_dynamic/capture/20260814_220214_k02_phy.csv
+a6d4bf72d517302ab86adc5673ba1b62eb86d97c3ddb3d3e22dfcef041e66dd8  fpga/kcu105/build_k02_dynamic/capture/20260814_220214_k02_phy.ila
+f3cf17d54377d647360bdea33f12acb82b609e9c8b749744d5ebd0f7582f82d7  fpga/kcu105/build_k02_dynamic/capture/20260814_220532_k02_phy.csv
+b0035fcc3e2f2d27a0579413e00eba038d17872d44ee68b3ed2ed436a9e096ae  fpga/kcu105/build_k02_dynamic/capture/20260814_220532_k02_phy.ila
+6154b786e917e05aed23cf534c4443967fbd8de4267dadb3ed73d5d5a9471c27  fpga/kcu105/build_k02_dynamic/capture/20260814_220635_k02_phy.csv
+334fa614db8ae4b3d0d2139892cd84994cb52a72ea2adcfbfea722f46c0d94f0  fpga/kcu105/build_k02_dynamic/capture/20260814_220635_k02_phy.ila
+```
+
+有效抓取由专用标量 `dynamic_rate_txeq_active` 触发；触发配置在 `reset_hw_ila`
+之后设置为 `eq1'b1`，避免 Vivado 将总线比较值清成 `X`。关键事件顺序如下：
+
+| 相对采样 | 事件 | 观测值 |
+|---:|---|---|
+| 0 | 进入 TXEQ 状态 | `dynamic_rate_state=2`、`TXEQ_CTRL=1`、`TXEQ_PRESET=4`、`as_cdr_hold_req=1` |
+| 9 | TXEQ 完成 | `TXEQ_DONE=1` |
+| 10 | 请求 Gen3 | `phy_rate: 0→2`，进入 `dynamic_rate_state=3` |
+| 20 | QPLL rate reset | `PCIERATEQPLLRESET=1`、实际 `QPLL1RESET=1`，`QPLL1LOCK: 1→0` |
+| 25 | QPLL reset 释放 | `PCIERATEQPLLRESET=0`、`QPLL1RESET=0`，但 `QPLL1LOCK=0` |
+| 窗口末 | 未恢复 | `QPLL1LOCK` 仍为 0，`PCIEUSERGEN3RDY/PhyStatus` 未完成 |
+
+四个时钟选择总线在该窗口保持原始采样位序：
+`TXPLLCLKSEL[1:0]=[0,1]`、`RXPLLCLKSEL[1:0]=[0,1]`、
+`TXSYSCLKSEL[1:0]=[1,1]`、`RXSYSCLKSEL[1:0]=[1,1]`。本次未观察到它们在
+QPLL reset/relock 期间发生切换；因此当前 K02 结果属于 **dynamic FAIL**，第一个
+明确分叉是 QPLL1 reset 后没有重新 lock，而不是 TXEQ 或 ILA 采样问题。
+
+本结果完成 P2-1/P2-2；随后完成三次有效的 P2-3 抓取，三次结果一致。它已经把下一步
+分析范围收缩到：
+
+1. `PCIERATEQPLLRESET` 到实际 `QPLL1RESET` 的 rate sequencer 行为；
+2. QPLL1 reset 释放后的 LOCKDETCLK/REFCLK/动态配置条件；
+3. `TXSYSCLKSEL/RXSYSCLKSEL` 未切换是否是 QPLL1 不恢复的直接前置条件。
+
+随后使用完全相同的 bit/LTX、触发和采样配置完成第 2、3 次重复：
+
+| 抓取 | `TXEQ_DONE` | `PHY_RATE` Gen3 | `QPLL1LOCK` | `QPLL1RESET` 释放后恢复 | `PhyStatus` |
+|---|---:|---:|---:|---:|---:|
+| `20260814_220214` | 1 | 1 | 1→0 | 否 | 0 |
+| `20260814_220532` | 1 | 1 | 1→0 | 否 | 0 |
+| `20260814_220635` | 1 | 1 | 1→0 | 否 | 0 |
+
+三次均在相同顺序下复现：TXEQ 完成、Gen3 请求、QPLL1 reset、QPLL1 lock 丢失，
+reset 释放后 lock 不恢复。P2-3 的三次重复条件已满足，K02 dynamic 结论为稳定 FAIL。
+
 ## 8. 复现命令
 
 ```bash

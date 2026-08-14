@@ -1,6 +1,5 @@
 set script_dir  [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
-set build_dir   [file join $script_dir build_k02]
 set xci_path    [file join $script_dir ip pcie_phy_x1_gen3 pcie_phy_x1_gen3.xci]
 set part_name   xcku040-ffva1156-2-e
 set top_name    kcu105_pcie_phy_bringup_top
@@ -9,6 +8,13 @@ set k02_ila_debug [expr {![info exists ::env(K02_ILA_DEBUG)] ||
                           $::env(K02_ILA_DEBUG) eq "1"}]
 set k02_gen3_test [expr {![info exists ::env(K02_GEN3_TEST)] ||
                           $::env(K02_GEN3_TEST) eq "1"}]
+set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
+                            $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
+set k02_dynamic_start_delay [expr {$k02_dynamic_rate ? 1000000000 : 1024}]
+set build_dir [file join $script_dir [expr {$k02_dynamic_rate ?
+                                            "build_k02_dynamic" : "build_k02"}]]
+set bit_stem [expr {$k02_dynamic_rate ? "k02_pcie_phy_bringup_dynamic" :
+                                      "k02_pcie_phy_bringup"}]
 
 file mkdir $build_dir
 
@@ -35,7 +41,9 @@ read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_bringup_top.sv]
 read_xdc [file join $script_dir k02_pcie_phy_bringup.xdc]
 
 synth_design -top $top_name -part $part_name \
-    -generic GEN3_TEST_MODE=$k02_gen3_test
+    -generic GEN3_TEST_MODE=$k02_gen3_test \
+    -generic DYNAMIC_RATE_TEST_MODE=$k02_dynamic_rate \
+    -generic DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay
 
 if {$k02_ila_debug} {
     # K02 standalone PHY 没有协议层 ILA；这里直接从综合网表中的 GT Wizard
@@ -66,6 +74,33 @@ if {$k02_ila_debug} {
         set_property MARK_DEBUG TRUE $nets
         return $nets
     }
+    proc k02_primitive_bus_pin {cell_ref ref_pin expected_width} {
+        set cells [get_cells -hierarchical -quiet -filter "REF_NAME =~ ${cell_ref}*"]
+        if {[llength $cells] != 1} {
+            error "K02 ILA primitive不存在或不唯一：$cell_ref，实际[llength $cells]"
+        }
+        set pin_pairs {}
+        foreach pin [get_pins -quiet -of_objects [lindex $cells 0]] {
+            set ref_pin_name [get_property REF_PIN_NAME $pin]
+            if {[regexp "^${ref_pin}\\\[[0-9]+\\\]$" $ref_pin_name]} {
+                set pin_nets [get_nets -quiet -of_objects $pin]
+                if {[llength $pin_nets] != 1} {
+                    error "K02 ILA primitive端口无唯一网络：$cell_ref/$ref_pin_name"
+                }
+                lappend pin_pairs [list $ref_pin_name [lindex $pin_nets 0]]
+            }
+        }
+        set pin_pairs [lsort -dictionary -index 0 $pin_pairs]
+        set nets {}
+        foreach pin_pair $pin_pairs {
+            lappend nets [lindex $pin_pair 1]
+        }
+        if {[llength $nets] != $expected_width} {
+            error "K02 ILA primitive总线位宽错误：$cell_ref/$ref_pin，实际[llength $nets]，期望$expected_width"
+        }
+        set_property MARK_DEBUG TRUE $nets
+        return $nets
+    }
     proc k02_bus {regexp_pattern expected_width} {
         set nets [lsort -dictionary [get_nets -hierarchical -quiet -regexp $regexp_pattern]]
         if {[llength $nets] != $expected_width} {
@@ -89,10 +124,9 @@ if {$k02_ila_debug} {
     connect_debug_port u_ila_k02/clk [k02_net {(^|/)phy_pclk$}]
     set k02_gt_prefix {^u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/}
 
-    # probe0 低到高位映射：
-    # QPLL1LOCK(primitive)、QPLL1LOCK(Wizard)、QPLL1RESET、QPLL1PD、
-    # PHY rate/powerdown/TX idle、Gen3 rate handshake、RX reset/data 状态、
-    # PHY PhyStatus/复位和 Gen3 测试状态。
+    # probe0 低到高位映射：QPLL1、PHY rate/powerdown/TX idle、
+    # PLLCLKSEL/SYSCLKSEL、TXEQ/CDR hold、Gen3 rate handshake、
+    # RX reset/data、PhyStatus、动态测试状态。
     set k02_probe0 [list \
         [k02_primitive_pin GTHE3_COMMON QPLL1LOCK] \
         [k02_net [format {%sqpll1lock_out\[0\]$} $k02_gt_prefix]] \
@@ -106,6 +140,15 @@ if {$k02_ila_debug} {
         [k02_net [format {%spcierategen3_out\[0\]$} $k02_gt_prefix]] \
         [k02_net [format {%spcierateqpllreset_out\[0\]$} $k02_gt_prefix]] \
         [k02_net [format {%spcierateqpllpd_out\[0\]$} $k02_gt_prefix]] \
+        [k02_primitive_pin GTHE3_CHANNEL PCIERATEIDLE] \
+        [k02_primitive_bus_pin GTHE3_CHANNEL TXPLLCLKSEL 2] \
+        [k02_primitive_bus_pin GTHE3_CHANNEL RXPLLCLKSEL 2] \
+        [k02_primitive_bus_pin GTHE3_CHANNEL TXSYSCLKSEL 2] \
+        [k02_primitive_bus_pin GTHE3_CHANNEL RXSYSCLKSEL 2] \
+        [k02_bus {.*phy_txeq_ctrl_debug\[[0-1]\]$} 2] \
+        [k02_bus {.*phy_txeq_preset_debug\[[0-3]\]$} 4] \
+        [k02_net {.*as_cdr_hold_debug$}] \
+        [k02_net {.*phy_txeq_done_debug$}] \
         [k02_primitive_pin GTHE3_CHANNEL PCIEUSERGEN3RDY] \
         [k02_primitive_pin GTHE3_CHANNEL PCIEUSERRATESTART] \
         [k02_net [format {%srxresetdone_out\[0\]$} $k02_gt_prefix]] \
@@ -118,10 +161,14 @@ if {$k02_ila_debug} {
         [k02_net {^u_phy_wrapper/phy_phystatus_rst$}] \
         [k02_bus {.*phy_rate_debug\[0\]$} 1] \
         [k02_bus {.*phy_rate_debug\[1\]$} 1] \
-        [k02_net {.*gen3_test_active$}]]
+        [k02_net {.*gen3_test_active$}] \
+        [k02_bus {.*dynamic_rate_state\[[0-3]\]$} 4] \
+        [k02_net {.*dynamic_rate_txeq_active$}] \
+        [k02_net {.*dynamic_rate_pass$}] \
+        [k02_net {.*dynamic_rate_fail$}]]
     set k02_probe0 [concat {*}$k02_probe0]
-    if {[llength $k02_probe0] != 25} {
-        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望25"
+    if {[llength $k02_probe0] != 49} {
+        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望49"
     }
     k02_add_probe u_ila_k02 0 $k02_probe0
 
@@ -134,7 +181,7 @@ if {$k02_ila_debug} {
         [k02_net {.*unexpected_status$}] \
         [k02_bus {.*detected_rxstatus\[[0-2]\]$} 3]]
     k02_add_probe u_ila_k02 1 $k02_probe1
-    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test"
+    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test dynamic_rate=$k02_dynamic_rate"
 }
 write_checkpoint -force [file join $build_dir k02_synth.dcp]
 report_utilization -file [file join $build_dir utilization_synth.rpt]
@@ -206,11 +253,11 @@ if {$wns < 0.0} {
     error "K02 Route 后时序失败：WNS=$wns"
 }
 
-set bit_name [expr {$k02_ila_debug ? "k02_pcie_phy_bringup_ila.bit" :
-                                      "k02_pcie_phy_bringup.bit"}]
+set bit_name [expr {$k02_ila_debug ? "${bit_stem}_ila.bit" :
+                                      "${bit_stem}.bit"}]
 write_bitstream -force [file join $build_dir $bit_name]
 if {$k02_ila_debug} {
-    write_debug_probes -force [file join $build_dir k02_pcie_phy_bringup_ila.ltx]
+    write_debug_probes -force [file join $build_dir ${bit_stem}_ila.ltx]
 }
 
 set summary_path [file join $build_dir impl_summary.txt]
@@ -226,6 +273,8 @@ puts $summary_file "PCIE_HARD_BLOCK_COUNT=$hard_pcie_count"
 puts $summary_file "WNS=$wns"
 puts $summary_file "K02_ILA_DEBUG=$k02_ila_debug"
 puts $summary_file "GEN3_TEST_MODE=$k02_gen3_test"
+puts $summary_file "DYNAMIC_RATE_TEST_MODE=$k02_dynamic_rate"
+puts $summary_file "DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
 

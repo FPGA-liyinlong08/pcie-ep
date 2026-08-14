@@ -3,7 +3,11 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
-build_dir="${script_dir}/build_k02"
+if [[ "${K02_DYNAMIC_GEN1_TO_GEN3:-0}" == "1" ]]; then
+    build_dir="${script_dir}/build_k02_dynamic"
+else
+    build_dir="${script_dir}/build_k02"
+fi
 vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
 
 export XILINX_LOCAL_USER_DATA=no
