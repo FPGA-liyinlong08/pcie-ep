@@ -88,8 +88,15 @@ module pcie_k13_production_ctrl #(
     reg post_rate_rxeq_failed;
     reg [31:0] post_rate_rxeq_timeout_count;
     reg [1:0] active_target;
+    // The mailbox request and active_target cross the acceptance edge at
+    // different NBA boundaries.  Include the live request while it is
+    // present; otherwise the first Recovery.Speed cycle can be interpreted
+    // as a non-Gen3 transition and bypass the mandatory pre-rate TXEQ window.
+    wire gen3_target_active = (active_target == 2'b10) ||
+                              (retrain_request_valid &&
+                               (retrain_request_target == 2'b10));
     wire speed_boundary_ready = ltssm_speed_ready &&
-                                ((active_target != 2'b10) ||
+                                (!gen3_target_active ||
                                  pre_rate_txeq_ready);
     wire rxeq_bootstrap_ready = (K13_RXEQ_BOOTSTRAP == 0) ? 1'b1 :
                                  post_rate_rxeq_ready;
@@ -166,11 +173,12 @@ module pcie_k13_production_ctrl #(
                 pre_rate_txeq_ready <= 1'b0;
             end else begin
                 if ((speed_state_w == 3'd0) ||
-                    (active_target != 2'b10)) begin
+                    (!gen3_target_active && !retrain_request_valid)) begin
                     pre_rate_txeq_active <= 1'b0;
                     pre_rate_txeq_ready <= 1'b0;
                 end else if ((speed_state_w == 3'd1) &&
                              ltssm_speed_ready &&
+                             gen3_target_active &&
                              !pre_rate_txeq_ready &&
                              !pre_rate_txeq_active) begin
                     pre_rate_txeq_active <= 1'b1;
