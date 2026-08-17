@@ -1,0 +1,51 @@
+# Vivado generated state
+
+*.runs/
+*.cache/
+*.sim/
+*.tmp/
+*.gen/
+!*.gen/**/*wrapper.v
+.Xil/
+*/.Xil/
+*.hw/
+*.ip_user_files/
+*.hw/hw_*/
+
+
+# Logs, journals, and packaged run artifacts
+# Vivado 临时文件
+xsim.dir/
+xvlog.pb
+*.log
+*.jou
+*.str
+*.zip
+*.wdb
+*.dcp
+*.xml
+*.veo
+*.vho
+*.mif
+*.protoinst
+*.hwdef
+*.hwh
+*.vhdl
+*.bmm
+*.elf
+*.svh
+
+# Vivado BD generated IP configuration files
+*.xci
+
+# Vivado BD UI layouts
+#**/bd/*/ui/*.ui
+
+# Simulation outputs
+vcs_results/
+
+# Hardware build products
+*.bit
+*.bin
+*.ltx
+*.prm

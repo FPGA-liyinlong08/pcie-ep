@@ -1,0 +1,86 @@
+Copyright 1986-2021 Xilinx, Inc. All Rights Reserved.
+-----------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2021.2 (lin64) Build 3367213 Tue Oct 19 02:47:39 MDT 2021
+| Date              : Sat Aug 15 08:05:59 2026
+| Host              : wx-linux running 64-bit Ubuntu 20.04.6 LTS
+| Command           : report_cdc -details -file /home/wx/Documents/PCIe/pcie_phy_0_ex/board_kcu105/build_k02_dynamic/cdc.rpt
+| Design            : kcu105_pcie_phy_bringup_top
+| Device            : xcku040-ffva1156
+| Speed File        : -2  PRODUCTION 1.25 12-04-2018
+| Temperature Grade : E
+-----------------------------------------------------------------------------------------------------------------------------
+
+CDC Report
+
+ID      Severity  Count  Description
+------  --------  -----  -------------------------------------------------------
+CDC-3   Info         13  1-bit synchronized with ASYNC_REG property
+CDC-9   Info          7  Asynchronous reset synchronized with ASYNC_REG property
+CDC-15  Warning       4  Clock enable controlled CDC structure detected
+
+Source Clock: txoutclk_out[0]
+Destination Clock: dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/TCK
+CDC Type: No Common Primary Clock
+
+Row  ID      Severity  Description                                              Depth  Exception   Source (From)                                                                                                                                                                                                                       Destination (To)
+---  ------  --------  -------------------------------------------------------  -----  ----------  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  1  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15/DP/CLK     dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[14]/D
+  2  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15__0/DP/CLK  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[15]/D
+  3  CDC-9   Info      Asynchronous reset synchronized with ASYNC_REG property      2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/rddata_rst_reg/C                                                                                                                                              dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/rstblk/ngwrdrst.grst.g7serrst.rst_rd_reg1_reg/PRE
+  4  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/ctl_reg_reg[0]/C                                                                                                                                       dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/ma_rst_1_reg/D
+
+Source Clock: input port clock
+Destination Clock: pcie_refclk_100
+CDC Type: No Common Primary Clock
+
+Row  ID     Severity  Description                                              Depth  Exception   Source (From)  Destination (To)
+---  -----  --------  -------------------------------------------------------  -----  ----------  -------------  ---------------------------------------------------------------------------------------
+  1  CDC-9  Info      Asynchronous reset synchronized with ASYNC_REG property      8  False Path  pcie_perst_n   u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/rrst_n_r_reg[0]/CLR
+
+Source Clock: txoutclk_out[0]
+Destination Clock: pcie_refclk_100
+CDC Type: No Common Node
+
+Row  ID     Severity  Description                                 Depth  Exception            Source (From)                                                                                                                                                                                                                                                                                                                                           Destination (To)
+---  -----  --------  ------------------------------------------  -----  -------------------  ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------  --------------------------------------------------------------------------------------------------------------------------
+  1  CDC-3  Info      1-bit synchronized with ASYNC_REG property      4  Asynch Clock Groups  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/gt_wizard.gtwizard_top_i/pcie_phy_0_gt_i/inst/gen_gtwizard_gthe3_top.pcie_phy_0_gt_gtwizard_gthe3_inst/gen_gtwizard_gthe3.gen_channel_container[1].gen_enabled_channel.gthe3_channel_wrapper_inst/channel_inst/gthe3_channel_gen.gen_gthe3_channel_inst[0].GTHE3_CHANNEL_PRIM_INST/RXUSRCLK2  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/sync_phystatus/sync_vec[0].sync_cell_i/sync_reg[0]/D
+  2  CDC-3  Info      1-bit synchronized with ASYNC_REG property      4  Asynch Clock Groups  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/prst_n_r_reg[7]/C                                                                                                                                                                                                                                                                   u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/sync_prst_n/sync_vec[0].sync_cell_i/sync_reg[0]/D
+  3  CDC-3  Info      1-bit synchronized with ASYNC_REG property      4  Asynch Clock Groups  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/gt_wizard.gtwizard_top_i/pcie_phy_0_gt_i/inst/gen_gtwizard_gthe3_top.pcie_phy_0_gt_gtwizard_gthe3_inst/gen_gtwizard_gthe3.gen_channel_container[1].gen_enabled_channel.gthe3_channel_wrapper_inst/channel_inst/gthe3_channel_gen.gen_gthe3_channel_inst[0].GTHE3_CHANNEL_PRIM_INST/RXUSRCLK2  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/sync_rxresetdone/sync_vec[0].sync_cell_i/sync_reg[0]/D
+  4  CDC-3  Info      1-bit synchronized with ASYNC_REG property      4  Asynch Clock Groups  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/gt_wizard.gtwizard_top_i/pcie_phy_0_gt_i/inst/gen_gtwizard_gthe3_top.pcie_phy_0_gt_gtwizard_gthe3_inst/gen_gtwizard_gthe3.gen_channel_container[1].gen_enabled_channel.gthe3_channel_wrapper_inst/channel_inst/gthe3_channel_gen.gen_gthe3_channel_inst[0].GTHE3_CHANNEL_PRIM_INST/TXUSRCLK2  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/sync_txresetdone/sync_vec[0].sync_cell_i/sync_reg[0]/D
+
+Source Clock: dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/TCK
+Destination Clock: txoutclk_out[0]
+CDC Type: No Common Primary Clock
+
+Row  ID      Severity  Description                                              Depth  Exception   Source (From)                                                                                                                                                                                                                       Destination (To)
+---  ------  --------  -------------------------------------------------------  -----  ----------  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  1  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/ctl_reg_en_1_reg[0]/D
+  2  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD2/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD2/stat_reg_ld_reg[0]/D
+  3  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD3/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD3/stat_reg_ld_reg[0]/D
+  4  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/ctl_reg_en_1_reg[0]/D
+  5  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/ctl_reg_en_1_reg[0]/D
+  6  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15/DP/CLK     dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[14]/D
+  7  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15__0/DP/CLK  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[15]/D
+  8  CDC-9   Info      Asynchronous reset synchronized with ASYNC_REG property      2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/wrdata_rst_reg/C                                                                                                                                              dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/rstblk/ngwrdrst.grst.g7serrst.rst_rd_reg1_reg/PRE
+  9  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_CTL/icn_cmd_en_temp_reg/C                                                                                                                              dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_CTL/ctl_reg_en_1_reg[0]/D
+ 10  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_STAT/icn_cmd_en_temp_reg/C                                                                                                                             dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_STAT/stat_reg_ld_reg[0]/D
+ 11  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/icn_cmd_en_reg[5]/C                                                                                                                                           dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/icn_cmd_en_5_temp_reg/D
+
+Source Clock: input port clock
+Destination Clock: txoutclk_out[0]
+CDC Type: No Common Primary Clock
+
+Row  ID     Severity  Description                                              Depth  Exception   Source (From)  Destination (To)
+---  -----  --------  -------------------------------------------------------  -----  ----------  -------------  ---------------------------------------------------------------------------------------
+  1  CDC-9  Info      Asynchronous reset synchronized with ASYNC_REG property      8  False Path  pcie_perst_n   u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/prst_n_r_reg[0]/CLR
+  2  CDC-9  Info      Asynchronous reset synchronized with ASYNC_REG property      4  False Path  pcie_perst_n   u_phy_wrapper/u_refclk_reset/u_reset_ctrl/u_core_reset_sync/sync_reg_reg[0]/CLR
+  3  CDC-9  Info      Asynchronous reset synchronized with ASYNC_REG property      4  False Path  pcie_perst_n   u_phy_wrapper/u_refclk_reset/u_reset_ctrl/u_pipe_reset_sync/sync_reg_reg[0]/CLR
+
+Source Clock: pcie_refclk_100
+Destination Clock: txoutclk_out[0]
+CDC Type: No Common Node
+
+Row  ID     Severity  Description                                              Depth  Exception            Source (From)                                                                   Destination (To)
+---  -----  --------  -------------------------------------------------------  -----  -------------------  ------------------------------------------------------------------------------  ----------------------------------------------------------------------------------
+  1  CDC-9  Info      Asynchronous reset synchronized with ASYNC_REG property      4  Asynch Clock Groups  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/phy_rst_i/idle_reg/C  u_phy_wrapper/u_pcie_phy/inst/Uscale_gt.us_gt_phy_wrapper/rst_psrst_n_r_reg[0]/CLR
+

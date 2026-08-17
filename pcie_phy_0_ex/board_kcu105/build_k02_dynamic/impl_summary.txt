@@ -1,0 +1,8 @@
+PCIE_PHY_0_EX_DYNAMIC_IMPL_PASS
+part=xcku040-ffva1156-2-e
+GTHE3_COMMON_LOC=GTHE3_COMMON_X0Y1
+GTHE3_CHANNEL_LOC=GTHE3_CHANNEL_X0Y7
+probe0_width=24
+probe1_width=12
+bitstream=/home/wx/Documents/PCIe/pcie_phy_0_ex/board_kcu105/build_k02_dynamic/pcie_phy_0_ex_gen1_to_gen3_ila.bit
+probes=/home/wx/Documents/PCIe/pcie_phy_0_ex/board_kcu105/build_k02_dynamic/pcie_phy_0_ex_gen1_to_gen3_ila.ltx
