@@ -1,0 +1,9 @@
+PCIE_PHY_0_EX_HARDWARE_GOLDEN_IMPL_PASS
+baseline=14aba94
+part=xcku040-ffva1156-2-e
+GTHE3_COMMON_LOC=GTHE3_COMMON_X0Y1
+GTHE3_CHANNEL_LOC=GTHE3_CHANNEL_X0Y7
+probe0_width=22
+probe1_width=12
+bitstream=/home/wx/Documents/PCIe/pcie_phy_0_ex/board_kcu105/build_hardware_golden/pcie_phy_0_ex_hardware_golden_ila.bit
+probes=/home/wx/Documents/PCIe/pcie_phy_0_ex/board_kcu105/build_hardware_golden/pcie_phy_0_ex_hardware_golden_ila.ltx
