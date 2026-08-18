@@ -9,12 +9,20 @@ set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
                             $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
 set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
                            $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
+set k02_off_gap [expr {[info exists ::env(K02_DYNAMIC_GEN1_OFF_GAP)] &&
+                       $::env(K02_DYNAMIC_GEN1_OFF_GAP) eq "1"}]
 if {$k02_coeff_query} { set k02_dynamic_rate 1 }
 if {$k02_direct_gen3} {
   set build_dir [file join $script_dir build_k02_gen3]
   set bit_stem k02_pcie_phy_bringup_gen3
 } elseif {$k02_dynamic_rate} {
-  if {$k02_coeff_query} {
+  if {$k02_off_gap && $k02_coeff_query} {
+    set build_dir [file join $script_dir build_k02_dynamic_offgap_query]
+    set bit_stem k02_pcie_phy_bringup_dynamic_offgap_query
+  } elseif {$k02_off_gap} {
+    set build_dir [file join $script_dir build_k02_dynamic_offgap]
+    set bit_stem k02_pcie_phy_bringup_dynamic_offgap
+  } elseif {$k02_coeff_query} {
     set build_dir [file join $script_dir build_k02_dynamic_query]
     set bit_stem k02_pcie_phy_bringup_dynamic_query
   } else {
@@ -58,18 +66,35 @@ set ilas [get_hw_ilas -of_objects $device]
 if {[llength $ilas] != 1} { error "K02 PHY ILA期望唯一ILA，实际[llength $ilas]" }
 set ila [lindex $ilas 0]
 set trigger_probe {}
-set trigger_compare eq1'b1
-if {$k02_dynamic_rate} {
+set trigger_compare [expr {[info exists ::env(K02_ILA_TRIGGER_COMPARE)] ?
+                            $::env(K02_ILA_TRIGGER_COMPARE) : "eq4'h3"}]
+set trigger_pos [expr {[info exists ::env(K02_ILA_TRIGGER_POS)] ?
+                        $::env(K02_ILA_TRIGGER_POS) : 2048}]
+
+if {[info exists ::env(K02_ILA_TRIGGER_PROBE)]} {
+  set target_probe_name $::env(K02_ILA_TRIGGER_PROBE)
   foreach probe [get_hw_probes -of_objects $ila] {
     set probe_name [get_property NAME $probe]
-    if {$probe_name eq "dynamic_rate_txeq_active"} {
+    if {[string match "*$target_probe_name*" $probe_name] ||
+        $probe_name eq $target_probe_name} {
       lappend trigger_probe $probe
     }
   }
-  set trigger_compare eq1'b1
-  set trigger_error "K02 PHY ILA dynamic_rate_txeq_active触发探针不存在或不唯一"
+  set trigger_error "K02 PHY ILA 自定义触发探针不存在或不唯一：$target_probe_name"
+} elseif {$k02_dynamic_rate} {
+  foreach probe [get_hw_probes -of_objects $ila] {
+    set probe_name [get_property NAME $probe]
+    if {$probe_name eq "dynamic_rate_state"} {
+      lappend trigger_probe $probe
+    }
+  }
+  set trigger_compare [expr {[info exists ::env(K02_ILA_TRIGGER_COMPARE)] ?
+                              $::env(K02_ILA_TRIGGER_COMPARE) : "eq4'h3"}]
+  set trigger_error "K02 PHY ILA dynamic_rate_state触发探针不存在或不唯一"
 } else {
   set trigger_probe [get_hw_probes -of_objects $ila -filter {NAME =~ "*gen3_test_active*"}]
+  set trigger_compare [expr {[info exists ::env(K02_ILA_TRIGGER_COMPARE)] ?
+                              $::env(K02_ILA_TRIGGER_COMPARE) : "eq1'b1"}]
   set trigger_error "K02 PHY ILA gen3_test_active触发探针不存在或不唯一"
 }
 if {[llength $trigger_probe] != 1} {
@@ -82,11 +107,11 @@ if {[llength $trigger_probe] != 1} {
 set trigger_probe [lindex $trigger_probe 0]
 
 if {$action eq "program-arm"} {
-  set_property CONTROL.TRIGGER_POSITION 4096 $ila
+  set_property CONTROL.TRIGGER_POSITION $trigger_pos $ila
   reset_hw_ila $ila
   set_property TRIGGER_COMPARE_VALUE $trigger_compare $trigger_probe
   run_hw_ila $ila
-  puts "K02_PHY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe]"
+  puts "K02_PHY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe] pos=$trigger_pos"
 } elseif {$action eq "capture-wait"} {
   set capture_timeout [expr {$k02_dynamic_rate ? 20 : 10}]
   wait_on_hw_ila -timeout $capture_timeout $ila

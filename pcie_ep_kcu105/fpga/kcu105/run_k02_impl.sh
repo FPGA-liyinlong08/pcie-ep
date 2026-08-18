@@ -5,6 +5,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
 if [[ "${K02_DIRECT_GEN3:-0}" == "1" ]]; then
     build_dir="${script_dir}/build_k02_gen3"
+elif [[ "${K02_DYNAMIC_GEN1_OFF_GAP:-0}" == "1" && "${K02_DYNAMIC_COEFF_QUERY:-0}" == "1" ]]; then
+    build_dir="${script_dir}/build_k02_dynamic_offgap_query"
+elif [[ "${K02_DYNAMIC_GEN1_OFF_GAP:-0}" == "1" ]]; then
+    build_dir="${script_dir}/build_k02_dynamic_offgap"
 elif [[ "${K02_DYNAMIC_COEFF_QUERY:-0}" == "1" ]]; then
     build_dir="${script_dir}/build_k02_dynamic_query"
 elif [[ "${K02_DYNAMIC_GEN1_TO_GEN3:-0}" == "1" ]]; then

@@ -10,9 +10,14 @@ module kcu105_pcie_phy_bringup_top #(
     parameter integer GEN3_TEST_MODE        = 1,
     parameter integer DYNAMIC_RATE_TEST_MODE = 0,
     parameter integer DYNAMIC_COEFF_QUERY_MODE = 0,
+    parameter integer DYNAMIC_GEN1_OFF_GAP_MODE = 0,
     parameter integer DIRECT_GEN3_MODE      = 0,
     parameter integer DYNAMIC_START_DELAY_CYCLES = 1024,
     parameter integer DYNAMIC_GEN1_STABLE_CYCLES = 1024,
+    // 250 MHz phy_pclk下，2500个周期约等于10 us；这是Golden
+    // Gen1 OFF GAP的等价诊断窗口。K02没有board.v的rate enable，
+    // 因此窗口内保持Gen1/P0/Electrical Idle并撤销TXEQ命令。
+    parameter integer DYNAMIC_GEN1_OFF_GAP_CYCLES = 2500,
     parameter integer DYNAMIC_TXEQ_TIMEOUT_CYCLES = 8192,
     parameter integer DYNAMIC_GEN3_TIMEOUT_CYCLES = 32768
 ) (
@@ -41,6 +46,7 @@ module kcu105_pcie_phy_bringup_top #(
     localparam logic [3:0] DYN_TXEQ_GAP    = 4'd6;
     localparam logic [3:0] DYN_QUERY       = 4'd7;
     localparam logic [3:0] DYN_QUERY_GAP   = 4'd8;
+    localparam logic [3:0] DYN_GEN1_OFF_GAP = 4'd9;
     localparam logic [23:0] DETECT_TIMEOUT_LIMIT =
         DETECT_TIMEOUT_CYCLES[23:0] - 24'd1;
 
@@ -96,6 +102,10 @@ module kcu105_pcie_phy_bringup_top #(
     (* mark_debug = "true" *) logic [3:0] dynamic_rate_state;
     (* mark_debug = "true" *) logic       dynamic_rate_txeq_active;
     (* mark_debug = "true" *) logic       dynamic_rate_txeq_query_active;
+    // PHY_PHYSTATUS is a completion pulse, not a level that remains high
+    // after the rate change.  Keep a sticky copy for the dynamic checker and
+    // ILA so a later sample cannot hide an earlier completion event.
+    (* mark_debug = "true" *) logic       dynamic_rate_phystatus_seen;
     (* mark_debug = "true" *) logic       dynamic_rate_pass;
     (* mark_debug = "true" *) logic       dynamic_rate_fail;
     logic [31:0] dynamic_rate_count;
@@ -107,6 +117,10 @@ module kcu105_pcie_phy_bringup_top #(
         if ((DETECT_TIMEOUT_CYCLES < 1) ||
             (DETECT_TIMEOUT_CYCLES > 16_777_216)) begin : g_invalid_timeout
             initial $error("DETECT_TIMEOUT_CYCLES must be in [1, 16777216]");
+        end
+        if ((DYNAMIC_GEN1_OFF_GAP_MODE != 0) &&
+            (DYNAMIC_GEN1_OFF_GAP_CYCLES < 1)) begin : g_invalid_off_gap
+            initial $error("DYNAMIC_GEN1_OFF_GAP_CYCLES must be >= 1 when OFF GAP is enabled");
         end
     endgenerate
 
@@ -159,6 +173,16 @@ module kcu105_pcie_phy_bringup_top #(
                         phy_rate_cmd    = 2'b00;
                         as_cdr_hold_cmd = 1'b1;
                     end
+                    DYN_GEN1_OFF_GAP: begin
+                        // Direct K02 has no board.v rate-enable input. The
+                        // closest equivalent to Golden's all-rate-disabled
+                        // interval is Gen1/P0 with TXEQ idle and TxElecIdle
+                        // asserted; keep CDR hold unchanged to isolate the
+                        // OFF GAP variable in this A/B experiment.
+                        phy_rate_cmd      = 2'b00;
+                        phy_txeq_ctrl_cmd = 2'b00;
+                        as_cdr_hold_cmd    = 1'b1;
+                    end
                     DYN_GEN3_WAIT: begin
                         phy_rate_cmd    = 2'b10;
                         as_cdr_hold_cmd = 1'b1;
@@ -202,6 +226,7 @@ module kcu105_pcie_phy_bringup_top #(
             gen3_test_active   <= 1'b0;
             dynamic_rate_state <= DYN_IDLE;
             dynamic_rate_count <= '0;
+            dynamic_rate_phystatus_seen <= 1'b0;
             dynamic_rate_pass  <= 1'b0;
             dynamic_rate_fail  <= 1'b0;
             heartbeat_count    <= '0;
@@ -211,16 +236,19 @@ module kcu105_pcie_phy_bringup_top #(
             if (DYNAMIC_RATE_TEST_MODE == 0 || DIRECT_GEN3_MODE != 0) begin
                 dynamic_rate_state <= DYN_PASS;
                 dynamic_rate_count <= '0;
+                dynamic_rate_phystatus_seen <= 1'b0;
                 dynamic_rate_pass  <= 1'b0;
                 dynamic_rate_fail  <= 1'b0;
             end else if (!gen3_test_active) begin
                 dynamic_rate_state <= DYN_IDLE;
                 dynamic_rate_count <= '0;
+                dynamic_rate_phystatus_seen <= 1'b0;
                 dynamic_rate_pass  <= 1'b0;
                 dynamic_rate_fail  <= 1'b0;
             end else begin
                 case (dynamic_rate_state)
                     DYN_IDLE: begin
+                        dynamic_rate_phystatus_seen <= 1'b0;
                         if ((DYNAMIC_START_DELAY_CYCLES <= 1) ||
                             (dynamic_rate_count >= DYNAMIC_START_DELAY_CYCLES - 1)) begin
                             dynamic_rate_state <= DYN_GEN1_STABLE;
@@ -242,7 +270,9 @@ module kcu105_pcie_phy_bringup_top #(
                         if (phy_txeq_done) begin
                             dynamic_rate_state <=
                                 (DYNAMIC_COEFF_QUERY_MODE != 0) ?
-                                DYN_TXEQ_GAP : DYN_GEN3_WAIT;
+                                DYN_TXEQ_GAP :
+                                ((DYNAMIC_GEN1_OFF_GAP_MODE != 0) ?
+                                 DYN_GEN1_OFF_GAP : DYN_GEN3_WAIT);
                             dynamic_rate_count <= '0;
                         end else if ((DYNAMIC_TXEQ_TIMEOUT_CYCLES <= 1) ||
                                      (dynamic_rate_count >= DYNAMIC_TXEQ_TIMEOUT_CYCLES - 1)) begin
@@ -271,11 +301,27 @@ module kcu105_pcie_phy_bringup_top #(
                         end
                     end
                     DYN_QUERY_GAP: begin
-                        dynamic_rate_state <= DYN_GEN3_WAIT;
+                        dynamic_rate_state <=
+                            (DYNAMIC_GEN1_OFF_GAP_MODE != 0) ?
+                            DYN_GEN1_OFF_GAP : DYN_GEN3_WAIT;
                         dynamic_rate_count <= '0;
+                        if (DYNAMIC_GEN1_OFF_GAP_MODE == 0)
+                            dynamic_rate_phystatus_seen <= 1'b0;
+                    end
+                    DYN_GEN1_OFF_GAP: begin
+                        if ((DYNAMIC_GEN1_OFF_GAP_CYCLES <= 1) ||
+                            (dynamic_rate_count >= DYNAMIC_GEN1_OFF_GAP_CYCLES - 1)) begin
+                            dynamic_rate_state <= DYN_GEN3_WAIT;
+                            dynamic_rate_count <= '0;
+                            dynamic_rate_phystatus_seen <= 1'b0;
+                        end else begin
+                            dynamic_rate_count <= dynamic_rate_count + 1'b1;
+                        end
                     end
                     DYN_GEN3_WAIT: begin
-                        if (phy_phystatus) begin
+                        if (phy_phystatus)
+                            dynamic_rate_phystatus_seen <= 1'b1;
+                        if (phy_phystatus || dynamic_rate_phystatus_seen) begin
                             dynamic_rate_state <= DYN_PASS;
                             dynamic_rate_count <= '0;
                             dynamic_rate_pass  <= 1'b1;

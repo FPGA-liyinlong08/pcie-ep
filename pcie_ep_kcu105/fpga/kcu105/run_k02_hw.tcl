@@ -4,13 +4,21 @@ set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
 set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
                              $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
 set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
-                            $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
+                           $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
+set k02_off_gap [expr {[info exists ::env(K02_DYNAMIC_GEN1_OFF_GAP)] &&
+                       $::env(K02_DYNAMIC_GEN1_OFF_GAP) eq "1"}]
 if {$k02_coeff_query} { set k02_dynamic_rate 1 }
 if {$k02_direct_gen3} {
     set build_dir [file join $script_dir build_k02_gen3]
     set bit_stem k02_pcie_phy_bringup_gen3
 } elseif {$k02_dynamic_rate} {
-    if {$k02_coeff_query} {
+    if {$k02_off_gap && $k02_coeff_query} {
+        set build_dir [file join $script_dir build_k02_dynamic_offgap_query]
+        set bit_stem k02_pcie_phy_bringup_dynamic_offgap_query
+    } elseif {$k02_off_gap} {
+        set build_dir [file join $script_dir build_k02_dynamic_offgap]
+        set bit_stem k02_pcie_phy_bringup_dynamic_offgap
+    } elseif {$k02_coeff_query} {
         set build_dir [file join $script_dir build_k02_dynamic_query]
         set bit_stem k02_pcie_phy_bringup_dynamic_query
     } else {

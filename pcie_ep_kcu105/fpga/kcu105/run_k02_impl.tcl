@@ -12,6 +12,8 @@ set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
                             $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
 set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
                            $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
+set k02_off_gap [expr {[info exists ::env(K02_DYNAMIC_GEN1_OFF_GAP)] &&
+                       $::env(K02_DYNAMIC_GEN1_OFF_GAP) eq "1"}]
 if {$k02_coeff_query} { set k02_dynamic_rate 1 }
 set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
                             $::env(K02_DIRECT_GEN3) eq "1"}]
@@ -20,7 +22,13 @@ if {$k02_direct_gen3} {
     set build_dir [file join $script_dir build_k02_gen3]
     set bit_stem k02_pcie_phy_bringup_gen3
 } elseif {$k02_dynamic_rate} {
-    if {$k02_coeff_query} {
+    if {$k02_off_gap && $k02_coeff_query} {
+        set build_dir [file join $script_dir build_k02_dynamic_offgap_query]
+        set bit_stem k02_pcie_phy_bringup_dynamic_offgap_query
+    } elseif {$k02_off_gap} {
+        set build_dir [file join $script_dir build_k02_dynamic_offgap]
+        set bit_stem k02_pcie_phy_bringup_dynamic_offgap
+    } elseif {$k02_coeff_query} {
         set build_dir [file join $script_dir build_k02_dynamic_query]
         set bit_stem k02_pcie_phy_bringup_dynamic_query
     } else {
@@ -60,8 +68,10 @@ synth_design -top $top_name -part $part_name \
     -generic GEN3_TEST_MODE=$k02_gen3_test \
     -generic DYNAMIC_RATE_TEST_MODE=$k02_dynamic_rate \
     -generic DYNAMIC_COEFF_QUERY_MODE=$k02_coeff_query \
+    -generic DYNAMIC_GEN1_OFF_GAP_MODE=$k02_off_gap \
     -generic DIRECT_GEN3_MODE=$k02_direct_gen3 \
-    -generic DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay
+    -generic DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay \
+    -generic DYNAMIC_GEN1_OFF_GAP_CYCLES=2500
 
 if {$k02_ila_debug} {
     # K02 standalone PHY 没有协议层 ILA；这里直接从综合网表中的 GT Wizard
@@ -190,11 +200,12 @@ if {$k02_ila_debug} {
         [k02_bus {.*dynamic_rate_state\[[0-3]\]$} 4] \
         [k02_net {.*dynamic_rate_txeq_active$}] \
         [k02_net {.*dynamic_rate_txeq_query_active$}] \
+        [k02_net {.*dynamic_rate_phystatus_seen$}] \
         [k02_net {.*dynamic_rate_pass$}] \
         [k02_net {.*dynamic_rate_fail$}]]
     set k02_probe0 [concat {*}$k02_probe0]
-    if {[llength $k02_probe0] != 78} {
-        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望78"
+    if {[llength $k02_probe0] != 79} {
+        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望79"
     }
     k02_add_probe u_ila_k02 0 $k02_probe0
 
@@ -301,6 +312,8 @@ puts $summary_file "K02_ILA_DEBUG=$k02_ila_debug"
 puts $summary_file "GEN3_TEST_MODE=$k02_gen3_test"
 puts $summary_file "DYNAMIC_RATE_TEST_MODE=$k02_dynamic_rate"
 puts $summary_file "DYNAMIC_COEFF_QUERY_MODE=$k02_coeff_query"
+puts $summary_file "DYNAMIC_GEN1_OFF_GAP_MODE=$k02_off_gap"
+puts $summary_file "DYNAMIC_GEN1_OFF_GAP_CYCLES=2500"
 puts $summary_file "DIRECT_GEN3_MODE=$k02_direct_gen3"
 puts $summary_file "DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
