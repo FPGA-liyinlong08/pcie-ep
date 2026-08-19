@@ -49,3 +49,6 @@ vcs_results/
 *.bin
 *.ltx
 *.prm
+# 板级构建输出：bitstream/ltx 已被上方忽略，但 impl_summary/cdc/drc/timing
+# 等文本报告及 vivado.log 备份仍可能在 build*/ 下生成。
+board_kcu105/build*/
