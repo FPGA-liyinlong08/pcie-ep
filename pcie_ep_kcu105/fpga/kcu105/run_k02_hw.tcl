@@ -7,6 +7,13 @@ set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
                            $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
 set k02_off_gap [expr {[info exists ::env(K02_DYNAMIC_GEN1_OFF_GAP)] &&
                        $::env(K02_DYNAMIC_GEN1_OFF_GAP) eq "1"}]
+set k02_mac_in_detect_low [expr {[info exists ::env(K02_DYNAMIC_MAC_IN_DETECT_LOW)] &&
+                                   $::env(K02_DYNAMIC_MAC_IN_DETECT_LOW) eq "1"}]
+set k02_cdr_hold_low [expr {[info exists ::env(K02_DYNAMIC_CDR_HOLD_LOW)] &&
+                             $::env(K02_DYNAMIC_CDR_HOLD_LOW) eq "1"}]
+set k02_skip_txeq [expr {[info exists ::env(K02_DYNAMIC_SKIP_TXEQ)] &&
+                          $::env(K02_DYNAMIC_SKIP_TXEQ) eq "1"}]
+set k02_any_ab [expr {$k02_mac_in_detect_low || $k02_cdr_hold_low || $k02_skip_txeq}]
 if {$k02_coeff_query} { set k02_dynamic_rate 1 }
 if {$k02_direct_gen3} {
     set build_dir [file join $script_dir build_k02_gen3]
@@ -15,6 +22,17 @@ if {$k02_direct_gen3} {
     if {$k02_off_gap && $k02_coeff_query} {
         set build_dir [file join $script_dir build_k02_dynamic_offgap_query]
         set bit_stem k02_pcie_phy_bringup_dynamic_offgap_query
+    } elseif {$k02_off_gap && $k02_any_ab} {
+        set ab_dir "build_k02_ab"
+        if {$k02_mac_in_detect_low} { append ab_dir "_mac" }
+        if {$k02_cdr_hold_low}     { append ab_dir "_cdr" }
+        if {$k02_skip_txeq}        { append ab_dir "_skiptxeq" }
+        set ab_stem "k02_pcie_phy_bringup_ab"
+        if {$k02_mac_in_detect_low} { append ab_stem "_mac" }
+        if {$k02_cdr_hold_low}     { append ab_stem "_cdr" }
+        if {$k02_skip_txeq}        { append ab_stem "_skiptxeq" }
+        set build_dir [file join $script_dir $ab_dir]
+        set bit_stem $ab_stem
     } elseif {$k02_off_gap} {
         set build_dir [file join $script_dir build_k02_dynamic_offgap]
         set bit_stem k02_pcie_phy_bringup_dynamic_offgap

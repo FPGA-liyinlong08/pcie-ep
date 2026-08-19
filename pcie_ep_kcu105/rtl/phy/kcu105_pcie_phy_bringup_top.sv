@@ -19,7 +19,12 @@ module kcu105_pcie_phy_bringup_top #(
     // 因此窗口内保持Gen1/P0/Electrical Idle并撤销TXEQ命令。
     parameter integer DYNAMIC_GEN1_OFF_GAP_CYCLES = 2500,
     parameter integer DYNAMIC_TXEQ_TIMEOUT_CYCLES = 8192,
-    parameter integer DYNAMIC_GEN3_TIMEOUT_CYCLES = 32768
+    parameter integer DYNAMIC_GEN3_TIMEOUT_CYCLES = 32768,
+    // Golden-vs-K02 A/B Test 独立开关 (claude_code_k02_golden_ab_modify.md)。
+    // 默认全部为 0，保持当前 K02 行为不变；打开任意一个都只改变对应变量。
+    parameter integer DYNAMIC_MAC_IN_DETECT_LOW_MODE = 0,
+    parameter integer DYNAMIC_CDR_HOLD_LOW_MODE      = 0,
+    parameter integer DYNAMIC_SKIP_TXEQ_MODE        = 0
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -65,6 +70,7 @@ module kcu105_pcie_phy_bringup_top #(
     logic [1:0] phy_txeq_ctrl_cmd;
     logic [3:0] phy_txeq_preset_cmd;
     logic       as_cdr_hold_cmd;
+    logic       as_mac_in_detect_cmd;
     wire        phy_phystatus;
     wire [2:0]  phy_rxstatus;
 
@@ -98,6 +104,7 @@ module kcu105_pcie_phy_bringup_top #(
     (* mark_debug = "true" *) logic [3:0] phy_txeq_preset_debug;
     (* mark_debug = "true" *) logic [17:0] phy_txeq_new_coeff_debug;
     (* mark_debug = "true" *) logic       as_cdr_hold_debug;
+    (* mark_debug = "true" *) logic       as_mac_in_detect_debug;
     (* mark_debug = "true" *) logic       phy_txeq_done_debug;
     (* mark_debug = "true" *) logic [3:0] dynamic_rate_state;
     (* mark_debug = "true" *) logic       dynamic_rate_txeq_active;
@@ -132,6 +139,11 @@ module kcu105_pcie_phy_bringup_top #(
         phy_txeq_ctrl_cmd  = 2'b00;
         phy_txeq_preset_cmd = 4'd0;
         as_cdr_hold_cmd    = 1'b0;
+        // 默认行为：K02 顶层把 as_mac_in_detect 永久拉 1（与之前 .as_mac_in_detect(1'b1)
+        // 一致）。A/B Test 1 (DYNAMIC_MAC_IN_DETECT_LOW_MODE=1) 时，在 dynamic
+        // rate-change 流程内把它拉 0，对齐 Golden phy_ctrl.v 在 Detect.Quiet/
+        // Detect.Active 之外的状态（参考 imports/phy_ctrl.v:209）。
+        as_mac_in_detect_cmd = 1'b1;
         if ((DIRECT_GEN3_MODE == 0) &&
             ((bup_state == BUP_DETECT) ||
              (bup_state == BUP_WAIT_STATUS))) begin
@@ -148,13 +160,24 @@ module kcu105_pcie_phy_bringup_top #(
             // P0 并执行稳态 Gen3 或受控 Gen1->Gen3 rate-change 诊断。
             phy_powerdown      = 2'b00;
             phy_txelecidle_cmd = 1'b1;
+            // A/B Test 1：dynamic 流程内释放 mac_in_detect。
+            if (DYNAMIC_MAC_IN_DETECT_LOW_MODE != 0) begin
+                as_mac_in_detect_cmd = 1'b0;
+            end
             if (DYNAMIC_RATE_TEST_MODE != 0) begin
                 case (dynamic_rate_state)
                     DYN_TXEQ: begin
+                        // A/B Test 3 (DYNAMIC_SKIP_TXEQ_MODE=1)：保留进入此状态
+                        // 的可能性，但强制 TXEQ_CTRL=Idle / preset=0，
+                        // 并把 as_cdr_hold_cmd 也拉 0，避免空跑 TXEQ 期间
+                        // CDR 被错误地 hold 住。
                         phy_rate_cmd        = 2'b00;
-                        phy_txeq_ctrl_cmd   = 2'b01;
-                        phy_txeq_preset_cmd = 4'd4;
-                        as_cdr_hold_cmd     = 1'b1;
+                        phy_txeq_ctrl_cmd   = (DYNAMIC_SKIP_TXEQ_MODE != 0) ?
+                                               2'b00 : 2'b01;
+                        phy_txeq_preset_cmd = (DYNAMIC_SKIP_TXEQ_MODE != 0) ?
+                                               4'd0 : 4'd4;
+                        as_cdr_hold_cmd     = (DYNAMIC_SKIP_TXEQ_MODE != 0) ?
+                                               1'b0 : 1'b1;
                     end
                     DYN_TXEQ_GAP: begin
                         // PG239 requires TXEQ_CTRL to return to Idle after
@@ -162,30 +185,41 @@ module kcu105_pcie_phy_bringup_top #(
                         // optional query so the two PHY commands cannot
                         // merge at the interface.
                         phy_rate_cmd    = 2'b00;
-                        as_cdr_hold_cmd = 1'b1;
+                        as_cdr_hold_cmd = (DYNAMIC_SKIP_TXEQ_MODE != 0) ?
+                                           1'b0 : 1'b1;
                     end
                     DYN_QUERY: begin
-                        phy_rate_cmd    = 2'b00;
-                        phy_txeq_ctrl_cmd = 2'b11;
-                        as_cdr_hold_cmd = 1'b1;
+                        phy_rate_cmd     = 2'b00;
+                        phy_txeq_ctrl_cmd = (DYNAMIC_SKIP_TXEQ_MODE != 0) ?
+                                               2'b00 : 2'b11;
+                        as_cdr_hold_cmd  = (DYNAMIC_SKIP_TXEQ_MODE != 0) ?
+                                               1'b0 : 1'b1;
                     end
                     DYN_QUERY_GAP: begin
                         phy_rate_cmd    = 2'b00;
-                        as_cdr_hold_cmd = 1'b1;
+                        as_cdr_hold_cmd = (DYNAMIC_SKIP_TXEQ_MODE != 0) ?
+                                           1'b0 : 1'b1;
                     end
                     DYN_GEN1_OFF_GAP: begin
                         // Direct K02 has no board.v rate-enable input. The
                         // closest equivalent to Golden's all-rate-disabled
                         // interval is Gen1/P0 with TXEQ idle and TxElecIdle
-                        // asserted; keep CDR hold unchanged to isolate the
-                        // OFF GAP variable in this A/B experiment.
+                        // asserted.  A/B Test 2 (DYNAMIC_CDR_HOLD_LOW_MODE=1)
+                        // 在此状态强制 as_cdr_hold_cmd=0，对齐 Golden。
                         phy_rate_cmd      = 2'b00;
                         phy_txeq_ctrl_cmd = 2'b00;
-                        as_cdr_hold_cmd    = 1'b1;
+                        as_cdr_hold_cmd    = (DYNAMIC_CDR_HOLD_LOW_MODE != 0) ?
+                                              1'b0 : 1'b1;
                     end
                     DYN_GEN3_WAIT: begin
-                        phy_rate_cmd    = 2'b10;
-                        as_cdr_hold_cmd = 1'b1;
+                        // A/B Test 2 (DYNAMIC_CDR_HOLD_LOW_MODE=1) 在此状态
+                        // 强制 as_cdr_hold_cmd=0，让 GTHE3 CDR 重新锁定到
+                        // Gen3；否则 Golden 风格下 QPLL1 不会在 PHY_RATE=2
+                        // 保持期间重新 relock，phy_phystatus 也不会 pulse。
+                        phy_rate_cmd      = 2'b10;
+                        phy_txeq_ctrl_cmd = 2'b00;
+                        as_cdr_hold_cmd   = (DYNAMIC_CDR_HOLD_LOW_MODE != 0) ?
+                                              1'b0 : 1'b0;
                     end
                     DYN_PASS: begin
                         phy_rate_cmd = 2'b10;
@@ -207,6 +241,7 @@ module kcu105_pcie_phy_bringup_top #(
     assign phy_txeq_preset_debug = phy_txeq_preset_cmd;
     assign phy_txeq_new_coeff_debug = phy_txeq_new_coeff;
     assign as_cdr_hold_debug    = as_cdr_hold_cmd;
+    assign as_mac_in_detect_debug = as_mac_in_detect_cmd;
     assign phy_txeq_done_debug  = phy_txeq_done;
     assign dynamic_rate_txeq_active =
         (dynamic_rate_state == DYN_TXEQ);
@@ -260,14 +295,35 @@ module kcu105_pcie_phy_bringup_top #(
                     DYN_GEN1_STABLE: begin
                         if ((DYNAMIC_GEN1_STABLE_CYCLES <= 1) ||
                             (dynamic_rate_count >= DYNAMIC_GEN1_STABLE_CYCLES - 1)) begin
-                            dynamic_rate_state <= DYN_TXEQ;
+                            // A/B Test 3 (DYNAMIC_SKIP_TXEQ_MODE=1)：
+                            // 跳过 DYN_TXEQ / TXEQ_GAP / QUERY / QUERY_GAP，
+                            // 直接进入 DYN_GEN1_OFF_GAP（如果启用）或 DYN_GEN3_WAIT。
+                            if (DYNAMIC_SKIP_TXEQ_MODE != 0) begin
+                                dynamic_rate_state <=
+                                    (DYNAMIC_GEN1_OFF_GAP_MODE != 0) ?
+                                    DYN_GEN1_OFF_GAP : DYN_GEN3_WAIT;
+                                if (DYNAMIC_GEN1_OFF_GAP_MODE == 0)
+                                    dynamic_rate_phystatus_seen <= 1'b0;
+                            end else begin
+                                dynamic_rate_state <= DYN_TXEQ;
+                            end
                             dynamic_rate_count <= '0;
                         end else begin
                             dynamic_rate_count <= dynamic_rate_count + 1'b1;
                         end
                     end
                     DYN_TXEQ: begin
-                        if (phy_txeq_done) begin
+                        // A/B Test 3 (DYNAMIC_SKIP_TXEQ_MODE=1)：
+                        // 若 SKIP_TXEQ 模式下误入 DYN_TXEQ，1 cycle 内透传，
+                        // 等价于空跑一次 TXEQ。
+                        if (DYNAMIC_SKIP_TXEQ_MODE != 0) begin
+                            dynamic_rate_state <=
+                                ((DYNAMIC_GEN1_OFF_GAP_MODE != 0) ?
+                                 DYN_GEN1_OFF_GAP : DYN_GEN3_WAIT);
+                            if (DYNAMIC_GEN1_OFF_GAP_MODE == 0)
+                                dynamic_rate_phystatus_seen <= 1'b0;
+                            dynamic_rate_count <= '0;
+                        end else if (phy_txeq_done) begin
                             dynamic_rate_state <=
                                 (DYNAMIC_COEFF_QUERY_MODE != 0) ?
                                 DYN_TXEQ_GAP :
@@ -441,7 +497,7 @@ module kcu105_pcie_phy_bringup_top #(
         .phy_txeq_coeff         (6'b0),
         .phy_rxeq_ctrl          (2'b0),
         .phy_rxeq_txpreset      (4'b0),
-        .as_mac_in_detect       (1'b1),
+        .as_mac_in_detect       (as_mac_in_detect_cmd),
         .as_cdr_hold_req        (as_cdr_hold_cmd),
         .phy_coreclk            (phy_coreclk),
         .phy_userclk            (phy_userclk),

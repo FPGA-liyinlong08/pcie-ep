@@ -14,10 +14,31 @@ set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
                            $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
 set k02_off_gap [expr {[info exists ::env(K02_DYNAMIC_GEN1_OFF_GAP)] &&
                        $::env(K02_DYNAMIC_GEN1_OFF_GAP) eq "1"}]
+set k02_mac_in_detect_low [expr {[info exists ::env(K02_DYNAMIC_MAC_IN_DETECT_LOW)] &&
+                                   $::env(K02_DYNAMIC_MAC_IN_DETECT_LOW) eq "1"}]
+set k02_cdr_hold_low [expr {[info exists ::env(K02_DYNAMIC_CDR_HOLD_LOW)] &&
+                             $::env(K02_DYNAMIC_CDR_HOLD_LOW) eq "1"}]
+set k02_skip_txeq [expr {[info exists ::env(K02_DYNAMIC_SKIP_TXEQ)] &&
+                          $::env(K02_DYNAMIC_SKIP_TXEQ) eq "1"}]
 if {$k02_coeff_query} { set k02_dynamic_rate 1 }
 set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
                             $::env(K02_DIRECT_GEN3) eq "1"}]
 set k02_dynamic_start_delay [expr {$k02_dynamic_rate ? 1000000000 : 1024}]
+# Golden-vs-K02 A/B Test 组合目标命名：每个组合使用独立目录，
+# 避免不同 A/B 变量的 bit/probe 互相覆盖。
+set k02_any_ab [expr {$k02_mac_in_detect_low || $k02_cdr_hold_low || $k02_skip_txeq}]
+set k02_ab_combo_dir ""
+set k02_ab_combo_stem ""
+if {$k02_any_ab} {
+    set k02_ab_combo_dir "build_k02_ab"
+    if {$k02_mac_in_detect_low} { append k02_ab_combo_dir "_mac" }
+    if {$k02_cdr_hold_low}     { append k02_ab_combo_dir "_cdr" }
+    if {$k02_skip_txeq}        { append k02_ab_combo_dir "_skiptxeq" }
+    set k02_ab_combo_stem "k02_pcie_phy_bringup_ab"
+    if {$k02_mac_in_detect_low} { append k02_ab_combo_stem "_mac" }
+    if {$k02_cdr_hold_low}     { append k02_ab_combo_stem "_cdr" }
+    if {$k02_skip_txeq}        { append k02_ab_combo_stem "_skiptxeq" }
+}
 if {$k02_direct_gen3} {
     set build_dir [file join $script_dir build_k02_gen3]
     set bit_stem k02_pcie_phy_bringup_gen3
@@ -25,6 +46,9 @@ if {$k02_direct_gen3} {
     if {$k02_off_gap && $k02_coeff_query} {
         set build_dir [file join $script_dir build_k02_dynamic_offgap_query]
         set bit_stem k02_pcie_phy_bringup_dynamic_offgap_query
+    } elseif {$k02_off_gap && $k02_any_ab} {
+        set build_dir [file join $script_dir $k02_ab_combo_dir]
+        set bit_stem $k02_ab_combo_stem
     } elseif {$k02_off_gap} {
         set build_dir [file join $script_dir build_k02_dynamic_offgap]
         set bit_stem k02_pcie_phy_bringup_dynamic_offgap
@@ -71,7 +95,10 @@ synth_design -top $top_name -part $part_name \
     -generic DYNAMIC_GEN1_OFF_GAP_MODE=$k02_off_gap \
     -generic DIRECT_GEN3_MODE=$k02_direct_gen3 \
     -generic DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay \
-    -generic DYNAMIC_GEN1_OFF_GAP_CYCLES=2500
+    -generic DYNAMIC_GEN1_OFF_GAP_CYCLES=2500 \
+    -generic DYNAMIC_MAC_IN_DETECT_LOW_MODE=$k02_mac_in_detect_low \
+    -generic DYNAMIC_CDR_HOLD_LOW_MODE=$k02_cdr_hold_low \
+    -generic DYNAMIC_SKIP_TXEQ_MODE=$k02_skip_txeq
 
 if {$k02_ila_debug} {
     # K02 standalone PHY 没有协议层 ILA；这里直接从综合网表中的 GT Wizard
@@ -182,6 +209,7 @@ if {$k02_ila_debug} {
         [k02_bus {.*phy_txeq_ctrl_debug\[[0-1]\]$} 2] \
         [k02_bus {.*phy_txeq_preset_debug\[[0-3]\]$} 4] \
         [k02_net {.*as_cdr_hold_debug$}] \
+        [k02_net {.*as_mac_in_detect_debug$}] \
         [k02_net {.*phy_txeq_done_debug$}] \
         [k02_bus {.*phy_txeq_new_coeff_debug\[[0-9]+\]$} 18] \
         [k02_primitive_pin GTHE3_CHANNEL PCIEUSERGEN3RDY] \
@@ -204,8 +232,8 @@ if {$k02_ila_debug} {
         [k02_net {.*dynamic_rate_pass$}] \
         [k02_net {.*dynamic_rate_fail$}]]
     set k02_probe0 [concat {*}$k02_probe0]
-    if {[llength $k02_probe0] != 79} {
-        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望79"
+    if {[llength $k02_probe0] != 80} {
+        error "K02 ILA probe0宽度错误：[llength $k02_probe0]，期望80"
     }
     k02_add_probe u_ila_k02 0 $k02_probe0
 
@@ -218,7 +246,7 @@ if {$k02_ila_debug} {
         [k02_net {.*unexpected_status$}] \
         [k02_bus {.*detected_rxstatus\[[0-2]\]$} 3]]
     k02_add_probe u_ila_k02 1 $k02_probe1
-    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test dynamic_rate=$k02_dynamic_rate coeff_query=$k02_coeff_query direct_gen3=$k02_direct_gen3"
+    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test dynamic_rate=$k02_dynamic_rate coeff_query=$k02_coeff_query direct_gen3=$k02_direct_gen3 mac_in_detect_low=$k02_mac_in_detect_low cdr_hold_low=$k02_cdr_hold_low skip_txeq=$k02_skip_txeq"
 }
 write_checkpoint -force [file join $build_dir k02_synth.dcp]
 report_utilization -file [file join $build_dir utilization_synth.rpt]
@@ -316,6 +344,9 @@ puts $summary_file "DYNAMIC_GEN1_OFF_GAP_MODE=$k02_off_gap"
 puts $summary_file "DYNAMIC_GEN1_OFF_GAP_CYCLES=2500"
 puts $summary_file "DIRECT_GEN3_MODE=$k02_direct_gen3"
 puts $summary_file "DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay"
+puts $summary_file "DYNAMIC_MAC_IN_DETECT_LOW_MODE=$k02_mac_in_detect_low"
+puts $summary_file "DYNAMIC_CDR_HOLD_LOW_MODE=$k02_cdr_hold_low"
+puts $summary_file "DYNAMIC_SKIP_TXEQ_MODE=$k02_skip_txeq"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
 

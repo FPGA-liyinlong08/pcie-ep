@@ -3,7 +3,7 @@
 	k00-m02-verilator k00-m02-verilator-signoff k00-m02-vcs \
 	k00-m02-vivado k00-m02 \
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
-	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado k02-gen3-vivado k02-offgap-vivado \
+	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado k02-gen3-vivado k02-offgap-vivado k02-ab-mac-in-detect-vivado k02-ab-cdr-hold-vivado k02-ab-skip-txeq-vivado k02-golden-ab-vivado \
 	k02-hw-probe k02-hw-program k02-gen3-hw-probe k02-gen3-hw-program k02 \
 	k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
 	k03-lint k03-verilator k03-vivado k03 \
@@ -179,6 +179,25 @@ k02-query-vivado:
 
 k02-offgap-vivado:
 	K02_DYNAMIC_GEN1_TO_GEN3=1 K02_DYNAMIC_GEN1_OFF_GAP=1 ./fpga/kcu105/run_k02_impl.sh
+
+# Golden-vs-K02 A/B Test 组合目标（参考 claude_code_k02_golden_ab_modify.md §5）。
+# 三个单变量开关仍可独立使用；k02-golden-ab-vivado 等价于 OFF GAP + 三项全开。
+K02_AB_ENV = K02_DYNAMIC_GEN1_TO_GEN3=1 K02_DYNAMIC_GEN1_OFF_GAP=1
+k02-ab-mac-in-detect-vivado:
+	$(K02_AB_ENV) K02_DYNAMIC_MAC_IN_DETECT_LOW=1 ./fpga/kcu105/run_k02_impl.sh
+
+k02-ab-cdr-hold-vivado:
+	$(K02_AB_ENV) K02_DYNAMIC_CDR_HOLD_LOW=1 ./fpga/kcu105/run_k02_impl.sh
+
+k02-ab-skip-txeq-vivado:
+	$(K02_AB_ENV) K02_DYNAMIC_SKIP_TXEQ=1 ./fpga/kcu105/run_k02_impl.sh
+
+k02-golden-ab-vivado:
+	$(K02_AB_ENV) \
+	K02_DYNAMIC_MAC_IN_DETECT_LOW=1 \
+	K02_DYNAMIC_CDR_HOLD_LOW=1 \
+	K02_DYNAMIC_SKIP_TXEQ=1 \
+	./fpga/kcu105/run_k02_impl.sh
 
 k02-hw-probe:
 	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \

@@ -3,10 +3,23 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
+# Golden-vs-K02 A/B Test 组合标记：任意一个 A/B 变量开启时启用。
+k02_any_ab=0
+if [[ "${K02_DYNAMIC_MAC_IN_DETECT_LOW:-0}" == "1" \
+   || "${K02_DYNAMIC_CDR_HOLD_LOW:-0}" == "1" \
+   || "${K02_DYNAMIC_SKIP_TXEQ:-0}" == "1" ]]; then
+    k02_any_ab=1
+fi
 if [[ "${K02_DIRECT_GEN3:-0}" == "1" ]]; then
     build_dir="${script_dir}/build_k02_gen3"
 elif [[ "${K02_DYNAMIC_GEN1_OFF_GAP:-0}" == "1" && "${K02_DYNAMIC_COEFF_QUERY:-0}" == "1" ]]; then
     build_dir="${script_dir}/build_k02_dynamic_offgap_query"
+elif [[ "${K02_DYNAMIC_GEN1_OFF_GAP:-0}" == "1" && "${k02_any_ab}" == "1" ]]; then
+    ab_dir="build_k02_ab"
+    if [[ "${K02_DYNAMIC_MAC_IN_DETECT_LOW:-0}" == "1" ]]; then ab_dir+="_mac"; fi
+    if [[ "${K02_DYNAMIC_CDR_HOLD_LOW:-0}" == "1" ]]; then ab_dir+="_cdr"; fi
+    if [[ "${K02_DYNAMIC_SKIP_TXEQ:-0}" == "1" ]]; then ab_dir+="_skiptxeq"; fi
+    build_dir="${script_dir}/${ab_dir}"
 elif [[ "${K02_DYNAMIC_GEN1_OFF_GAP:-0}" == "1" ]]; then
     build_dir="${script_dir}/build_k02_dynamic_offgap"
 elif [[ "${K02_DYNAMIC_COEFF_QUERY:-0}" == "1" ]]; then
