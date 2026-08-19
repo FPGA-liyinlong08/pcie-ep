@@ -147,6 +147,28 @@ Worst Setup Slack = 0.792 ns，Hold Slack 通过，无时序违例。
 5. **删 cell #3**：cell #3 (`pcie_phy_0_ex/board_kcu105/build_k02_phy_cross/`) 是 2x2 验证产物，
    验证目标已达成，可保留作为参考但不再需要重建。
 
+### B. 验证 K01 不受影响（已完成）
+
+`K02_USE_PHY_CTRL=1` 切换只动 `rtl/phy/kcu105_pcie_phy_bringup_top.sv` 顶层 + 新增 5 个 Golden
+控制器 RTL 文件；`rtl/phy/kcu105_pcie_phy_wrapper.sv` 接口**未改**。K01 board
+(`kcu105_pcie_gen1_top.sv` / `kcu105_pcie_ep_gen1_top.sv`) 共用 wrapper，应无影响。
+
+**验证矩阵**：
+
+| Target | 触达 wrapper? | 触达 K01 top? | 结果 |
+|--------|--------------|--------------|------|
+| `k01-lint` | ✗ (只 lint `kcu105_reset_ctrl`) | ✗ | PASS (0 errors) |
+| `k01-checker-selftest` | ✗ (NEGATIVE_STUB reset) | ✗ | `K01_CHECKER_SELFTEST_PASS` |
+| `k01-verilator` | ✗ (refclk reset 10000 random vectors) | ✗ | `K01_VERILATOR_PASS` |
+| `k03-lint` | **✓** | **✓** (top=`kcu105_pcie_gen1_top`) | PASS (0 errors) |
+| `k11b2-lint` | **✓** | **✓** (top=`kcu105_pcie_ep_gen1_top`) | PASS (0 errors) |
+| `k02-verilator` | **✓** (wrapper-level sim) | ✗ | `K02_VERILATOR_PASS` |
+| `k02-checker-selftest` | **✓** (NEGATIVE_STUB wrapper) | ✗ | `K02_CHECKER_SELFTEST_PASS` |
+| `k02-lint` | **✓** | ✗ | PASS (0 errors, K02_USE_PHY_CTRL=0) |
+| `k02-lint-phyctrl` | **✓** | ✗ | PASS (0 errors, K02_USE_PHY_CTRL=1) |
+
+**结论**：K01 wrapper 回归全过；K02 两条路径的 wrapper-level sim 也过。wrapper 接口确实未变。
+
 ### 4. 同步 sim harness（已完成）
 
 K02 sim harness 实际触达范围与 `K02_USE_PHY_CTRL` 关系：
