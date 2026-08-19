@@ -144,9 +144,39 @@ Worst Setup Slack = 0.792 ns，Hold Slack 通过，无时序违例。
 3. **清理旧的 K02 FSM**：将 `dynamic_rate_*` FSM 与 A/B 3 变量 (`DYNAMIC_MAC_IN_DETECT_LOW_MODE` /
    `DYNAMIC_CDR_HOLD_LOW_MODE` / `DYNAMIC_SKIP_TXEQ_MODE`) 删除或标 deprecated；这些 4 个 A/B bitstream
    (`build_k02_ab_mac*` / `_cdr*` / `_skiptxeq*` / `_all`) 已 commit 归档但不再被主线使用。
-4. **更新 lint / verilator / VCS harness**：`sim/verilator/k02/` 和 `sim/vcs/` 需为新参数添加 case。
 5. **删 cell #3**：cell #3 (`pcie_phy_0_ex/board_kcu105/build_k02_phy_cross/`) 是 2x2 验证产物，
    验证目标已达成，可保留作为参考但不再需要重建。
+
+### 4. 同步 sim harness（已完成）
+
+K02 sim harness 实际触达范围与 `K02_USE_PHY_CTRL` 关系：
+
+| Sim target | Top module | 触达 bringup_top? | 需要 K02_USE_PHY_CTRL? |
+|------------|-----------|-----------------|---------------------|
+| `k02-checker-selftest` | `kcu105_pcie_phy_wrapper` (NEGATIVE_STUB=1) | 否 | 否 |
+| `k02-lint` | `kcu105_pcie_phy_bringup_top` | **是** | **是** (`-GK02_USE_PHY_CTRL=0`) |
+| `k02-lint-phyctrl` | `kcu105_pcie_phy_bringup_top` | **是** | **是** (`-GK02_USE_PHY_CTRL=1`) |
+| `k02-verilator` / `k02-vcs` / `k02-query-vcs` / `k02-gen3-vcs` | `kcu105_pcie_phy_wrapper` | 否 | 否 |
+
+`sim/verilator/k02/` 与 `sim/vcs/` 的 wrapper-level sim 全部以 `kcu105_pcie_phy_wrapper` 为 top，
+不引用 `kcu105_pcie_phy_bringup_top.sv`，wrapper 接口未改，**无需**为 `K02_USE_PHY_CTRL` 加 case。
+
+唯一触达 `bringup_top` 的是 top Makefile 的 `k02-lint`。已拆为两个 target 互为补集：
+
+- `k02-lint`（`-GK02_USE_PHY_CTRL=0`）：测旧 K02 FSM 路径；作 fallback / A/B 参照。
+- `k02-lint-phyctrl`（`-GK02_USE_PHY_CTRL=1`）：测新默认 Golden 控制器路径。
+  - 需要 `phy_ctrl.v` / `phy_ctrl_pat_gen*.v` / `phy_bringup_seq.sv` 额外 RTL。
+  - 需要 `+incdir+rtl/phy`（`phy_ctrl_pat_gen_lane.v:62` 引用 `phy_ctrl_defines.vh`）。
+  - 需要 `--timing` 容忍 `phy_ctrl.v` 的 `#(TCQ)` 非阻塞延迟。
+  - 输出仅剩 `BLKSEQ` warning（`phy_ctrl.v:393/404`，Xilinx 参考代码风格，benign）。
+
+两个 lint target 都挂在 `k02` 聚合 target 上。
+
+**验证**：
+```
+$ make k02-lint exit=0 errs=0
+$ make k02-lint-phyctrl exit=0 errs=0
+```
 
 ## 6. 相关文件
 

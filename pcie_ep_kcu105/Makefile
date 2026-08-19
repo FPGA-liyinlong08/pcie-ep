@@ -141,6 +141,8 @@ k02-checker-selftest:
 		exit 1; \
 	fi
 
+# K02 lint：测 K02_USE_PHY_CTRL=0（旧 K02 FSM 路径，作 fallback / A/B 参照）；
+# K02_USE_PHY_CTRL=1（默认 Golden 控制器路径）由 k02-lint-phyctrl 覆盖。
 k02-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
 		-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
@@ -152,6 +154,28 @@ k02-lint:
 		rtl/phy/kcu105_reset_ctrl.sv \
 		rtl/phy/kcu105_refclk_reset.sv \
 		rtl/phy/kcu105_pcie_phy_wrapper.sv \
+		rtl/phy/kcu105_pcie_phy_bringup_top.sv
+
+# K02 lint：测 K02_USE_PHY_CTRL=1（默认 Golden 控制器路径，2026-08-19 实板 PASS）。
+# 额外需要 phy_ctrl.v / phy_ctrl_pat_gen*.v / phy_bringup_seq.sv + +incdir+rtl/phy
+# （phy_ctrl_pat_gen_lane.v 在 line 62 引用 `phy_ctrl_defines.vh`）。
+# --timing 用于 phy_ctrl.v 的 `#(TCQ)` 非阻塞延迟。
+k02-lint-phyctrl:
+	verilator --lint-only --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
+		-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-INITIALDLY -Wno-CASEINCOMPLETE -Wno-WIDTH \
+		+incdir+rtl/phy \
+		-GK02_USE_PHY_CTRL=1 \
+		--top-module kcu105_pcie_phy_bringup_top \
+		sim/verilator/k02/xilinx_primitive_stubs.sv \
+		sim/verilator/k02/pcie_phy_x1_gen3_behavioral_stub.sv \
+		rtl/common/pcie_reset_sync.sv \
+		rtl/phy/kcu105_reset_ctrl.sv \
+		rtl/phy/kcu105_refclk_reset.sv \
+		rtl/phy/kcu105_pcie_phy_wrapper.sv \
+		rtl/phy/phy_ctrl.v \
+		rtl/phy/phy_ctrl_pat_gen.v \
+		rtl/phy/phy_ctrl_pat_gen_lane.v \
+		rtl/phy/phy_bringup_seq.sv \
 		rtl/phy/kcu105_pcie_phy_bringup_top.sv
 
 k02-verilator:
@@ -242,7 +266,7 @@ k02-gen3-hw-program:
 		-log fpga/kcu105/build_k02_gen3/hw_program.log \
 		-tclargs localhost:3122 program
 
-k02: k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado
+k02: k02-checker-selftest k02-lint k02-lint-phyctrl k02-verilator k02-ip k02-vcs k02-vivado
 
 k03-checker-selftest:
 	@$(MAKE) -C sim/verilator/k03 NEGATIVE_STUB=1 \
