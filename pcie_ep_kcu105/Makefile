@@ -3,8 +3,8 @@
 	k00-m02-verilator k00-m02-verilator-signoff k00-m02-vcs \
 	k00-m02-vivado k00-m02 \
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
-	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado k02-gen3-vivado k02-offgap-vivado k02-ab-mac-in-detect-vivado k02-ab-cdr-hold-vivado k02-ab-skip-txeq-vivado k02-golden-ab-vivado k02-phyctrl-vivado k02-phyctrl-hw-probe k02-phyctrl-hw-program \
-	k02-hw-probe k02-hw-program k02-gen3-hw-probe k02-gen3-hw-program k02 \
+	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado \
+	k02-hw-probe k02-hw-program k02 \
 	k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
 	k03-lint k03-verilator k03-vivado k03 \
 	k04-checker-selftest k04-lint k04-verilator k04-verilator-signoff \
@@ -141,30 +141,14 @@ k02-checker-selftest:
 		exit 1; \
 	fi
 
-# K02 lint：测 K02_USE_PHY_CTRL=0（旧 K02 FSM 路径，作 fallback / A/B 参照）；
-# K02_USE_PHY_CTRL=1（默认 Golden 控制器路径）由 k02-lint-phyctrl 覆盖。
+# K02 lint：K02 顶层实例化 Golden `phy_ctrl.v` + `phy_bringup_seq`，
+# 需 +incdir+rtl/phy（phy_ctrl_pat_gen_lane.v:62 引用 `phy_ctrl_defines.vh`），
+# 需 --timing 容忍 phy_ctrl.v 的 `#(TCQ)` 非阻塞延迟。
+# 实板 ILA PASS: seq_state 走到 S_DONE、debug_state==8'h04、QPLL1LOCK 1->0->1。
 k02-lint:
-	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
-		-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
-		-GK02_USE_PHY_CTRL=0 \
-		--top-module kcu105_pcie_phy_bringup_top \
-		sim/verilator/k02/xilinx_primitive_stubs.sv \
-		sim/verilator/k02/pcie_phy_x1_gen3_behavioral_stub.sv \
-		rtl/common/pcie_reset_sync.sv \
-		rtl/phy/kcu105_reset_ctrl.sv \
-		rtl/phy/kcu105_refclk_reset.sv \
-		rtl/phy/kcu105_pcie_phy_wrapper.sv \
-		rtl/phy/kcu105_pcie_phy_bringup_top.sv
-
-# K02 lint：测 K02_USE_PHY_CTRL=1（默认 Golden 控制器路径，2026-08-19 实板 PASS）。
-# 额外需要 phy_ctrl.v / phy_ctrl_pat_gen*.v / phy_bringup_seq.sv + +incdir+rtl/phy
-# （phy_ctrl_pat_gen_lane.v 在 line 62 引用 `phy_ctrl_defines.vh`）。
-# --timing 用于 phy_ctrl.v 的 `#(TCQ)` 非阻塞延迟。
-k02-lint-phyctrl:
 	verilator --lint-only --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
 		-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-INITIALDLY -Wno-CASEINCOMPLETE -Wno-WIDTH \
 		+incdir+rtl/phy \
-		-GK02_USE_PHY_CTRL=1 \
 		--top-module kcu105_pcie_phy_bringup_top \
 		sim/verilator/k02/xilinx_primitive_stubs.sv \
 		sim/verilator/k02/pcie_phy_x1_gen3_behavioral_stub.sv \
@@ -193,80 +177,24 @@ k02-query-vcs:
 k02-gen3-vcs:
 	K02_VCS_GEN3_STEADY=1 ./sim/vcs/run_k02.sh
 
+# K02 顶层直接实例化 Golden 控制器（commit 7d39d60 起的 K02_USE_PHY_CTRL=1 路径
+# 升级为唯一路径）。bit/probe 落到 fpga/kcu105/build_k02/。
 k02-vivado:
 	./fpga/kcu105/run_k02_impl.sh
 
-k02-gen3-vivado:
-	K02_DIRECT_GEN3=1 ./fpga/kcu105/run_k02_impl.sh
-
-k02-query-vivado:
-	K02_DYNAMIC_GEN1_TO_GEN3=1 K02_DYNAMIC_COEFF_QUERY=1 ./fpga/kcu105/run_k02_impl.sh
-
-k02-offgap-vivado:
-	K02_DYNAMIC_GEN1_TO_GEN3=1 K02_DYNAMIC_GEN1_OFF_GAP=1 ./fpga/kcu105/run_k02_impl.sh
-
-# Golden-vs-K02 A/B Test 组合目标（参考 claude_code_k02_golden_ab_modify.md §5）。
-# 三个单变量开关仍可独立使用；k02-golden-ab-vivado 等价于 OFF GAP + 三项全开。
-K02_AB_ENV = K02_DYNAMIC_GEN1_TO_GEN3=1 K02_DYNAMIC_GEN1_OFF_GAP=1
-k02-ab-mac-in-detect-vivado:
-	$(K02_AB_ENV) K02_DYNAMIC_MAC_IN_DETECT_LOW=1 ./fpga/kcu105/run_k02_impl.sh
-
-k02-ab-cdr-hold-vivado:
-	$(K02_AB_ENV) K02_DYNAMIC_CDR_HOLD_LOW=1 ./fpga/kcu105/run_k02_impl.sh
-
-k02-ab-skip-txeq-vivado:
-	$(K02_AB_ENV) K02_DYNAMIC_SKIP_TXEQ=1 ./fpga/kcu105/run_k02_impl.sh
-
-k02-golden-ab-vivado:
-	$(K02_AB_ENV) \
-	K02_DYNAMIC_MAC_IN_DETECT_LOW=1 \
-	K02_DYNAMIC_CDR_HOLD_LOW=1 \
-	K02_DYNAMIC_SKIP_TXEQ=1 \
-	./fpga/kcu105/run_k02_impl.sh
-
-# Golden controller + K02 pcie_phy_x1_gen3 PHY（同 cell #3 的 RTL，
-# 但用 K02 顶层而非 cell #3 的 1:1 复用顶层）。K02_USE_PHY_CTRL=1 时
-# A/B 3 变量（mac/cdr/skiptxeq）被顶层旁路。
-k02-phyctrl-vivado:
-	K02_USE_PHY_CTRL=1 ./fpga/kcu105/run_k02_impl.sh
-
-k02-phyctrl-hw-probe:
-	$(VIVADO) -mode batch \
-		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
-		-log fpga/kcu105/build_k02_phyctrl/hw_probe.log \
-		-tclargs localhost:3122 probe
-
-k02-phyctrl-hw-program:
-	$(VIVADO) -mode batch \
-		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
-		-log fpga/kcu105/build_k02_phyctrl/hw_program.log \
-		-tclargs localhost:3122 program
-
 k02-hw-probe:
-	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+	$(VIVADO) -mode batch \
 		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
 		-log fpga/kcu105/build_k02/hw_probe.log \
 		-tclargs localhost:3122 probe
 
 k02-hw-program:
-	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
+	$(VIVADO) -mode batch \
 		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
 		-log fpga/kcu105/build_k02/hw_program.log \
 		-tclargs localhost:3122 program
 
-k02-gen3-hw-probe:
-	K02_DIRECT_GEN3=1 /home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
-		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
-		-log fpga/kcu105/build_k02_gen3/hw_probe.log \
-		-tclargs localhost:3122 probe
-
-k02-gen3-hw-program:
-	K02_DIRECT_GEN3=1 /home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
-		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
-		-log fpga/kcu105/build_k02_gen3/hw_program.log \
-		-tclargs localhost:3122 program
-
-k02: k02-checker-selftest k02-lint k02-lint-phyctrl k02-verilator k02-ip k02-vcs k02-vivado
+k02: k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-vivado
 
 k03-checker-selftest:
 	@$(MAKE) -C sim/verilator/k03 NEGATIVE_STUB=1 \

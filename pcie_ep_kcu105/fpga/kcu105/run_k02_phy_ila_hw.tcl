@@ -1,41 +1,12 @@
 # K02 standalone PHY ILA programming/capture helper.
-# The ILA data bus contains the direct GTHE3_COMMON QPLL1LOCK pin. In dynamic
-# mode the trigger is a dedicated scalar TXEQ-state marker, so the capture
-# includes the first pre-Gen3 divergence without bus compare ambiguity.
+# Default trigger is `seq_state_w` reaching S_GEN3_WAIT (4'd3) so the capture
+# contains the pre-Gen3 divergence (QPLL1 1->0->1, debug_state==8'h04).
 set script_dir  [file dirname [file normalize [info script]]]
-set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
-                            $::env(K02_DIRECT_GEN3) eq "1"}]
-set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
-                            $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
-set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
-                           $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
-set k02_off_gap [expr {[info exists ::env(K02_DYNAMIC_GEN1_OFF_GAP)] &&
-                       $::env(K02_DYNAMIC_GEN1_OFF_GAP) eq "1"}]
-if {$k02_coeff_query} { set k02_dynamic_rate 1 }
-if {$k02_direct_gen3} {
-  set build_dir [file join $script_dir build_k02_gen3]
-  set bit_stem k02_pcie_phy_bringup_gen3
-} elseif {$k02_dynamic_rate} {
-  if {$k02_off_gap && $k02_coeff_query} {
-    set build_dir [file join $script_dir build_k02_dynamic_offgap_query]
-    set bit_stem k02_pcie_phy_bringup_dynamic_offgap_query
-  } elseif {$k02_off_gap} {
-    set build_dir [file join $script_dir build_k02_dynamic_offgap]
-    set bit_stem k02_pcie_phy_bringup_dynamic_offgap
-  } elseif {$k02_coeff_query} {
-    set build_dir [file join $script_dir build_k02_dynamic_query]
-    set bit_stem k02_pcie_phy_bringup_dynamic_query
-  } else {
-    set build_dir [file join $script_dir build_k02_dynamic]
-    set bit_stem k02_pcie_phy_bringup_dynamic
-  }
-} else {
-  set build_dir [file join $script_dir build_k02]
-  set bit_stem k02_pcie_phy_bringup
-}
+set build_dir   [file join $script_dir build_k02]
+set bit_stem    k02_pcie_phy_bringup_ila
 set capture_dir [file join $build_dir capture]
-set bit_path    [file join $build_dir ${bit_stem}_ila.bit]
-set ltx_path    [file join $build_dir ${bit_stem}_ila.ltx]
+set bit_path    [file join $build_dir ${bit_stem}.bit]
+set ltx_path    [file join $build_dir ${bit_stem}.ltx]
 
 set server_url 127.0.0.1:3122
 set action status
@@ -81,21 +52,15 @@ if {[info exists ::env(K02_ILA_TRIGGER_PROBE)]} {
     }
   }
   set trigger_error "K02 PHY ILA 自定义触发探针不存在或不唯一：$target_probe_name"
-} elseif {$k02_dynamic_rate} {
+} else {
+  # 默认触发：phy_bringup_seq.seq_state 走到 S_GEN3_WAIT (4'd3)。
   foreach probe [get_hw_probes -of_objects $ila] {
     set probe_name [get_property NAME $probe]
-    if {$probe_name eq "dynamic_rate_state"} {
+    if {$probe_name eq "seq_state_w"} {
       lappend trigger_probe $probe
     }
   }
-  set trigger_compare [expr {[info exists ::env(K02_ILA_TRIGGER_COMPARE)] ?
-                              $::env(K02_ILA_TRIGGER_COMPARE) : "eq4'h3"}]
-  set trigger_error "K02 PHY ILA dynamic_rate_state触发探针不存在或不唯一"
-} else {
-  set trigger_probe [get_hw_probes -of_objects $ila -filter {NAME =~ "*gen3_test_active*"}]
-  set trigger_compare [expr {[info exists ::env(K02_ILA_TRIGGER_COMPARE)] ?
-                              $::env(K02_ILA_TRIGGER_COMPARE) : "eq1'b1"}]
-  set trigger_error "K02 PHY ILA gen3_test_active触发探针不存在或不唯一"
+  set trigger_error "K02 PHY ILA seq_state_w触发探针不存在或不唯一"
 }
 if {[llength $trigger_probe] != 1} {
   puts "K02 PHY ILA available probes:"
@@ -113,7 +78,7 @@ if {$action eq "program-arm"} {
   run_hw_ila $ila
   puts "K02_PHY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe] pos=$trigger_pos"
 } elseif {$action eq "capture-wait"} {
-  set capture_timeout [expr {$k02_dynamic_rate ? 20 : 10}]
+  set capture_timeout 20
   wait_on_hw_ila -timeout $capture_timeout $ila
   set data [upload_hw_ila_data $ila]
   set timestamp [clock format [clock seconds] -format {%Y%m%d_%H%M%S}]

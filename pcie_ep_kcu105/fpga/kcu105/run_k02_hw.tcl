@@ -1,60 +1,9 @@
 set script_dir [file dirname [file normalize [info script]]]
-set k02_use_phy_ctrl [expr {[info exists ::env(K02_USE_PHY_CTRL)] &&
-                              $::env(K02_USE_PHY_CTRL) eq "1"}]
-set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
-                            $::env(K02_DIRECT_GEN3) eq "1"}]
-set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
-                             $::env(K02_DYNAMIC_GEN1_TO_GEN3) eq "1"}]
-set k02_coeff_query [expr {[info exists ::env(K02_DYNAMIC_COEFF_QUERY)] &&
-                           $::env(K02_DYNAMIC_COEFF_QUERY) eq "1"}]
-set k02_off_gap [expr {[info exists ::env(K02_DYNAMIC_GEN1_OFF_GAP)] &&
-                       $::env(K02_DYNAMIC_GEN1_OFF_GAP) eq "1"}]
-set k02_mac_in_detect_low [expr {[info exists ::env(K02_DYNAMIC_MAC_IN_DETECT_LOW)] &&
-                                   $::env(K02_DYNAMIC_MAC_IN_DETECT_LOW) eq "1"}]
-set k02_cdr_hold_low [expr {[info exists ::env(K02_DYNAMIC_CDR_HOLD_LOW)] &&
-                             $::env(K02_DYNAMIC_CDR_HOLD_LOW) eq "1"}]
-set k02_skip_txeq [expr {[info exists ::env(K02_DYNAMIC_SKIP_TXEQ)] &&
-                          $::env(K02_DYNAMIC_SKIP_TXEQ) eq "1"}]
-set k02_any_ab [expr {$k02_mac_in_detect_low || $k02_cdr_hold_low || $k02_skip_txeq}]
-if {$k02_coeff_query} { set k02_dynamic_rate 1 }
-if {$k02_use_phy_ctrl} {
-    set build_dir [file join $script_dir build_k02_phyctrl]
-    set bit_stem k02_pcie_phy_bringup_phyctrl
-} elseif {$k02_direct_gen3} {
-    set build_dir [file join $script_dir build_k02_gen3]
-    set bit_stem k02_pcie_phy_bringup_gen3
-} elseif {$k02_dynamic_rate} {
-    if {$k02_off_gap && $k02_coeff_query} {
-        set build_dir [file join $script_dir build_k02_dynamic_offgap_query]
-        set bit_stem k02_pcie_phy_bringup_dynamic_offgap_query
-    } elseif {$k02_off_gap && $k02_any_ab} {
-        set ab_dir "build_k02_ab"
-        if {$k02_mac_in_detect_low} { append ab_dir "_mac" }
-        if {$k02_cdr_hold_low}     { append ab_dir "_cdr" }
-        if {$k02_skip_txeq}        { append ab_dir "_skiptxeq" }
-        set ab_stem "k02_pcie_phy_bringup_ab"
-        if {$k02_mac_in_detect_low} { append ab_stem "_mac" }
-        if {$k02_cdr_hold_low}     { append ab_stem "_cdr" }
-        if {$k02_skip_txeq}        { append ab_stem "_skiptxeq" }
-        set build_dir [file join $script_dir $ab_dir]
-        set bit_stem $ab_stem
-    } elseif {$k02_off_gap} {
-        set build_dir [file join $script_dir build_k02_dynamic_offgap]
-        set bit_stem k02_pcie_phy_bringup_dynamic_offgap
-    } elseif {$k02_coeff_query} {
-        set build_dir [file join $script_dir build_k02_dynamic_query]
-        set bit_stem k02_pcie_phy_bringup_dynamic_query
-    } else {
-        set build_dir [file join $script_dir build_k02_dynamic]
-        set bit_stem k02_pcie_phy_bringup_dynamic
-    }
-} else {
-    set build_dir [file join $script_dir build_k02]
-    set bit_stem k02_pcie_phy_bringup
-}
+set build_dir [file join $script_dir build_k02]
+set bit_stem  k02_pcie_phy_bringup_ila
 set k02_ila_debug [expr {![info exists ::env(K02_ILA_DEBUG)] ||
                           $::env(K02_ILA_DEBUG) eq "1"}]
-set bit_name [expr {$k02_ila_debug ? "${bit_stem}_ila.bit" :
+set bit_name [expr {$k02_ila_debug ? "${bit_stem}.bit" :
                                     "${bit_stem}.bit"}]
 set bit_path   [file join $build_dir $bit_name]
 set common_tcl [file join $script_dir .. .. scripts program_ku040.tcl]

@@ -2,6 +2,13 @@
 
 日期：2026-08-14
 
+> **DEPRECATED 2026-08-19**：本计划针对 K02 自有 `dynamic_rate_*` FSM 的 A/B 验证。
+> 2026-08-19 K02 Gen1→Gen3 闭环验证显示 K02 FSM 控制器是根因（commit `82db3cd`），
+> 改用 Golden `phy_ctrl.v` + `phy_bringup_seq` 路径修复（commit `7d39d60`）。
+> 2026-08-19 后续 commit 已**完整删除 `dynamic_rate_*` FSM 与 A/B 路径**（见
+> `fpga/kcu105/k02_phyctrl_build_result_20260819.md` §7），本 A/B 计划随路径删除作废。
+> K02 PHY 的 Gen1→Gen3 切换现在由 Golden 控制器独立完成，无需 A/B。
+
 ## 目的
 
 验证 Gen1→Gen3 动态切速前，是否需要在 TX Preset Apply 完成后额外执行一次

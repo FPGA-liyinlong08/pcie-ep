@@ -2,6 +2,12 @@
 
 状态：**K02-v1 已冻结；测试平台先行**
 
+> **DEPRECATED 2026-08-19 章节 §7-9**：原"§7 dynamic rate A/B / §8 K02_USE_PHY_CTRL 切换 / §9 闭环确认"
+> 已随 `dynamic_rate_*` FSM 路径删除（commit 7d39d60 起的 Golden 控制器成为唯一路径），
+> 详见 `fpga/kcu105/k02_phyctrl_build_result_20260819.md` §7-8。
+> K02 PHY Gen1→Gen3 切换现在由 Golden 控制器独立完成；`K02_USE_PHY_CTRL=0` 路径已不存在。
+> 本文件仅保留历史 1-6 节作为 K02 验证基础设施的原始记录。
+
 ## 1. 验证分层和参考
 
 | 层次 | DUT/模型 | 目的 |
