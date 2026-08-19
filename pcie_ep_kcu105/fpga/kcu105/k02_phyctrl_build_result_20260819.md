@@ -119,16 +119,25 @@ Worst Setup Slack = 0.792 ns，Hold Slack 通过，无时序违例。
   同一 K02 `pcie_phy_x1_gen3` PHY IP，同一 `phy_ctrl.v` 控制器，仅 wiring 路径不同
   （cell #3 走 `kcu105_pcie_phy_wrapper_k02` + `kcu105_pcie_phy_bringup_top_k02`；
    K02_USE_PHY_CTRL=1 走原 K02 wrapper + K02 顶层旁路 FSM）。
+- **实板 ILA 抓取：2026-08-19 验证 PASS**。
+  - `seq_state` 走完 `S_RESET→S_WAIT_READY→S_POWER_UP→S_GEN1_WAIT→S_GEN1_HOLD→S_GEN1_OFF_GAP→S_GEN3_WAIT→S_GEN3_HOLD→S_DONE`。
+  - `debug_state==8'h04` 在 `S_GEN3_WAIT` / `S_GEN3_HOLD` 期间出现。
+  - `QPLL1LOCK` 1→0→1 切换。
+  - `as_cdr_hold_req` / `as_mac_in_detect` 由 `phy_ctrl.v` 的 `ltssm_mimic` 控制，与 cell #3 一致。
+- **结论：K02 Gen1→Gen3 dynamic rate 修复闭环。**
+  K02 顶层 `K02_USE_PHY_CTRL=1` 路径是 K02 PHY 的 Gen3 working solution。
 
 ## 5. 后续步骤
 
-1. **实板烧录 + ILA 抓取**：`make k02-phyctrl-hw-program`，等待 `seq_state==8'h04` 出现
-   或 LED[5] (`seq_state==S_DONE`) 亮起后用 Vivado Hardware Manager 抓取波形。
-2. **回归 K02_USE_PHY_CTRL=0**：未触发任何 wrapper/FSM 行为变化，逻辑等价；自动 lint 用例
+1. **回归 K02_USE_PHY_CTRL=0**：未触发任何 wrapper/FSM 行为变化，逻辑等价；自动 lint 用例
    `k02-lint` / `k02-verilator` 在 `K02_USE_PHY_CTRL=0` 默认值下应继续 PASS。
-3. **后续若 K02_USE_PHY_CTRL=1 实板 PASS**：可把 K02 FSM (`dynamic_rate_*`) 删除，
-   把 wrapper 接口收窄为 board.v 6 使能 + phy_ctrl 输出，与 K01 解耦。
-   短期不必做：当前 K02_USE_PHY_CTRL=0 fallback 保留作为对照基线。
+2. **把 K02_USE_PHY_CTRL=1 设为默认**：默认参数从 0 改成 1，让 K02 默认走 Golden 控制器。
+3. **清理旧的 K02 FSM**：将 `dynamic_rate_*` FSM 与 A/B 3 变量 (`DYNAMIC_MAC_IN_DETECT_LOW_MODE` /
+   `DYNAMIC_CDR_HOLD_LOW_MODE` / `DYNAMIC_SKIP_TXEQ_MODE`) 删除或标 deprecated；这些 4 个 A/B bitstream
+   (`build_k02_ab_mac*` / `_cdr*` / `_skiptxeq*` / `_all`) 已 commit 归档但不再被主线使用。
+4. **更新 lint / verilator / VCS harness**：`sim/verilator/k02/` 和 `sim/vcs/` 需为新参数添加 case。
+5. **删 cell #3**：cell #3 (`pcie_phy_0_ex/board_kcu105/build_k02_phy_cross/`) 是 2x2 验证产物，
+   验证目标已达成，可保留作为参考但不再需要重建。
 
 ## 6. 相关文件
 
