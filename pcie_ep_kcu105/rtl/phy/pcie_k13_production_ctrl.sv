@@ -17,7 +17,10 @@ module pcie_k13_production_ctrl #(
     parameter integer K13_RXEQ_BOOTSTRAP = 1,
     // 250 MHz PIPE下分别为4 ms；行为仿真继续通过参数覆盖缩短。
     parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer EQ_TIMEOUT_CYCLES    = 1_000_000
+    parameter integer EQ_TIMEOUT_CYCLES    = 1_000_000,
+    // Gen1 release gap (Golden stimulus 是 10us @ 250 MHz = 2500 cycles)
+    // 仿真默认缩短
+    parameter integer GEN1_RELEASE_GAP_CYCLES = 2500
 ) (
     input wire       core_clk,
     input wire       core_rst_n,
@@ -96,6 +99,7 @@ module pcie_k13_production_ctrl #(
     // Recovery speed controller → contract 的 semantic handshake
     wire       speed_rate_req_valid;
     wire [1:0] speed_rate_req_target;
+    wire       speed_fallback_req;
     wire       speed_recovery_active;
     wire [2:0] speed_state_w;
     wire [1:0] speed_negotiated;
@@ -213,12 +217,14 @@ module pcie_k13_production_ctrl #(
         // Rate Contract 实例：唯一 raw phy_rate / force_txelecidle owner
         // ------------------------------------------------------------------
         pcie_phy_rate_contract #(
-            .RATE_TIMEOUT_CYCLES(SPEED_TIMEOUT_CYCLES)
+            .RATE_TIMEOUT_CYCLES(SPEED_TIMEOUT_CYCLES),
+            .GEN1_RELEASE_GAP_CYCLES(GEN1_RELEASE_GAP_CYCLES)
         ) u_rate_contract (
             .clk(phy_clk), .rst_n(phy_rst_n),
             .link_ready(link_up),
             .rate_req_valid(speed_rate_req_valid),
             .rate_req_target(speed_rate_req_target),
+            .fallback_req(speed_fallback_req),
             .rate_req_ready(contract_rate_req_ready),
             .phy_phystatus(phy_phystatus),
             .phy_rate_cmd(contract_phy_rate_cmd),
@@ -350,6 +356,7 @@ module pcie_k13_production_ctrl #(
         assign active_target = 2'b00;
         assign speed_rate_req_valid = 1'b0;
         assign speed_rate_req_target = 2'b00;
+        assign speed_fallback_req = 1'b0;
         assign speed_recovery_active = 1'b0;
         assign speed_state_w = 3'd0;
         assign speed_negotiated = 2'b00;
@@ -406,8 +413,15 @@ module pcie_k13_production_ctrl #(
     // speed_boundary_ready.  Keep the electrical-idle window closed during
     // that NBA hand-off; otherwise ST_QUIESCE creates a one-PCLK hole.
     //
-    // 新增 OR：contract force_txelecidle（任何 transition 状态 contract 都强制 TXEI）
+    // 新增 OR：
+    //   - contract force_txelecidle：contract 任何 transition 状态都强制 TXEI
+    //   - speed_traffic_quiesce：speed ctrl 在 RATE_REQUEST 期间 contract
+    //     还在 RC_RDY2_STABLE (force=0)，必须由 speed_ctrl 侧的 recovery
+    //     意图补上 TXEI，避免 RX 端在 rate change 前看到非 TXEI 字符
+    //   - pre_rate_txeq_active / (Gen3 && state==1 && pre_rate_txeq_ready)：
+    //     pre-EQ + QUIESCE 期间的传统窗口
     assign phy_txelecidle = pre_rate_txeq_active ||
+                            speed_traffic_quiesce ||
                             ((active_target == 2'b10) &&
                              (speed_state_w == 3'd1) &&
                              pre_rate_txeq_ready) ||

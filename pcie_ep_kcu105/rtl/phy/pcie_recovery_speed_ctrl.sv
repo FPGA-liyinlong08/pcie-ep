@@ -28,6 +28,7 @@ module pcie_recovery_speed_ctrl #(
     // Semantic request to pcie_phy_rate_contract
     output reg rate_req_valid,
     output reg [1:0] rate_req_target,
+    output reg       fallback_req,    // 1 = 让 contract 走 fast-fallback (跳过 10us gap)
     input wire rate_req_ready,
 
     // Completion feedback from contract

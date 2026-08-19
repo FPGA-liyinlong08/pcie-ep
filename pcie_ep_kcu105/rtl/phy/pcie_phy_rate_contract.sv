@@ -45,6 +45,7 @@ module pcie_phy_rate_contract #(
     // 来自 K13 recovery_speed_ctrl 的语义层 rate-change 请求
     input  wire       rate_req_valid,
     input  wire [1:0] rate_req_target,
+    input  wire       fallback_req,    // 1 = 走 fast-fallback (RC_FALLBACK_WAIT)
     output wire       rate_req_ready,
 
     // 来自 PHY (单 lane 单 bit)
@@ -221,7 +222,13 @@ module pcie_phy_rate_contract #(
 
                     if (rate_req_valid && rate_req_ready && legal_target && !same_rate) begin
                         target_rate_r <= rate_req_target;
-                        state_r       <= RC_RELEASE_RDY3;
+                        if (fallback_req) begin
+                            // Fast-fallback：跳过 RC_RDY0_GAP (10us)
+                            // 但仍走 phystatus 上升沿检测
+                            state_r <= RC_FALLBACK_WAIT;
+                        end else begin
+                            state_r <= RC_RELEASE_RDY3;
+                        end
                     end else if (rate_req_valid && !legal_target) begin
                         // 非法 target：sticky 错误
                         rate_failed_r <= 1'b1;

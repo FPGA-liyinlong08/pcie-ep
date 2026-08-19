@@ -2,7 +2,7 @@
 K13 Rate Contract 单元仿真 - Gate A 测试矩阵
 
 覆盖 k13_phy_rate_contract_architecture_20260819.md 第 15 节 Gate A
-列出的 6 个 case：
+列出的 6 个 case + fast-fallback 路径：
 
   1. Gen1 -> Gen3  PASS
   2. Gen3 -> Gen1  PASS
@@ -10,20 +10,20 @@ K13 Rate Contract 单元仿真 - Gate A 测试矩阵
   4. PHY_PHYSTATUS delayed
   5. PHY_PHYSTATUS timeout
   6. 非法 target (2'b11) -> sticky error
+  7. fast-fallback (Gen3->Gen1 跳过 10us gap)
+  8. no fallback_req 时仍走 normal 10us gap (回归保护)
 
 不变量断言 (Doc 第 15 节 Gate A)：
   - active_rate 只能在 completion 时改变
   - raw phy_rate_cmd 可以在 active_rate 不变时先行
   - rate_done 是 1 周期 pulse
   - 单一 raw PHY_RATE owner (由架构保证，本测试无法在模块级证)
+  - fallback_req=1 必须直接进 RC_FALLBACK_WAIT，跳过 RDY0_GAP
+  - fallback_req=0 必须走 RDY0_GAP 路径
 
 设计文档对齐：
   状态编码与 pcie_phy_rate_contract.sv 中 localparam 一一对应
   仿真参数：RATE_TIMEOUT_CYCLES=200, GEN1_RELEASE_GAP_CYCLES=10
-
-fallback 路径 (RC_FALLBACK_WAIT) 当前为预留状态，无 FSM 入口。
-fallback_reserved_state_simulation 测试为占位，需要后续通过
-专用 request 接口或 hierarchical force 才能验证。
 """
 import os
 
@@ -61,6 +61,7 @@ async def reset_dut(dut):
     dut.link_ready.value = 0
     dut.rate_req_valid.value = 0
     dut.rate_req_target.value = 0
+    dut.fallback_req.value = 0   # 默认走 normal path
     dut.phy_phystatus.value = 0
     await Timer(5, units="ns")
     dut.rst_n.value = 1
@@ -78,13 +79,15 @@ async def reset_dut(dut):
     assert int(dut.rate_req_ready.value) == 1
 
 
-async def issue_rate_request(dut, target):
+async def issue_rate_request(dut, target, fallback=0):
     """发起 semantic rate-change 请求。valid 拉高 1 拍。"""
     dut.rate_req_target.value = target
+    dut.fallback_req.value = fallback
     dut.rate_req_valid.value = 1
     await RisingEdge(dut.clk)
     await Timer(1, units="ns")
     dut.rate_req_valid.value = 0
+    dut.fallback_req.value = 0
 
 
 async def pulse_phystatus(dut, cycles=2):
@@ -359,29 +362,93 @@ async def illegal_target_triggers_error(dut):
 
 
 # ----------------------------------------------------------------------
-# Test 7 (占位): fallback 路径当前无 FSM 入口
+# Test 7: fast-fallback (Gen3→Gen1 跳过 10us gap)
 # ----------------------------------------------------------------------
 @cocotb.test()
-async def fallback_reserved_state_simulation(dut):
-    """fallback 路径占位测试。
-
-    pcie_phy_rate_contract.sv 中 RC_FALLBACK_WAIT 状态当前无 FSM 入口
-    (Fast-fallback 优化留待 KCU105 实板闭环后由 K13 控制器通过专用
-     request 接口触发)。本测试不主动驱动 FSM 进去，只验证:
-       - localparam RC_FALLBACK_WAIT 编码是 0xC
-       - FSM 不会意外进入该状态
-
-    未来启用 fast-fallback 后，本测试需扩展以覆盖：
-       - Gen3->Gen1 不经 GAP 的快速路径
-       - 仍走 phystatus 上升沿检测
-       - 仍产生 rate_done pulse
+async def fast_fallback_skips_gen1_release_gap(dut):
+    """Doc Section 7.3：fallback_req=1 时 contract 直接进 RC_FALLBACK_WAIT，
+    跳过 RC_RDY0_GAP (10us) 但仍走 phystatus 上升沿检测。
     """
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset_dut(dut)
-    # 正常 Gen1->Gen3 闭环，确认 FSM 未进入 RC_FALLBACK_WAIT
+
+    # 先把 active_rate 推到 Gen3
     await issue_rate_request(dut, RATE_GEN3)
     await wait_state(dut, RC_APPLY_RDY1)
     await RisingEdge(dut.clk)  # APPLY 1 拍 settle -> WAIT_PHYSTATUS
     await Timer(1, units="ns")
     await trigger_phystatus_and_complete(dut, RATE_GEN3)
+    assert int(dut.active_rate.value) == RATE_GEN3
+
+    # 现在发 fallback request: Gen3 -> Gen1, fallback_req=1
+    await issue_rate_request(dut, RATE_GEN1, fallback=1)
+    # 关键不变量：FSM 必须 **直接** 进 RC_FALLBACK_WAIT，
+    # 不经过 RC_RELEASE_RDY3 / RC_RDY0_GAP
+    await wait_state(dut, RC_FALLBACK_WAIT, max_cycles=4)
+    # phystatus_seen 2-cycle 延迟线需要清零（之前 trigger_phystatus_and_complete
+    # 留下的 seen=1, prev=1；issue_rate_request edge 后 seen=0, prev=1）
+    # 再等 1 拍让 prev=0, seen=0，才能正确检测新的 phystatus 上升沿
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    assert int(dut.dbg_state.value) == RC_FALLBACK_WAIT
+    # 进一步确认：在 FALLBACK_WAIT 期间 force_txelecidle=1
+    assert int(dut.force_txelecidle.value) == 1, (
+        "FALLBACK_WAIT 期间必须 force TXEI"
+    )
+    # phy_rate_cmd 已切到 Gen1 (RC_FALLBACK_WAIT 走 target 路径)
+    assert int(dut.phy_rate_cmd.value) == RATE_GEN1, (
+        "FALLBACK_WAIT 期间 phy_rate_cmd 必须 = target (Gen1)"
+    )
+    # active_rate 仍为 Gen3 (在 phystatus 之前不能变)
+    assert int(dut.active_rate.value) == RATE_GEN3
+
+    # FALLBACK_WAIT 状态下 phystatus 上升沿直接进 RDY2_STABLE 并 pulse rate_done
+    # （不经过独立的 COMMIT_RDY2 状态——这是 fast-fallback 的关键节省）
+    assert int(dut.dbg_state.value) == RC_FALLBACK_WAIT
+    dut.phy_phystatus.value = 1
+    # Edge A: phystatus_rising -> active_rate <= target, rate_done <= 1
+    #         state <= RDY2_STABLE
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    assert int(dut.active_rate.value) == RATE_GEN1, (
+        "fast-fallback: phystatus 后 active_rate 必须立即为 Gen1"
+    )
+    assert int(dut.rate_done.value) == 1, (
+        "fast-fallback: phystatus 后 rate_done 必须 pulse 1 拍"
+    )
+    assert int(dut.dbg_state.value) == RC_RDY2_STABLE
+    # Edge B: rate_done <= 0
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    assert int(dut.rate_done.value) == 0
+    # 清理
+    dut.phy_phystatus.value = 0
+    await Timer(1, units="ns")
+
+    # 回归保护：fast-fallback 路径不触发 sticky 失败
+    assert int(dut.rate_failed.value) == 0
+    assert int(dut.timeout_sticky.value) == 0
+
+
+# ----------------------------------------------------------------------
+# Test 8: fallback_req=0 时走 normal 路径 (回归保护)
+# ----------------------------------------------------------------------
+@cocotb.test()
+async def no_fallback_req_uses_normal_gap(dut):
+    """fallback_req=0 时即使 target=Gen1 (active=Gen3)，仍走 normal 路径。"""
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset_dut(dut)
+
+    # 推到 Gen3
+    await issue_rate_request(dut, RATE_GEN3)
+    await wait_state(dut, RC_APPLY_RDY1)
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    await trigger_phystatus_and_complete(dut, RATE_GEN3)
+
+    # target=Gen1, fallback_req=0: 应当走 normal 路径
+    await issue_rate_request(dut, RATE_GEN1, fallback=0)
+    # 1 拍后应进 RC_RDY0_GAP, NOT RC_FALLBACK_WAIT
+    await wait_state(dut, RC_RDY0_GAP, max_cycles=2)
+    assert int(dut.dbg_state.value) == RC_RDY0_GAP
     assert int(dut.dbg_state.value) != RC_FALLBACK_WAIT
