@@ -27,8 +27,13 @@ set k02_dynamic_start_delay [expr {$k02_dynamic_rate ? 1000000000 : 1024}]
 # 1：实例化 Golden `phy_ctrl.v` + `phy_bringup_seq` 旁路 K02 FSM。
 # 同一目录：fpga/kcu105/build_k02_phyctrl/。
 # A/B 3 变量在该模式下被 K02 顶层旁路，仅作 fallback 校验。
-set k02_use_phy_ctrl [expr {[info exists ::env(K02_USE_PHY_CTRL)] &&
-                              $::env(K02_USE_PHY_CTRL) eq "1"}]
+# 1：实例化 Golden `phy_ctrl.v` + `phy_bringup_seq` 旁路 K02 FSM。
+# 同一目录：fpga/kcu105/build_k02_phyctrl/。
+# A/B 3 变量在该模式下被 K02 顶层旁路，仅作 fallback 校验。
+# 默认值：env var 未设或非 0 时启用 Golden 控制器（2026-08-19 实板 PASS）。
+# 显式 K02_USE_PHY_CTRL=0 走旧 K02 FSM 路径。
+set k02_use_phy_ctrl [expr {![info exists ::env(K02_USE_PHY_CTRL)] ||
+                              $::env(K02_USE_PHY_CTRL) ne "0"}]
 # Golden-vs-K02 A/B Test 组合目标命名：每个组合使用独立目录，
 # 避免不同 A/B 变量的 bit/probe 互相覆盖。
 set k02_any_ab [expr {$k02_mac_in_detect_low || $k02_cdr_hold_low || $k02_skip_txeq}]

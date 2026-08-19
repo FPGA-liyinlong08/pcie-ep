@@ -144,6 +144,7 @@ k02-checker-selftest:
 k02-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
 		-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+		-GK02_USE_PHY_CTRL=0 \
 		--top-module kcu105_pcie_phy_bringup_top \
 		sim/verilator/k02/xilinx_primitive_stubs.sv \
 		sim/verilator/k02/pcie_phy_x1_gen3_behavioral_stub.sv \

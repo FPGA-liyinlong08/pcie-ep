@@ -34,10 +34,13 @@ module kcu105_pcie_phy_bringup_top #(
     parameter integer DYNAMIC_SKIP_TXEQ_MODE        = 0,
     // 1：实例化 Golden `phy_ctrl.v` + `phy_bringup_seq` 旁路 K02 FSM，
     //    6 个使能由 `phy_bringup_seq` 提供；PHY 控制由 `phy_ctrl.v` 输出。
-    // 0（默认）：保持原 K02 FSM 行为（与 K01/历史 build 兼容）。
+    //    默认值自 2026-08-19 起改为 1；实板 ILA 验证 PASS (commit 82db3cd)。
+    // 0：保持原 K02 FSM 行为（与 K01/历史 build 兼容；已知 Gen1->Gen3 失败，
+    //    仅作 fallback / A/B 参照）。`make k02-vivado` 不显式设 env var 时
+    //    走 Golden 控制器；显式 `K02_USE_PHY_CTRL=0` 可回退旧路径。
     // 当 K02_USE_PHY_CTRL=1 时，下列 3 个 A/B 变量被旁路，无效果：
     //   DYNAMIC_MAC_IN_DETECT_LOW_MODE / CDR_HOLD_LOW_MODE / SKIP_TXEQ_MODE。
-    parameter integer K02_USE_PHY_CTRL = 0,
+    parameter integer K02_USE_PHY_CTRL = 1,
     // 以下 6 个参数只用于 K02_USE_PHY_CTRL=1，对齐 imports/board.v 的
     // 250 MHz 计数器预算。默认值与 board_kcu105/phy_bringup_seq.sv 完全一致。
     parameter integer K02_PHY_CTRL_WAIT_AFTER_READY_NS    = 10_000,

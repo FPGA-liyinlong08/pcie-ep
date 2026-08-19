@@ -18,7 +18,8 @@
 
 `rtl/phy/kcu105_pcie_phy_bringup_top.sv`：
 
-- 新参数 `K02_USE_PHY_CTRL=0`（默认 0 = 原 K02 FSM 行为，1 = 旁路 FSM + Golden 控制器）。
+- 新参数 `K02_USE_PHY_CTRL=1`（**默认 1 = 旁路 K02 FSM，使用 Golden `phy_ctrl.v` + `phy_bringup_seq`**；
+  设为 0 保留原 K02 FSM 行为，作 fallback / A/B 参照）。
 - 新参数 `K02_PHY_CTRL_*_NS`（5 个，phy_bringup_seq 计时预算，默认值与 `pcie_phy_0_ex/board_kcu105/phy_bringup_seq.sv` 一致）。
 - 顶层 wire：`phy_txdata_w` / `phy_txdatak_w` / ... / `phy_rxeq_txpreset_w`，
   共 13 个 wrapper 输入抽取为 `logic` 信号（K02_USE_PHY_CTRL=0 时由 always_comb 拉常数 0，
@@ -129,9 +130,17 @@ Worst Setup Slack = 0.792 ns，Hold Slack 通过，无时序违例。
 
 ## 5. 后续步骤
 
-1. **回归 K02_USE_PHY_CTRL=0**：未触发任何 wrapper/FSM 行为变化，逻辑等价；自动 lint 用例
-   `k02-lint` / `k02-verilator` 在 `K02_USE_PHY_CTRL=0` 默认值下应继续 PASS。
-2. **把 K02_USE_PHY_CTRL=1 设为默认**：默认参数从 0 改成 1，让 K02 默认走 Golden 控制器。
+### 已完成
+
+1. ✅ **回归 K02_USE_PHY_CTRL=0**：`make k02-lint`（带 `-GK02_USE_PHY_CTRL=0`）PASS，exit 0；
+   `k02-phyctrl-vivado` 与 `k02-vivado` 两条路径在 K02 wrapper 接口上逻辑等价。
+2. ✅ **把 K02_USE_PHY_CTRL=1 设为默认**：默认参数从 0 改成 1；
+   `run_k02_impl.tcl` 在 env var 未设置时默认 1；`make k02-phyctrl-vivado` 不再需要 env 前缀。
+   `make k02-phyctrl-vivado` 重跑：`K02_IMPL_PASS WNS=0.792 use_phy_ctrl=1`，
+   bitstream 落到 `build_k02_phyctrl/k02_pcie_phy_bringup_phyctrl_ila.bit`。
+
+### 剩余
+
 3. **清理旧的 K02 FSM**：将 `dynamic_rate_*` FSM 与 A/B 3 变量 (`DYNAMIC_MAC_IN_DETECT_LOW_MODE` /
    `DYNAMIC_CDR_HOLD_LOW_MODE` / `DYNAMIC_SKIP_TXEQ_MODE`) 删除或标 deprecated；这些 4 个 A/B bitstream
    (`build_k02_ab_mac*` / `_cdr*` / `_skiptxeq*` / `_all`) 已 commit 归档但不再被主线使用。
