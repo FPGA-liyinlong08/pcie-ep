@@ -5,6 +5,13 @@
 // Gen3 PHY/GT 诊断模式；不包含任何 LTSSM、TS1/TS2 或链路训练功能。
 // DIRECT_GEN3_MODE 用于独立验证 Gen3 steady-state：复位释放后直接请求
 // P0/Gen3，不执行 Receiver Detect 和 Gen1->Gen3 dynamic rate transition。
+//
+// K02_USE_PHY_CTRL=1：把 Xilinx 7-series `phy_ctrl.v` + `phy_bringup_seq`
+// 实例化到顶层。phy_ctrl 内部产生 PHY_RATE/PHY_POWERDOWN/TXEQ/
+// as_mac_in_detect/as_cdr_hold_req 完整控制序列，原 K02 FSM 被旁路
+// (`if (K02_USE_PHY_CTRL == 0)` 包裹）。K02 顶层仍持有 32+ 控制信号
+// 端口，因此 K01 共用同一 wrapper 的实板接口不变；K02 自身
+// `DYN_*` 节奏/状态保留作 8'h04 触发器的 fallback 诊断项。
 module kcu105_pcie_phy_bringup_top #(
     parameter integer DETECT_TIMEOUT_CYCLES = 16_000_000,
     parameter integer GEN3_TEST_MODE        = 1,
@@ -24,7 +31,20 @@ module kcu105_pcie_phy_bringup_top #(
     // 默认全部为 0，保持当前 K02 行为不变；打开任意一个都只改变对应变量。
     parameter integer DYNAMIC_MAC_IN_DETECT_LOW_MODE = 0,
     parameter integer DYNAMIC_CDR_HOLD_LOW_MODE      = 0,
-    parameter integer DYNAMIC_SKIP_TXEQ_MODE        = 0
+    parameter integer DYNAMIC_SKIP_TXEQ_MODE        = 0,
+    // 1：实例化 Golden `phy_ctrl.v` + `phy_bringup_seq` 旁路 K02 FSM，
+    //    6 个使能由 `phy_bringup_seq` 提供；PHY 控制由 `phy_ctrl.v` 输出。
+    // 0（默认）：保持原 K02 FSM 行为（与 K01/历史 build 兼容）。
+    // 当 K02_USE_PHY_CTRL=1 时，下列 3 个 A/B 变量被旁路，无效果：
+    //   DYNAMIC_MAC_IN_DETECT_LOW_MODE / CDR_HOLD_LOW_MODE / SKIP_TXEQ_MODE。
+    parameter integer K02_USE_PHY_CTRL = 0,
+    // 以下 6 个参数只用于 K02_USE_PHY_CTRL=1，对齐 imports/board.v 的
+    // 250 MHz 计数器预算。默认值与 board_kcu105/phy_bringup_seq.sv 完全一致。
+    parameter integer K02_PHY_CTRL_WAIT_AFTER_READY_NS    = 10_000,
+    parameter integer K02_PHY_CTRL_WAIT_AFTER_GEN1_ON_NS  =  5_000,
+    parameter integer K02_PHY_CTRL_GEN1_HOLD_NS           = 50_000,
+    parameter integer K02_PHY_CTRL_WAIT_AFTER_GEN1_OFF_NS = 10_000,
+    parameter integer K02_PHY_CTRL_GEN3_HOLD_NS           = 80_000
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -63,14 +83,15 @@ module kcu105_pcie_phy_bringup_top #(
     wire        core_rst_n;
     wire        phy_phystatus_rst;
 
-    logic       phy_txdetectrx;
-    logic [1:0] phy_powerdown;
-    logic [1:0] phy_rate_cmd;
-    logic       phy_txelecidle_cmd;
-    logic [1:0] phy_txeq_ctrl_cmd;
-    logic [3:0] phy_txeq_preset_cmd;
-    logic       as_cdr_hold_cmd;
-    logic       as_mac_in_detect_cmd;
+    // Original K02 FSM signals - only meaningful when K02_USE_PHY_CTRL=0.
+    (* mark_debug = "true" *) logic       phy_txdetectrx;
+    (* mark_debug = "true" *) logic [1:0] phy_powerdown;
+    (* mark_debug = "true" *) logic [1:0] phy_rate_cmd;
+    (* mark_debug = "true" *) logic       phy_txelecidle_cmd;
+    (* mark_debug = "true" *) logic [1:0] phy_txeq_ctrl_cmd;
+    (* mark_debug = "true" *) logic [3:0] phy_txeq_preset_cmd;
+    (* mark_debug = "true" *) logic       as_cdr_hold_cmd;
+    (* mark_debug = "true" *) logic       as_mac_in_detect_cmd;
     wire        phy_phystatus;
     wire [2:0]  phy_rxstatus;
 
@@ -89,6 +110,59 @@ module kcu105_pcie_phy_bringup_top #(
     wire [17:0] phy_rxeq_new_txcoeff;
     wire        phy_rxeq_adapt_done;
     wire        phy_rxeq_done;
+
+    // Wrapper 端口驱动信号 - K02_USE_PHY_CTRL=0 时用 FSM 输出/常数，
+    // K02_USE_PHY_CTRL=1 时用 Golden `phy_ctrl.v` 的 ctrl_* 输出。
+    // 这些信号在 always_comb 中被赋值，因此声明为 logic 而非 wire。
+    logic [31:0] phy_txdata_w;
+    logic [1:0]  phy_txdatak_w;
+    logic        phy_txdata_valid_w;
+    logic        phy_txstart_block_w;
+    logic [1:0]  phy_txsync_header_w;
+    logic        phy_txcompliance_w;
+    logic        phy_rxpolarity_w;
+    logic [2:0]  phy_txmargin_w;
+    logic        phy_txswing_w;
+    logic        phy_txdeemph_w;
+    logic [5:0]  phy_txeq_coeff_w;
+    logic [1:0]  phy_rxeq_ctrl_w;
+    logic [3:0]  phy_rxeq_txpreset_w;
+    // 与 K02 FSM 共享名字（已在上面声明），仅在 PHY_CTRL=0 时被 FSM 驱动。
+    // PHY_CTRL=1 时 always_comb 的 if 分支会重新赋值。
+
+    // phy_ctrl.v 输出（当 K02_USE_PHY_CTRL=1 时使用）.
+    wire [31:0] ctrl_txdata;
+    wire [1:0]  ctrl_txdatak;
+    wire        ctrl_txdata_valid;
+    wire        ctrl_txstart_block;
+    wire [1:0]  ctrl_txsync_header;
+    wire        ctrl_txdetectrx;
+    wire        ctrl_txelecidle;
+    wire        ctrl_txcompliance;
+    wire        ctrl_rxpolarity;
+    wire [1:0]  ctrl_phy_powerdown;
+    wire [2:0]  ctrl_phy_rate;
+    wire [2:0]  ctrl_txmargin;
+    wire        ctrl_txswing;
+    wire        ctrl_txdeemph;
+    wire [1:0]  ctrl_txeq_ctrl;
+    wire [3:0]  ctrl_txeq_preset;
+    wire [5:0]  ctrl_txeq_coeff;
+    wire [1:0]  ctrl_rxeq_ctrl;
+    wire [3:0]  ctrl_rxeq_txpreset;
+    wire        ctrl_as_mac_in_detect;
+    wire        ctrl_as_cdr_hold_req;
+    wire [7:0]  ctrl_debug_state;
+
+    // phy_bringup_seq 输出（仅 K02_USE_PHY_CTRL=1 时非零）.
+    wire        seq_tx_elec_idle;
+    wire        seq_phy_ready_en;
+    wire        seq_gen1_en;
+    wire        seq_gen2_en;
+    wire        seq_gen3_en;
+    wire        seq_gen4_en;
+    wire [3:0]  seq_seq_state;
+    wire        seq_gen3_request;
 
     (* mark_debug = "true" *) logic [2:0] bup_state;
     (* mark_debug = "true" *) logic [2:0] detected_rxstatus;
@@ -115,6 +189,25 @@ module kcu105_pcie_phy_bringup_top #(
     (* mark_debug = "true" *) logic       dynamic_rate_phystatus_seen;
     (* mark_debug = "true" *) logic       dynamic_rate_pass;
     (* mark_debug = "true" *) logic       dynamic_rate_fail;
+    // K02_USE_PHY_CTRL=1 时的诊断信号。
+    (* mark_debug = "true" *) wire [7:0]  phy_ctrl_debug_state_w =
+        (K02_USE_PHY_CTRL != 0) ? ctrl_debug_state : 8'h00;
+    (* mark_debug = "true" *) wire [3:0]  seq_state_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_seq_state    : 4'h0;
+    (* mark_debug = "true" *) wire        gen3_request_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_gen3_request : 1'b0;
+    (* mark_debug = "true" *) wire        gen1_en_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_gen1_en      : 1'b0;
+    (* mark_debug = "true" *) wire        gen2_en_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_gen2_en      : 1'b0;
+    (* mark_debug = "true" *) wire        gen3_en_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_gen3_en      : 1'b0;
+    (* mark_debug = "true" *) wire        gen4_en_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_gen4_en      : 1'b0;
+    (* mark_debug = "true" *) wire        tx_elec_idle_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_tx_elec_idle : 1'b0;
+    (* mark_debug = "true" *) wire        phy_ready_en_w =
+        (K02_USE_PHY_CTRL != 0) ? seq_phy_ready_en : 1'b0;
     logic [31:0] dynamic_rate_count;
     logic [4:0]  settle_count;
     logic [23:0] timeout_count;
@@ -129,9 +222,114 @@ module kcu105_pcie_phy_bringup_top #(
             (DYNAMIC_GEN1_OFF_GAP_CYCLES < 1)) begin : g_invalid_off_gap
             initial $error("DYNAMIC_GEN1_OFF_GAP_CYCLES must be >= 1 when OFF GAP is enabled");
         end
+        if (K02_USE_PHY_CTRL != 0) begin : g_phy_ctrl
+            // Synthesizable equivalent of imports/board.v's bring-up stimulus.
+            phy_bringup_seq #(
+                .SEQ_CLK_HZ                  (250_000_000),
+                .WAIT_AFTER_READY_NS         (K02_PHY_CTRL_WAIT_AFTER_READY_NS),
+                .WAIT_AFTER_GEN1_ON_NS       (K02_PHY_CTRL_WAIT_AFTER_GEN1_ON_NS),
+                .GEN1_HOLD_NS                (K02_PHY_CTRL_GEN1_HOLD_NS),
+                .WAIT_AFTER_GEN1_OFF_NS      (K02_PHY_CTRL_WAIT_AFTER_GEN1_OFF_NS),
+                .GEN3_HOLD_NS                (K02_PHY_CTRL_GEN3_HOLD_NS)
+            ) u_phy_bringup_seq (
+                .clk                  (phy_pclk),
+                .rst                  (!pcie_perst_n),
+                .phy_status_ready     (!phy_phystatus_rst),
+                .phy_ctrl_debug_state (ctrl_debug_state),
+                .tx_elec_idle         (seq_tx_elec_idle),
+                .phy_ready_en         (seq_phy_ready_en),
+                .gen1_en              (seq_gen1_en),
+                .gen2_en              (seq_gen2_en),
+                .gen3_en              (seq_gen3_en),
+                .gen4_en              (seq_gen4_en),
+                .seq_state            (seq_seq_state),
+                .gen3_request         (seq_gen3_request)
+            );
+
+            // Unmodified Xilinx reference controller from imports/.
+            phy_ctrl #(
+                .PHY_LANE (1),
+                .DW       (32),
+                .TCQ      (1)
+            ) u_phy_ctrl (
+                .CLK                 (phy_pclk),
+                .RST                 (phy_phystatus_rst),
+                .PHY_TXDATA          (ctrl_txdata),
+                .PHY_TXDATAK         (ctrl_txdatak),
+                .PHY_TXDATA_VALID    (ctrl_txdata_valid),
+                .PHY_TXSTART_BLOCK   (ctrl_txstart_block),
+                .PHY_TXSYNC_HEADER   (ctrl_txsync_header),
+                .PHY_RXDATA          (phy_rxdata),
+                .PHY_RXDATAK         (phy_rxdatak),
+                .PHY_RXDATA_VALID    (phy_rxdata_valid),
+                .PHY_RXSTART_BLOCK   (phy_rxstart_block),
+                .PHY_RXSYNC_HEADER   (phy_rxsync_header),
+                .PHY_TXDETECTRX      (ctrl_txdetectrx),
+                .PHY_TXELECIDLE      (ctrl_txelecidle),
+                .PHY_TXCOMPLIANCE    (ctrl_txcompliance),
+                .PHY_RXPOLARITY      (ctrl_rxpolarity),
+                .PHY_POWERDOWN       (ctrl_phy_powerdown),
+                .PHY_RATE            (ctrl_phy_rate),
+                .PHY_RXVALID         (phy_rxvalid),
+                .PHY_PHYSTATUS       (phy_phystatus),
+                .PHY_PHYSTATUS_RST   (phy_phystatus_rst),
+                .PHY_RXELECIDLE      (phy_rxelecidle),
+                .PHY_RXSTATUS        (phy_rxstatus),
+                .PHY_TXMARGIN        (ctrl_txmargin),
+                .PHY_TXSWING         (ctrl_txswing),
+                .PHY_TXDEEMPH        (ctrl_txdeemph),
+                .PHY_TXEQ_CTRL       (ctrl_txeq_ctrl),
+                .PHY_TXEQ_PRESET     (ctrl_txeq_preset),
+                .PHY_TXEQ_COEFF      (ctrl_txeq_coeff),
+                .PHY_RXEQ_CTRL       (ctrl_rxeq_ctrl),
+                .PHY_RXEQ_TXPRESET   (ctrl_rxeq_txpreset),
+                .PHY_TXEQ_FS         (phy_txeq_fs),
+                .PHY_TXEQ_LF         (phy_txeq_lf),
+                .PHY_TXEQ_NEW_COEFF  (phy_txeq_new_coeff),
+                .PHY_TXEQ_DONE       (phy_txeq_done),
+                .PHY_RXEQ_PRESET_SEL (phy_rxeq_preset_sel),
+                .PHY_RXEQ_NEW_TXCOEFF(phy_rxeq_new_txcoeff),
+                .PHY_RXEQ_ADAPT_DONE (phy_rxeq_adapt_done),
+                .PHY_RXEQ_DONE       (phy_rxeq_done),
+                .as_mac_in_detect    (ctrl_as_mac_in_detect),
+                .as_cdr_hold_req     (ctrl_as_cdr_hold_req),
+                .debug_state         (ctrl_debug_state),
+                .tx_elec_idle        (seq_tx_elec_idle),
+                .phy_ready_en        (seq_phy_ready_en),
+                .gen1_en             (seq_gen1_en),
+                .gen2_en             (seq_gen2_en),
+                .gen3_en             (seq_gen3_en),
+                .gen4_en             (seq_gen4_en)
+            );
+        end
     endgenerate
 
     always_comb begin
+        if (K02_USE_PHY_CTRL != 0) begin
+            // Golden `phy_ctrl.v` 直接驱动 wrapper；FSM 输出被旁路。
+            phy_powerdown       = ctrl_phy_powerdown;
+            phy_txdetectrx      = ctrl_txdetectrx;
+            phy_rate_cmd        = ctrl_phy_rate[1:0];
+            phy_txelecidle_cmd  = ctrl_txelecidle;
+            phy_txeq_ctrl_cmd   = ctrl_txeq_ctrl;
+            phy_txeq_preset_cmd = ctrl_txeq_preset;
+            as_cdr_hold_cmd     = ctrl_as_cdr_hold_req;
+            as_mac_in_detect_cmd = ctrl_as_mac_in_detect;
+
+            phy_txdata_w        = ctrl_txdata;
+            phy_txdatak_w       = ctrl_txdatak;
+            phy_txdata_valid_w  = ctrl_txdata_valid;
+            phy_txstart_block_w = ctrl_txstart_block;
+            phy_txsync_header_w = ctrl_txsync_header;
+            phy_txcompliance_w  = ctrl_txcompliance;
+            phy_rxpolarity_w    = ctrl_rxpolarity;
+            phy_txmargin_w      = ctrl_txmargin;
+            phy_txswing_w       = ctrl_txswing;
+            phy_txdeemph_w      = ctrl_txdeemph;
+            phy_txeq_coeff_w    = ctrl_txeq_coeff;
+            phy_rxeq_ctrl_w     = ctrl_rxeq_ctrl;
+            phy_rxeq_txpreset_w = ctrl_rxeq_txpreset;
+        end else begin
         phy_powerdown      = 2'b10;
         phy_txdetectrx     = 1'b0;
         phy_rate_cmd       = 2'b00;
@@ -232,6 +430,22 @@ module kcu105_pcie_phy_bringup_top #(
                 phy_rate_cmd = 2'b10;
             end
         end
+
+        // K02_USE_PHY_CTRL=0 时，wrapper 的常量端口保持默认零/低。
+        phy_txdata_w        = 32'b0;
+        phy_txdatak_w       = 2'b0;
+        phy_txdata_valid_w  = 1'b0;
+        phy_txstart_block_w = 1'b0;
+        phy_txsync_header_w = 2'b0;
+        phy_txcompliance_w  = 1'b0;
+        phy_rxpolarity_w    = 1'b0;
+        phy_txmargin_w      = 3'b0;
+        phy_txswing_w       = 1'b0;
+        phy_txdeemph_w      = 1'b0;
+        phy_txeq_coeff_w    = 6'b0;
+        phy_rxeq_ctrl_w     = 2'b0;
+        phy_rxeq_txpreset_w = 4'b0;
+        end
     end
 
     assign phy_rate_debug       = phy_rate_cmd;
@@ -268,6 +482,9 @@ module kcu105_pcie_phy_bringup_top #(
         end else begin
             heartbeat_count <= heartbeat_count + 1'b1;
 
+            // K02_USE_PHY_CTRL=1 时 FSM 旁路；保留 heartbeat 与 BUP/DYN
+            // 复位状态作为对照变量。
+            if (K02_USE_PHY_CTRL == 0) begin
             if (DYNAMIC_RATE_TEST_MODE == 0 || DIRECT_GEN3_MODE != 0) begin
                 dynamic_rate_state <= DYN_PASS;
                 dynamic_rate_count <= '0;
@@ -458,16 +675,26 @@ module kcu105_pcie_phy_bringup_top #(
                     bup_state <= BUP_RESET;
                 end
             endcase
+            end
         end
     end
 
+    // LED 映射：
+    //   K02_USE_PHY_CTRL=0：保留原 K02 诊断灯（pipe_rst / receiver_present /
+    //     detect_done / detect_timeout / heartbeat）。
+    //   K02_USE_PHY_CTRL=1：复用同一组灯显示 phy_bringup_seq 进度：
+    //     led[1]=gen3_request, led[2]=phy_ctrl debug_state==8'h04,
+    //     led[5]=seq_state==S_DONE, led[6]=ctrl_as_cdr_hold_req。
     assign led[0] = pipe_rst_n && !phy_phystatus_rst;
-    assign led[1] = receiver_present;
-    assign led[2] = detect_done;
+    assign led[1] = (K02_USE_PHY_CTRL != 0) ? gen3_request_w : receiver_present;
+    assign led[2] = (K02_USE_PHY_CTRL != 0) ?
+                     (phy_ctrl_debug_state_w == 8'h04) : detect_done;
     assign led[3] = pipe_rst_n;
     assign led[4] = core_rst_n;
-    assign led[5] = detect_timeout;
-    assign led[6] = unexpected_status;
+    assign led[5] = (K02_USE_PHY_CTRL != 0) ?
+                     (seq_state_w == 4'd8) : detect_timeout;
+    assign led[6] = (K02_USE_PHY_CTRL != 0) ?
+                     ctrl_as_cdr_hold_req : unexpected_status;
     assign led[7] = heartbeat_count[24];
 
     kcu105_pcie_phy_wrapper u_phy_wrapper (
@@ -478,25 +705,25 @@ module kcu105_pcie_phy_bringup_top #(
         .pcie_rxn               (pcie_rxn),
         .pcie_txp               (pcie_txp),
         .pcie_txn               (pcie_txn),
-        .phy_txdata             (32'b0),
-        .phy_txdatak            (2'b0),
-        .phy_txdata_valid       (1'b0),
-        .phy_txstart_block      (1'b0),
-        .phy_txsync_header      (2'b0),
+        .phy_txdata             (phy_txdata_w),
+        .phy_txdatak            (phy_txdatak_w),
+        .phy_txdata_valid       (phy_txdata_valid_w),
+        .phy_txstart_block      (phy_txstart_block_w),
+        .phy_txsync_header      (phy_txsync_header_w),
         .phy_txdetectrx         (phy_txdetectrx),
         .phy_txelecidle         (phy_txelecidle_cmd),
-        .phy_txcompliance       (1'b0),
-        .phy_rxpolarity         (1'b0),
+        .phy_txcompliance       (phy_txcompliance_w),
+        .phy_rxpolarity         (phy_rxpolarity_w),
         .phy_powerdown          (phy_powerdown),
         .phy_rate               (phy_rate_cmd),
-        .phy_txmargin           (3'b0),
-        .phy_txswing            (1'b0),
-        .phy_txdeemph           (1'b0),
+        .phy_txmargin           (phy_txmargin_w),
+        .phy_txswing            (phy_txswing_w),
+        .phy_txdeemph           (phy_txdeemph_w),
         .phy_txeq_ctrl          (phy_txeq_ctrl_cmd),
         .phy_txeq_preset        (phy_txeq_preset_cmd),
-        .phy_txeq_coeff         (6'b0),
-        .phy_rxeq_ctrl          (2'b0),
-        .phy_rxeq_txpreset      (4'b0),
+        .phy_txeq_coeff         (phy_txeq_coeff_w),
+        .phy_rxeq_ctrl          (phy_rxeq_ctrl_w),
+        .phy_rxeq_txpreset      (phy_rxeq_txpreset_w),
         .as_mac_in_detect       (as_mac_in_detect_cmd),
         .as_cdr_hold_req        (as_cdr_hold_cmd),
         .phy_coreclk            (phy_coreclk),

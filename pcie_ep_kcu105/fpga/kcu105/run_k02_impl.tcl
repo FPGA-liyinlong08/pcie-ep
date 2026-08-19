@@ -24,6 +24,11 @@ if {$k02_coeff_query} { set k02_dynamic_rate 1 }
 set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
                             $::env(K02_DIRECT_GEN3) eq "1"}]
 set k02_dynamic_start_delay [expr {$k02_dynamic_rate ? 1000000000 : 1024}]
+# 1：实例化 Golden `phy_ctrl.v` + `phy_bringup_seq` 旁路 K02 FSM。
+# 同一目录：fpga/kcu105/build_k02_phyctrl/。
+# A/B 3 变量在该模式下被 K02 顶层旁路，仅作 fallback 校验。
+set k02_use_phy_ctrl [expr {[info exists ::env(K02_USE_PHY_CTRL)] &&
+                              $::env(K02_USE_PHY_CTRL) eq "1"}]
 # Golden-vs-K02 A/B Test 组合目标命名：每个组合使用独立目录，
 # 避免不同 A/B 变量的 bit/probe 互相覆盖。
 set k02_any_ab [expr {$k02_mac_in_detect_low || $k02_cdr_hold_low || $k02_skip_txeq}]
@@ -39,7 +44,10 @@ if {$k02_any_ab} {
     if {$k02_cdr_hold_low}     { append k02_ab_combo_stem "_cdr" }
     if {$k02_skip_txeq}        { append k02_ab_combo_stem "_skiptxeq" }
 }
-if {$k02_direct_gen3} {
+if {$k02_use_phy_ctrl} {
+    set build_dir [file join $script_dir build_k02_phyctrl]
+    set bit_stem k02_pcie_phy_bringup_phyctrl
+} elseif {$k02_direct_gen3} {
     set build_dir [file join $script_dir build_k02_gen3]
     set bit_stem k02_pcie_phy_bringup_gen3
 } elseif {$k02_dynamic_rate} {
@@ -85,6 +93,14 @@ read_verilog -sv [file join $project_dir rtl/common/pcie_reset_sync.sv]
 read_verilog -sv [file join $project_dir rtl/phy/kcu105_reset_ctrl.sv]
 read_verilog -sv [file join $project_dir rtl/phy/kcu105_refclk_reset.sv]
 read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_wrapper.sv]
+if {$k02_use_phy_ctrl} {
+    # Golden controller 移植到 K02 顶层。读顺序：底层 -> 顶层。
+    # phy_ctrl.v 内部实例化 pat_gen，因此 pat_gen 必须先读。
+    read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen_lane.v]
+    read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen.v]
+    read_verilog     [file join $project_dir rtl/phy/phy_ctrl.v]
+    read_verilog -sv [file join $project_dir rtl/phy/phy_bringup_seq.sv]
+}
 read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_bringup_top.sv]
 read_xdc [file join $script_dir k02_pcie_phy_bringup.xdc]
 
@@ -98,7 +114,8 @@ synth_design -top $top_name -part $part_name \
     -generic DYNAMIC_GEN1_OFF_GAP_CYCLES=2500 \
     -generic DYNAMIC_MAC_IN_DETECT_LOW_MODE=$k02_mac_in_detect_low \
     -generic DYNAMIC_CDR_HOLD_LOW_MODE=$k02_cdr_hold_low \
-    -generic DYNAMIC_SKIP_TXEQ_MODE=$k02_skip_txeq
+    -generic DYNAMIC_SKIP_TXEQ_MODE=$k02_skip_txeq \
+    -generic K02_USE_PHY_CTRL=$k02_use_phy_ctrl
 
 if {$k02_ila_debug} {
     # K02 standalone PHY 没有协议层 ILA；这里直接从综合网表中的 GT Wizard
@@ -179,6 +196,37 @@ if {$k02_ila_debug} {
     connect_debug_port u_ila_k02/clk [k02_net {(^|/)phy_pclk$}]
     set k02_gt_prefix {^u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/}
 
+    if {$k02_use_phy_ctrl} {
+        # Golden-controller 风格探针：probe0 = GT + phy_ctrl 关键输出；
+        # probe1 = phy_bringup_seq 进度。命名 *_w 后缀是 K02 顶层 mux
+        # 出来的 wire，不是 K02 FSM 内部 *_debug。
+        set k02_probe0 [concat \
+            [k02_primitive_pin GTHE3_COMMON QPLL1LOCK] \
+            [k02_primitive_pin GTHE3_COMMON QPLL1RESET] \
+            [k02_bus {^phy_rate_cmd\[[0-1]\]$} 2] \
+            [k02_bus {^phy_powerdown\[[0-1]\]$} 2] \
+            [k02_net {^phy_txelecidle_cmd$}] \
+            [k02_bus {^phy_ctrl_debug_state_w\[[0-7]\]$} 8] \
+            [k02_net {^as_mac_in_detect_cmd$}] \
+            [k02_net {^as_cdr_hold_cmd$}] \
+            [k02_primitive_bus_pin GTHE3_CHANNEL PCIERATEQPLLRESET 2] \
+            [k02_primitive_pin GTHE3_CHANNEL PCIERATEGEN3] \
+            [k02_primitive_pin GTHE3_CHANNEL PCIEUSERGEN3RDY] \
+            [k02_primitive_pin GTHE3_COMMON QPLL1REFCLKLOST] \
+            [k02_primitive_pin GTHE3_COMMON QPLL1FBCLKLOST]]
+        k02_add_probe u_ila_k02 0 $k02_probe0
+
+        set k02_probe1 [concat \
+            [k02_bus {^seq_state_w\[[0-3]\]$} 4] \
+            [k02_net {^gen3_request_w$}] \
+            [k02_net {^tx_elec_idle_w$}] \
+            [k02_net {^phy_ready_en_w$}] \
+            [k02_net {^gen1_en_w$}] \
+            [k02_net {^gen3_en_w$}] \
+            [k02_net {^u_phy_wrapper/phy_phystatus$}] \
+            [k02_net {^u_phy_wrapper/phy_phystatus_rst$}]]
+        k02_add_probe u_ila_k02 1 $k02_probe1
+    } else {
     # probe0 低到高位映射：QPLL1、PHY rate/powerdown/TX idle、
     # PLLCLKSEL/SYSCLKSEL、TXEQ/CDR hold、Gen3 rate handshake、
     # RX reset/data、PhyStatus、动态测试状态。
@@ -246,7 +294,8 @@ if {$k02_ila_debug} {
         [k02_net {.*unexpected_status$}] \
         [k02_bus {.*detected_rxstatus\[[0-2]\]$} 3]]
     k02_add_probe u_ila_k02 1 $k02_probe1
-    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test dynamic_rate=$k02_dynamic_rate coeff_query=$k02_coeff_query direct_gen3=$k02_direct_gen3 mac_in_detect_low=$k02_mac_in_detect_low cdr_hold_low=$k02_cdr_hold_low skip_txeq=$k02_skip_txeq"
+    }
+    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192 gen3_test=$k02_gen3_test dynamic_rate=$k02_dynamic_rate coeff_query=$k02_coeff_query direct_gen3=$k02_direct_gen3 mac_in_detect_low=$k02_mac_in_detect_low cdr_hold_low=$k02_cdr_hold_low skip_txeq=$k02_skip_txeq use_phy_ctrl=$k02_use_phy_ctrl"
 }
 write_checkpoint -force [file join $build_dir k02_synth.dcp]
 report_utilization -file [file join $build_dir utilization_synth.rpt]
@@ -347,7 +396,8 @@ puts $summary_file "DYNAMIC_START_DELAY_CYCLES=$k02_dynamic_start_delay"
 puts $summary_file "DYNAMIC_MAC_IN_DETECT_LOW_MODE=$k02_mac_in_detect_low"
 puts $summary_file "DYNAMIC_CDR_HOLD_LOW_MODE=$k02_cdr_hold_low"
 puts $summary_file "DYNAMIC_SKIP_TXEQ_MODE=$k02_skip_txeq"
+puts $summary_file "K02_USE_PHY_CTRL=$k02_use_phy_ctrl"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
 
-puts "K02_IMPL_PASS channel=$channel_loc common=$common_loc WNS=$wns"
+puts "K02_IMPL_PASS channel=$channel_loc common=$common_loc WNS=$wns use_phy_ctrl=$k02_use_phy_ctrl"

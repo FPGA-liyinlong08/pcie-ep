@@ -1,4 +1,6 @@
 set script_dir [file dirname [file normalize [info script]]]
+set k02_use_phy_ctrl [expr {[info exists ::env(K02_USE_PHY_CTRL)] &&
+                              $::env(K02_USE_PHY_CTRL) eq "1"}]
 set k02_direct_gen3 [expr {[info exists ::env(K02_DIRECT_GEN3)] &&
                             $::env(K02_DIRECT_GEN3) eq "1"}]
 set k02_dynamic_rate [expr {[info exists ::env(K02_DYNAMIC_GEN1_TO_GEN3)] &&
@@ -15,7 +17,10 @@ set k02_skip_txeq [expr {[info exists ::env(K02_DYNAMIC_SKIP_TXEQ)] &&
                           $::env(K02_DYNAMIC_SKIP_TXEQ) eq "1"}]
 set k02_any_ab [expr {$k02_mac_in_detect_low || $k02_cdr_hold_low || $k02_skip_txeq}]
 if {$k02_coeff_query} { set k02_dynamic_rate 1 }
-if {$k02_direct_gen3} {
+if {$k02_use_phy_ctrl} {
+    set build_dir [file join $script_dir build_k02_phyctrl]
+    set bit_stem k02_pcie_phy_bringup_phyctrl
+} elseif {$k02_direct_gen3} {
     set build_dir [file join $script_dir build_k02_gen3]
     set bit_stem k02_pcie_phy_bringup_gen3
 } elseif {$k02_dynamic_rate} {

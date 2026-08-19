@@ -3,7 +3,7 @@
 	k00-m02-verilator k00-m02-verilator-signoff k00-m02-vcs \
 	k00-m02-vivado k00-m02 \
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
-	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado k02-gen3-vivado k02-offgap-vivado k02-ab-mac-in-detect-vivado k02-ab-cdr-hold-vivado k02-ab-skip-txeq-vivado k02-golden-ab-vivado \
+	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado k02-gen3-vivado k02-offgap-vivado k02-ab-mac-in-detect-vivado k02-ab-cdr-hold-vivado k02-ab-skip-txeq-vivado k02-golden-ab-vivado k02-phyctrl-vivado k02-phyctrl-hw-probe k02-phyctrl-hw-program \
 	k02-hw-probe k02-hw-program k02-gen3-hw-probe k02-gen3-hw-program k02 \
 	k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
 	k03-lint k03-verilator k03-vivado k03 \
@@ -198,6 +198,24 @@ k02-golden-ab-vivado:
 	K02_DYNAMIC_CDR_HOLD_LOW=1 \
 	K02_DYNAMIC_SKIP_TXEQ=1 \
 	./fpga/kcu105/run_k02_impl.sh
+
+# Golden controller + K02 pcie_phy_x1_gen3 PHY（同 cell #3 的 RTL，
+# 但用 K02 顶层而非 cell #3 的 1:1 复用顶层）。K02_USE_PHY_CTRL=1 时
+# A/B 3 变量（mac/cdr/skiptxeq）被顶层旁路。
+k02-phyctrl-vivado:
+	K02_USE_PHY_CTRL=1 ./fpga/kcu105/run_k02_impl.sh
+
+k02-phyctrl-hw-probe:
+	$(VIVADO) -mode batch \
+		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
+		-log fpga/kcu105/build_k02_phyctrl/hw_probe.log \
+		-tclargs localhost:3122 probe
+
+k02-phyctrl-hw-program:
+	$(VIVADO) -mode batch \
+		-source fpga/kcu105/run_k02_hw.tcl -nojournal \
+		-log fpga/kcu105/build_k02_phyctrl/hw_program.log \
+		-tclargs localhost:3122 program
 
 k02-hw-probe:
 	/home/Xilinx/Vivado/2021.2/bin/vivado -mode batch \
