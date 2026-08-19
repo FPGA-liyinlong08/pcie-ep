@@ -31,7 +31,6 @@ fpga/kcu105/ip/pcie_phy_x1_gen3/*
 !fpga/kcu105/ip/pcie_phy_x1_gen3/pcie_phy_x1_gen3.xci
 
 fpga/kcu105/ip/pcie_phy_x1_gen3_1/*
-!fpga/kcu105/ip/pcie_phy_x1_gen3_1/pcie_phy_x1_gen3.xci
 # G2 Gen1/CPLL A/B诊断IP同样只版本管理可重建的XCI。
 fpga/kcu105/ip_g2_gen1/pcie_phy_x1_gen3/*
 !fpga/kcu105/ip_g2_gen1/pcie_phy_x1_gen3/pcie_phy_x1_gen3.xci
