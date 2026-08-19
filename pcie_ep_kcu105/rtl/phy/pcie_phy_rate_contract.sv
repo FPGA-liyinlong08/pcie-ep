@@ -69,10 +69,12 @@ module pcie_phy_rate_contract #(
     // ------------------------------------------------------------------
     // 速率编码 (与 pcie_phy_x1_gen3 PHY_RATE[2:0] 兼容)
     // ------------------------------------------------------------------
+    /* verilator lint_off UNUSEDPARAM */
     localparam [1:0] RATE_GEN1     = 2'b00;
     localparam [1:0] RATE_GEN2     = 2'b01;
     localparam [1:0] RATE_GEN3     = 2'b10;
     localparam [1:0] RATE_RESERVED = 2'b11;   // 非法，触发 sticky error
+    /* verilator lint_on UNUSEDPARAM */
 
     // ------------------------------------------------------------------
     // 状态编码——直接映射 Golden PHY_BUP_* 编号 (低 4 bit)

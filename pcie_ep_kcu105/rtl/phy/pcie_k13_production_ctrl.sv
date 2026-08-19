@@ -3,12 +3,21 @@
 
 // K13生产接线层：把K12-A/B/C/D控制器组合成一个可关闭的PHY控制单元。
 // K13_ENABLE=0时，所有控制输出保持K11 Gen1安全值；启用后才接受Retrain。
+//
+// K13 PHY Rate-Change 架构（2026-08-19 重构）：
+//   1. pcie_recovery_speed_ctrl 不再直接驱动 phy_rate / phy_txelecidle，
+//      也不消费 raw phy_phystatus。
+//   2. 通过 rate_req_valid/target 发出 semantic 请求，
+//      等 rate_req_ready → rate_op_done/failed。
+//   3. pcie_phy_rate_contract 是 raw phy_rate / force_txelecidle 的唯一 owner。
+//   4. production_ctrl 输出 phy_rate_cmd（来自 contract），
+//      phy_txelecidle 是 ltssm stuff OR contract.force_txelecidle OR EQ stuff。
 module pcie_k13_production_ctrl #(
     parameter integer K13_ENABLE = 0,
     parameter integer K13_RXEQ_BOOTSTRAP = 1,
     // 250 MHz PIPE下分别为4 ms；行为仿真继续通过参数覆盖缩短。
     parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer EQ_TIMEOUT_CYCLES = 1_000_000
+    parameter integer EQ_TIMEOUT_CYCLES    = 1_000_000
 ) (
     input wire       core_clk,
     input wire       core_rst_n,
@@ -18,8 +27,6 @@ module pcie_k13_production_ctrl #(
     input wire       ltssm_speed_ready,
     input wire       retrain_pulse,
     input wire [1:0] target_speed,
-    // 对端也可以在L0用TS1 Speed Change发起Recovery。该请求已经位于
-    // phy_clk域，不能绕回core配置空间后再启动，否则会错过Recovery窗口。
     input wire       partner_retrain_valid,
     input wire [1:0] partner_target_speed,
     input wire       phy_phystatus,
@@ -37,8 +44,11 @@ module pcie_k13_production_ctrl #(
     input wire       ts_eq_request,
     input wire [2:0] expected_lane,
     input wire [7:0] expected_link,
-    output wire [1:0] phy_rate,
-    output wire       phy_txelecidle,
+
+    // PHY command (来自 contract) 与 protocol 状态
+    output wire [1:0] phy_rate_cmd,        // 替换原 phy_rate：去 wrapper
+    output wire [1:0] active_rate,         // 来自 contract：去 LTSSM active_phy_rate
+    output wire       phy_txelecidle,      // OR-arbitrated
     output wire [1:0] phy_txeq_ctrl,
     output wire [3:0] phy_txeq_preset,
     output wire [5:0] phy_txeq_coeff,
@@ -46,8 +56,11 @@ module pcie_k13_production_ctrl #(
     output wire [3:0] phy_rxeq_txpreset,
     output wire       traffic_quiesce,
     output wire       recovery_active,
+    output wire       recovery_speed_done,
     output wire [1:0] negotiated_speed,
     output wire [2:0] speed_state,
+
+    // EQ / TS / 故障 sticky
     output wire       eq_active,
     output wire       eq_done,
     output wire       eq_failed,
@@ -57,7 +70,13 @@ module pcie_k13_production_ctrl #(
     output wire       cdr_loss_sticky,
     output wire       speed_timeout_sticky,
     output wire       fallback_sticky,
-    output wire       illegal_ts_sticky
+    output wire       illegal_ts_sticky,
+
+    // Rate Contract 调试
+    output wire [3:0] rate_contract_state,
+    output wire       rate_contract_busy,
+    output wire       rate_contract_done,
+    output wire       rate_contract_failed
 );
     wire mailbox_busy, mailbox_valid, mailbox_accept;
     wire [1:0] mailbox_target;
@@ -69,11 +88,29 @@ module pcie_k13_production_ctrl #(
     wire speed_fallback;
     wire ts_malformed, ts_illegal_rate, ts_lane_link_mismatch;
     wire eq_start_accept, eq_illegal_param, eq_phase_timeout;
-    wire [1:0] speed_phy_rate;
-    wire speed_txelecidle, speed_quiesce, speed_recovery_active;
-    wire [1:0] speed_negotiated;
+
+    // 内部 TS 仲裁（来自 u_ts_guard 的输出，仅在 K13 enabled branch 驱动）
+    wire       ts_accept_w;
+    wire       ts_reject_w;
+
+    // Recovery speed controller → contract 的 semantic handshake
+    wire       speed_rate_req_valid;
+    wire [1:0] speed_rate_req_target;
+    wire       speed_recovery_active;
     wire [2:0] speed_state_w;
-    wire ts_accept_w, ts_reject_w;
+    wire [1:0] speed_negotiated;
+    wire       speed_traffic_quiesce;
+
+    // Contract → PHY / 调试
+    wire [3:0] contract_state;
+    wire [1:0] contract_active_rate;
+    wire [1:0] contract_phy_rate_cmd;
+    wire       contract_force_txelecidle;
+    wire       contract_rate_req_ready;
+    wire       contract_rate_busy;
+    wire       contract_rate_done;
+    wire       contract_rate_failed;
+
     wire [1:0] eq_phy_txeq_ctrl;
     wire [3:0] eq_phy_txeq_preset;
     wire [5:0] eq_phy_txeq_coeff;
@@ -131,8 +168,6 @@ module pcie_k13_production_ctrl #(
             .ts_valid(ts_valid), .ts_complete(ts_complete),
             .ts_is_ts1(ts_is_ts1), .ts_is_ts2(ts_is_ts2),
             .ts_lane(ts_lane), .ts_link(ts_link), .ts_rate(ts_rate),
-            // 请求TS本身必须按本次目标判定，不能在active_target锁存前
-            // 用上一轮速率制造一次虚假的ts_reject/illegal sticky。
             .expected_rate(retrain_request_valid ? retrain_request_target :
                                                    active_target),
             .ts_eq_request(ts_eq_request), .expected_lane(expected_lane),
@@ -149,18 +184,51 @@ module pcie_k13_production_ctrl #(
             .retrain_valid(retrain_request_valid),
             .retrain_target_speed(retrain_request_target),
             .ltssm_speed_ready(speed_boundary_ready),
-            .retrain_accept(speed_retrain_accept), .phy_phystatus(phy_phystatus),
-            .phy_cdr_lost(phy_cdr_lost), .peer_speed_ok(ts_accept_w),
-            .peer_speed_reject(ts_reject_w), .state(speed_state_w),
-            .phy_rate(speed_phy_rate), .phy_txelecidle(speed_txelecidle),
-            .traffic_quiesce(speed_quiesce),
+            // semantic request → contract（contract 在 RC_RDY2_STABLE
+            //  唯一拉高 rate_req_ready 作为 back-pressure）
+            .rate_req_valid(speed_rate_req_valid),
+            .rate_req_target(speed_rate_req_target),
+            .rate_req_ready(contract_rate_req_ready),
+            // contract → speed completion
+            .rate_op_done(contract_rate_done),
+            .rate_op_failed(contract_rate_failed),
+            // 内部诊断
+            .retrain_accept(speed_retrain_accept),
+            .phy_cdr_lost(phy_cdr_lost),
+            .peer_speed_ok(ts_accept_w), .peer_speed_reject(ts_reject_w),
+            .state(speed_state_w),
+            // 协议层状态
+            .traffic_quiesce(speed_traffic_quiesce),
             .recovery_active(speed_recovery_active),
             .negotiated_speed(speed_negotiated),
+            // sticky
             .speed_timeout_sticky(speed_timeout),
             .peer_reject_sticky(peer_reject),
             .illegal_speed_sticky(illegal_speed),
             .cdr_loss_sticky(speed_cdr_loss),
             .fallback_taken_sticky(speed_fallback)
+        );
+
+        // ------------------------------------------------------------------
+        // Rate Contract 实例：唯一 raw phy_rate / force_txelecidle owner
+        // ------------------------------------------------------------------
+        pcie_phy_rate_contract #(
+            .RATE_TIMEOUT_CYCLES(SPEED_TIMEOUT_CYCLES)
+        ) u_rate_contract (
+            .clk(phy_clk), .rst_n(phy_rst_n),
+            .link_ready(link_up),
+            .rate_req_valid(speed_rate_req_valid),
+            .rate_req_target(speed_rate_req_target),
+            .rate_req_ready(contract_rate_req_ready),
+            .phy_phystatus(phy_phystatus),
+            .phy_rate_cmd(contract_phy_rate_cmd),
+            .force_txelecidle(contract_force_txelecidle),
+            .active_rate(contract_active_rate),
+            .rate_busy(contract_rate_busy),
+            .rate_done(contract_rate_done),
+            .rate_failed(contract_rate_failed),
+            .dbg_state(contract_state),
+            .phystatus_seen(), .timeout_sticky()
         );
 
         // PG239 requires the initial Gen3 transmitter preset to be applied
@@ -207,7 +275,7 @@ module pcie_k13_production_ctrl #(
                     post_rate_rxeq_failed <= 1'b0;
                     post_rate_rxeq_timeout_count <= 32'd0;
                 end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
-                             (speed_state_w == 3'd3) &&
+                             (speed_state_w == 3'd4) &&
                              !post_rate_rxeq_ready &&
                              !post_rate_rxeq_active) begin
                     post_rate_rxeq_active <= 1'b1;
@@ -246,7 +314,7 @@ module pcie_k13_production_ctrl #(
                 eq_start_q <= 1'b0;
             else begin
                 eq_start_q <= 1'b0;
-                if ((speed_state_w == 3'd3) && (active_target == 2'b10) &&
+                if ((speed_state_w == 3'd4) && (active_target == 2'b10) &&
                     rxeq_bootstrap_ready && ts_accept_w &&
                     !eq_active && !eq_done && !eq_failed)
                     eq_start_q <= 1'b1;
@@ -280,12 +348,19 @@ module pcie_k13_production_ctrl #(
         assign mailbox_target = 2'b00;
         assign speed_retrain_accept = 1'b0;
         assign active_target = 2'b00;
-        assign speed_phy_rate = 2'b00;
-        assign speed_txelecidle = 1'b0;
-        assign speed_quiesce = 1'b0;
+        assign speed_rate_req_valid = 1'b0;
+        assign speed_rate_req_target = 2'b00;
         assign speed_recovery_active = 1'b0;
-        assign speed_negotiated = 2'b00;
         assign speed_state_w = 3'd0;
+        assign speed_negotiated = 2'b00;
+        assign speed_traffic_quiesce = 1'b0;
+        assign contract_state = 4'h0;
+        assign contract_active_rate = 2'b00;
+        assign contract_phy_rate_cmd = 2'b00;
+        assign contract_rate_req_ready = 1'b0;
+        assign contract_rate_busy = 1'b0;
+        assign contract_rate_done = 1'b0;
+        assign contract_rate_failed = 1'b0;
         assign ts_accept_w = 1'b0;
         assign ts_reject_w = 1'b0;
         assign ts_malformed = 1'b0;
@@ -319,16 +394,24 @@ module pcie_k13_production_ctrl #(
 
     // A done-only RXEQ bootstrap failure must expose the safe Gen1 rate even
     // if the speed sub-controller has not yet consumed the sticky fault.
-    assign phy_rate = post_rate_rxeq_failed ? 2'b00 : speed_phy_rate;
+    // 在新架构下，phy_rate_cmd 由 contract 拥有；
+    // 这里的 post_rate_rxeq_failed 不能再直接覆盖 phy_rate_cmd，
+    // 只能通过强制把 active_target 锁回 Gen1（等 speed ctrl 触发 fallback）。
+    assign phy_rate_cmd = contract_phy_rate_cmd;
+    assign active_rate  = contract_active_rate;
+
     assign eq_done = eq_done_w;
     assign eq_failed = eq_failed_w || post_rate_rxeq_failed;
     // pre_rate_txeq_ready is asserted one clock before u_speed can observe
     // speed_boundary_ready.  Keep the electrical-idle window closed during
     // that NBA hand-off; otherwise ST_QUIESCE creates a one-PCLK hole.
-    assign phy_txelecidle = speed_txelecidle || pre_rate_txeq_active ||
+    //
+    // 新增 OR：contract force_txelecidle（任何 transition 状态 contract 都强制 TXEI）
+    assign phy_txelecidle = pre_rate_txeq_active ||
                             ((active_target == 2'b10) &&
                              (speed_state_w == 3'd1) &&
-                             pre_rate_txeq_ready);
+                             pre_rate_txeq_ready) ||
+                            contract_force_txelecidle;
     assign phy_txeq_ctrl = pre_rate_txeq_active ? 2'b01 :
                                                     eq_phy_txeq_ctrl;
     assign phy_txeq_preset = pre_rate_txeq_active ? 4'd4 :
@@ -339,10 +422,17 @@ module pcie_k13_production_ctrl #(
                                                        eq_phy_rxeq_ctrl;
     assign phy_rxeq_txpreset = post_rate_rxeq_active ? 4'd5 :
                                                            eq_phy_rxeq_txpreset;
-    assign traffic_quiesce = speed_quiesce || eq_active ||
-                             pre_rate_txeq_active || post_rate_rxeq_active;
+    // recovery_active 包含 contract_busy：physical 切速期间 LTSSM 必须停在 Recovery.Speed
+    assign traffic_quiesce = speed_traffic_quiesce || eq_active ||
+                             pre_rate_txeq_active || post_rate_rxeq_active ||
+                             contract_rate_busy;
     assign recovery_active = speed_recovery_active || eq_active ||
-                             pre_rate_txeq_active || post_rate_rxeq_active;
+                             pre_rate_txeq_active || post_rate_rxeq_active ||
+                             contract_rate_busy;
+    // recovery_speed_done：speed_state 进入 ST_RECOVERY_IDLE (3'd4) 或
+    // ST_FALLBACK_IDLE (3'd7) 即表示物理切速完成、等对端 TS / link stable
+    assign recovery_speed_done = (speed_state_w == 3'd4) ||
+                                 (speed_state_w == 3'd7);
     assign negotiated_speed = post_rate_rxeq_failed ? 2'b00 : speed_negotiated;
     assign speed_state = speed_state_w;
     assign ts_accept = ts_accept_w;
@@ -352,6 +442,12 @@ module pcie_k13_production_ctrl #(
     assign fallback_sticky = speed_fallback || post_rate_rxeq_failed;
     assign illegal_ts_sticky = ts_malformed || ts_illegal_rate ||
                                 ts_lane_link_mismatch;
+
+    // Rate Contract 调试透传
+    assign rate_contract_state   = contract_state;
+    assign rate_contract_busy    = contract_rate_busy;
+    assign rate_contract_done    = contract_rate_done;
+    assign rate_contract_failed  = contract_rate_failed;
 
 `ifndef SYNTHESIS
     // Lightweight simulation assertion for the Recovery.Speed boundary.  The
