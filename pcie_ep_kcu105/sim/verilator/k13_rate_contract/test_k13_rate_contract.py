@@ -88,13 +88,58 @@ async def issue_rate_request(dut, target):
 
 
 async def pulse_phystatus(dut, cycles=2):
-    """拉高 phy_phystatus `cycles` 拍。确保检测到上升沿。"""
+    """拉高 phy_phystatus `cycles` 拍（仅置位，不验证 FSM 行为）。"""
     dut.phy_phystatus.value = 1
     for _ in range(cycles):
         await RisingEdge(dut.clk)
         await Timer(1, units="ns")
     dut.phy_phystatus.value = 0
     await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+
+
+async def trigger_phystatus_and_complete(dut, expected_new_rate):
+    """在 WAIT_PHYSTATUS 注入 phystatus 上升沿，并显式断言 rate_done 1-cycle pulse。
+
+    时序（与 RTL 对应）：
+      Edge A: phystatus_rising=1 被采样，state_r <= COMMIT_RDY2
+              （此时 rate_done 仍 = 0）
+      Edge B: active_rate_r <= target, rate_done_pulse_r <= 1,
+              state_r <= RDY2_STABLE
+              （此拍之后 rate_done = 1, 1 周期 pulse）
+      Edge C: rate_done_pulse_r <= 0 (default 复位)
+
+    Pre:  state == RC_WAIT_PHYSTATUS, phy_phystatus == 0
+    Post: state == RC_RDY2_STABLE, phy_phystatus == 0,
+          active_rate == expected_new_rate
+    """
+    assert int(dut.dbg_state.value) == RC_WAIT_PHYSTATUS, (
+        f"pre: 应在 RC_WAIT_PHYSTATUS，实测 0x{int(dut.dbg_state.value):x}"
+    )
+    dut.phy_phystatus.value = 1
+    # Edge A：phystatus_rising 触发，state -> COMMIT_RDY2
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    assert int(dut.dbg_state.value) == RC_COMMIT_RDY2, (
+        f"phystatus 上升沿后应进入 COMMIT_RDY2，实测 0x{int(dut.dbg_state.value):x}"
+    )
+    assert int(dut.rate_done.value) == 0, "COMMIT_RDY2 拍 rate_done 必须仍为 0"
+    # Edge B：state -> RDY2_STABLE, rate_done <= 1
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    assert int(dut.rate_done.value) == 1, (
+        "rate_done 必须在 COMMIT_RDY2 -> RDY2_STABLE 跳转变高"
+    )
+    assert int(dut.dbg_state.value) == RC_RDY2_STABLE
+    assert int(dut.active_rate.value) == expected_new_rate, (
+        f"active_rate 未更新为 0x{expected_new_rate:x}"
+    )
+    # Edge C：rate_done <= 0 (default)
+    await RisingEdge(dut.clk)
+    await Timer(1, units="ns")
+    assert int(dut.rate_done.value) == 0, "rate_done 必须是 1 周期 pulse"
+    # 清理
+    dut.phy_phystatus.value = 0
     await Timer(1, units="ns")
 
 
@@ -158,25 +203,10 @@ async def gen1_to_gen3_normal_flow(dut):
     await Timer(1, units="ns")
     assert int(dut.dbg_state.value) == RC_WAIT_PHYSTATUS
 
-    # 注入 phystatus 上升沿
-    await pulse_phystatus(dut, cycles=2)
+    # 注入 phystatus 上升沿，并显式断言 rate_done 1-cycle pulse
+    await trigger_phystatus_and_complete(dut, RATE_GEN3)
 
-    # 等待 COMMIT_RDY2 -> RDY2_STABLE，并捕获 rate_done pulse
-    done_count = 0
-    for _ in range(10):
-        await RisingEdge(dut.clk)
-        await Timer(1, units="ns")
-        if int(dut.rate_done.value) == 1:
-            done_count += 1
-            assert int(dut.dbg_state.value) == RC_COMMIT_RDY2, (
-                f"rate_done pulse 时应在 COMMIT_RDY2，实测 "
-                f"0x{int(dut.dbg_state.value):x}"
-            )
-    assert done_count == 1, (
-        f"rate_done 必须是 1 周期 pulse，实际看到 {done_count} 拍"
-    )
-
-    # 最终稳态
+    # 最终稳态不变量
     assert int(dut.dbg_state.value) == RC_RDY2_STABLE
     assert int(dut.active_rate.value) == RATE_GEN3
     assert int(dut.phy_rate_cmd.value) == RATE_GEN3
@@ -198,8 +228,9 @@ async def gen3_to_gen1_normal_flow(dut):
     # 先把 active_rate 推到 Gen3
     await issue_rate_request(dut, RATE_GEN3)
     await wait_state(dut, RC_APPLY_RDY1)
-    await pulse_phystatus(dut, cycles=2)
-    await wait_state(dut, RC_RDY2_STABLE)
+    await RisingEdge(dut.clk)  # APPLY 1 拍 settle -> WAIT_PHYSTATUS
+    await Timer(1, units="ns")
+    await trigger_phystatus_and_complete(dut, RATE_GEN3)
     assert int(dut.active_rate.value) == RATE_GEN3
 
     # 再发 Gen1 请求
@@ -211,8 +242,9 @@ async def gen3_to_gen1_normal_flow(dut):
     assert int(dut.active_rate.value) == RATE_GEN3, (
         "APPLY 阶段 active_rate 不能变"
     )
-    await pulse_phystatus(dut, cycles=2)
-    await wait_state(dut, RC_RDY2_STABLE, max_cycles=5)
+    await RisingEdge(dut.clk)  # APPLY 1 拍 settle -> WAIT_PHYSTATUS
+    await Timer(1, units="ns")
+    await trigger_phystatus_and_complete(dut, RATE_GEN1)
     assert int(dut.active_rate.value) == RATE_GEN1
     assert int(dut.phy_rate_cmd.value) == RATE_GEN1
     assert int(dut.rate_failed.value) == 0
@@ -275,9 +307,8 @@ async def phystatus_delayed_completes_correctly(dut):
         # force TXEI 仍在生效
         assert int(dut.force_txelecidle.value) == 1
 
-    # 现在才注入 phystatus
-    await pulse_phystatus(dut, cycles=2)
-    await wait_state(dut, RC_RDY2_STABLE, max_cycles=5)
+    # 现在才注入 phystatus，并验证 completion
+    await trigger_phystatus_and_complete(dut, RATE_GEN3)
     assert int(dut.active_rate.value) == RATE_GEN3
 
 
@@ -350,6 +381,7 @@ async def fallback_reserved_state_simulation(dut):
     # 正常 Gen1->Gen3 闭环，确认 FSM 未进入 RC_FALLBACK_WAIT
     await issue_rate_request(dut, RATE_GEN3)
     await wait_state(dut, RC_APPLY_RDY1)
-    await pulse_phystatus(dut, cycles=2)
-    await wait_state(dut, RC_RDY2_STABLE)
+    await RisingEdge(dut.clk)  # APPLY 1 拍 settle -> WAIT_PHYSTATUS
+    await Timer(1, units="ns")
+    await trigger_phystatus_and_complete(dut, RATE_GEN3)
     assert int(dut.dbg_state.value) != RC_FALLBACK_WAIT
