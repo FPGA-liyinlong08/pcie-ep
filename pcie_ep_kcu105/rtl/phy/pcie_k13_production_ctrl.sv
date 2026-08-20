@@ -435,8 +435,12 @@ module pcie_k13_production_ctrl #(
     //     意图补上 TXEI，避免 RX 端在 rate change 前看到非 TXEI 字符
     //   - pre_rate_txeq_active / (Gen3 && state==1 && pre_rate_txeq_ready)：
     //     pre-EQ + QUIESCE 期间的传统窗口
+    // traffic_quiesce is a packet-flow policy and is asserted already in
+    // Recovery.RcvrCfg so the LTSSM can own the TS exchange.  Do not map that
+    // level directly to TXEI or the endpoint hides its TS2 from the partner.
     assign phy_txelecidle = pre_rate_txeq_active ||
-                            speed_traffic_quiesce ||
+                            (speed_traffic_quiesce &&
+                             (speed_state_w >= 3'd2)) ||
                             ((active_target == 2'b10) &&
                              (speed_state_w == 3'd1) &&
                              pre_rate_txeq_ready) ||

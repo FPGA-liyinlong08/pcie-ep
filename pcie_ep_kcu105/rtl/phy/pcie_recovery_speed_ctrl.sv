@@ -51,6 +51,11 @@ module pcie_recovery_speed_ctrl #(
     reg [1:0] pending_speed;
     reg [31:0] timeout_count;
     wire target_speed_legal = retrain_target_speed != 2'b11;
+    // A partner request can arrive in Recovery.RcvrCfg before LTSSM reaches
+    // Recovery.Speed, and link_up is already low by then.  The producer of
+    // retrain_valid is the qualified TS/mailbox semantic boundary; do not
+    // add a second live-link gate here or the request is lost in the handoff.
+    wire retrain_qualified = retrain_valid;
     wire timeout_expired = timeout_count >= (TIMEOUT_LIMIT - 1);
 
     always @* begin
@@ -105,7 +110,7 @@ module pcie_recovery_speed_ctrl #(
             case (state)
                 ST_L0: begin
                     timeout_count <= 32'd0;
-                    if (retrain_valid && link_up) begin
+                    if (retrain_qualified) begin
                         retrain_accept <= 1'b1;
                         if (!target_speed_legal) begin
                             illegal_speed_sticky <= 1'b1;

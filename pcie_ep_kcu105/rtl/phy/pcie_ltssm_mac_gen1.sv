@@ -201,7 +201,12 @@ module pcie_ltssm_mac_gen1 #(
     reg        tx_os_lane_pad;
     reg        tx_os_enable;
     reg  [7:0] tx_os_training_control;
+    // Keep initial Gen1 Polling TS capability at TX_RATE_ID (02).  During a
+    // directed Recovery speed change, advertise the higher-rate capability
+    // together with the speed-change indication; advertising 0e from reset
+    // makes the Xilinx Root Port model reject the initial Gen1 exchange.
     wire [7:0] tx_os_rate_id = TX_RATE_ID |
+        (speed_retrain_active ? 8'h0c : 8'h00) |
         ((speed_retrain_active &&
           ((ltssm_state == RECOVERY_RCVRLOCK) ||
            (ltssm_state == RECOVERY_RCVRCFG))) ? 8'h80 : 8'h00);

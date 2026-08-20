@@ -241,10 +241,16 @@ module kcu105_pcie_ep_gen1_top #(
         end
     endfunction
     assign k13_ts_rate = decode_k13_ts_rate(os_rate_id);
-    // Root Port可在L0主动发送带Speed Change位的TS1。真实硬件会采用这一路，
-    // 不能只依赖Endpoint配置空间的Retrain Link命令。
-    wire k13_partner_retrain_valid = link_up && os_ts1_valid &&
-                                     os_rate_id[7] &&
+    // Root Port可在L0主动发送带目标速率能力的TS1。Xilinx Root Port
+    // 模型在配置空间Retrain后发送Rate ID=8'h0e，但不置bit7；因此不能
+    // 把bit7当成唯一的partner retrain资格。Gen1同速TS只会走same-rate
+    // no-op，目标速率变化才会进入Recovery.Speed。
+    wire k13_partner_retrain_window = link_up ||
+                                      (ltssm_state == 6'd11) ||
+                                      (ltssm_state == 6'd12) ||
+                                      (ltssm_state == 6'd18);
+    wire k13_partner_retrain_valid = k13_partner_retrain_window &&
+                                     os_ts1_valid &&
                                      (k13_ts_rate != 2'b11);
 
     pcie_k13_production_ctrl #(
@@ -394,7 +400,11 @@ module kcu105_pcie_ep_gen1_top #(
         .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
-        .TX_RATE_ID((K13_ENABLE != 0) ? 8'h0e : 8'h02)
+        // Keep the initial Polling/Configuration TS at the K11 Gen1 rate
+        // advertisement.  The K13 retrain path raises the rate capability
+        // in Recovery TS; advertising Gen2/Gen3 bits during first Gen1 link
+        // bring-up makes the Xilinx Root Port model reject the exchange.
+        .TX_RATE_ID(8'h02)
     ) u_ltssm_mac (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .phy_rxdata(phy_rxdata), .phy_rxdatak(phy_rxdatak),
