@@ -225,9 +225,9 @@ if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery progra
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     }
     set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-k13-recovery capture-k13-recovery-wait program-arm-k13-eq capture-k13-eq-wait program-arm-k13-phystatus} ? 512 : ($action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : ($action eq "program-arm-cfg-lanenum-accept" ? 256 : 1024))}] $ila
-    if {$action ni {capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-cfg-complete-wait}} {
-      run_hw_ila $ila
-    }
+    # The wait actions are complete capture transactions: arm the ILA here
+    # before wait_on_hw_ila, otherwise Vivado uploads the previous buffer.
+    run_hw_ila $ila
     puts "K11B3_ILA_ARMED cell=[get_property CELL_NAME $ila] trigger=[get_property NAME [lindex $trigger_probes 0]]"
   }
   puts "K11B3_ILA_PROGRAM_ARM_PASS bitstream=$bit_path mode=$action"
