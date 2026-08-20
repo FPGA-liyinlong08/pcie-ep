@@ -71,6 +71,8 @@ module k13_ltssm_partner_top #(
 );
     wire [7:0] link_number, os_link_number, os_lane_number;
     wire [7:0] os_rate_id, os_training_control;
+    wire [7:0] os_eq_control;
+    wire [23:0] os_eq_data;
     wire os_tx_complete;
     wire [1:0] ltssm_phy_rate;
     wire ltssm_phy_txelecidle;
@@ -178,7 +180,8 @@ module k13_ltssm_partner_top #(
         .ts_is_ts1(os_ts1_valid), .ts_is_ts2(os_ts2_valid),
         .ts_lane(os_lane_number[2:0]), .ts_link(os_link_number),
         .ts_rate(decode_ts_rate(os_rate_id)),
-        .ts_eq_request((os_ts1_valid || os_ts2_valid) && os_rate_id[3]),
+        .ts_eq_request((os_ts1_valid || os_ts2_valid) &&
+                       ((os_eq_control != 8'd0) || (os_eq_data != 24'd0))),
         .expected_lane(3'd0), .expected_link(link_number),
         .reinitialize_gen1(as_mac_in_detect),
         .phy_rate_cmd(k13_rate), .active_rate(k13_active_rate),
@@ -269,7 +272,8 @@ module k13_ltssm_partner_top #(
         .os_link_number(os_link_number), .os_lane_number(os_lane_number),
         .os_rate_id(os_rate_id),
         .os_training_control(os_training_control),
-        .os_tx_complete(os_tx_complete)
+        .os_tx_complete(os_tx_complete),
+        .os_eq_control(os_eq_control), .os_eq_data(os_eq_data)
     );
 
     wire _unused = &{1'b0, traffic_quiesce, cdr_loss_sticky,

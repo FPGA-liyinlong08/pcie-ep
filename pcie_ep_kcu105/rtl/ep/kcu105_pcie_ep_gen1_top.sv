@@ -83,6 +83,8 @@ module kcu105_pcie_ep_gen1_top #(
     wire [1:0] core_target_link_speed;
     wire os_ts1_valid, os_ts2_valid, os_malformed, os_tx_complete;
     wire [7:0] os_link_number, os_lane_number, os_rate_id, os_training_control;
+    wire [7:0] os_eq_control;
+    wire [23:0] os_eq_data;
     wire k13_phy_txelecidle;
     wire [1:0] k13_phy_rate_cmd, k13_active_rate, k13_phy_txeq_ctrl, k13_phy_rxeq_ctrl;
     wire [3:0] k13_phy_txeq_preset, k13_phy_rxeq_txpreset;
@@ -222,7 +224,9 @@ module kcu105_pcie_ep_gen1_top #(
     // At 8.0 GT/s the EQ request is carried by the Gen3 TS EQ fields, not
     // the Gen1/2 Training Control hot-reset bit.  A Gen3-capable TS accepted
     // during retrain starts the phase controller.
-    wire       k13_ts_eq_request = k13_ts_valid && os_rate_id[3];
+    wire       k13_ts_eq_request = k13_ts_valid &&
+                                   ((os_eq_control != 8'd0) ||
+                                    (os_eq_data != 24'd0));
     // pcie_phy:1.0不公开GT CDR lock端口；用PIPE连续RxElecIdle且无RxValid
     // 作为可综合的失锁代理，连续8个phy_pclk才触发，避免单拍空闲误回退。
     wire       k13_phy_cdr_lost = pipe_rst_n && link_up && phy_cdr_loss_observed;
@@ -445,7 +449,8 @@ module kcu105_pcie_ep_gen1_top #(
         .os_ts1_valid(os_ts1_valid), .os_ts2_valid(os_ts2_valid),
         .os_malformed(os_malformed), .os_link_number(os_link_number),
         .os_lane_number(os_lane_number), .os_rate_id(os_rate_id),
-        .os_training_control(os_training_control), .os_tx_complete(os_tx_complete)
+        .os_training_control(os_training_control), .os_tx_complete(os_tx_complete),
+        .os_eq_control(os_eq_control), .os_eq_data(os_eq_data)
     );
 
     k11a_offline_top #(.K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)) u_protocol_core (

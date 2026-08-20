@@ -124,8 +124,12 @@ module pcie_gen3_os_tx (
                                     training_control, rate_id};
                 2'd2: plain_data = {identifier, identifier,
                                     8'h8a, 8'h0c};
-                default: plain_data = {identifier, identifier,
-                                      identifier, identifier};
+                default: begin
+                    // Phase-0 ordered sets use identifiers in the final word.
+                    // The receiver accepts the legal EQ-field replacement
+                    // used by a partner during later equalization phases.
+                    plain_data = {identifier, identifier, identifier, identifier};
+                end
             endcase
             out_data = scrambled_data;
         end

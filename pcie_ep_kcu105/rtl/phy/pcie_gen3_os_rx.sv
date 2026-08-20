@@ -168,11 +168,21 @@ module pcie_gen3_os_rx (
                             default: begin
                                 block_kind <= BLOCK_NONE;
                                 word_index <= 2'd0;
+                                // Gen3 TS1/TS2 symbols 13..15 carry the
+                                // equalization control/data fields.  A
+                                // partner is therefore allowed to replace
+                                // the upper byte of the final 32-bit word;
+                                // the two trailing identifier symbols remain
+                                // the ordered-set discriminator.  Requiring
+                                // all four bytes to be 4A/45 rejected the
+                                // Xilinx Root Port's legal EQ encoding and
+                                // converted every Recovery TS into
+                                // malformed.
                                 if (parse_error ||
                                     ((block_kind == BLOCK_TS1) &&
-                                     (descrambled_data != 32'h4a4a_4a4a)) ||
+                                     (descrambled_data[15:0] != 16'h4a4a)) ||
                                     ((block_kind == BLOCK_TS2) &&
-                                     (descrambled_data != 32'h4545_4545)))
+                                     (descrambled_data[15:0] != 16'h4545)))
                                     malformed <= 1'b1;
                                 else if (block_kind == BLOCK_TS1)
                                     ts1_valid <= 1'b1;

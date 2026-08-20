@@ -94,7 +94,12 @@ module pcie_ltssm_mac_gen1 #(
     output wire [7:0]  os_lane_number,
     output wire [7:0]  os_rate_id,
     output wire [7:0]  os_training_control,
-    output wire        os_tx_complete
+    output wire        os_tx_complete,
+    // Gen3 TS EQ tuple decoded by the ordered-set receiver.  Expose the
+    // semantic fields to the K13 controller; callers must not infer an EQ
+    // request from a Rate ID capability bit.
+    output wire [7:0]  os_eq_control,
+    output wire [23:0] os_eq_data
 );
     localparam [5:0] DETECT_QUIET         = 6'd0;
     localparam [5:0] DETECT_ACTIVE        = 6'd1;
@@ -207,7 +212,7 @@ module pcie_ltssm_mac_gen1 #(
     // makes the Xilinx Root Port model reject the initial Gen1 exchange.
     wire [7:0] tx_os_rate_id = TX_RATE_ID |
         (speed_retrain_active ? 8'h0c : 8'h00) |
-        ((speed_retrain_active &&
+        ((speed_retrain_active && (active_phy_rate != 2'b10) &&
           ((ltssm_state == RECOVERY_RCVRLOCK) ||
            (ltssm_state == RECOVERY_RCVRCFG))) ? 8'h80 : 8'h00);
     wire [31:0] os_tx_data;
@@ -441,6 +446,8 @@ module pcie_ltssm_mac_gen1 #(
     assign os_rate_id = gen3_mode ? gen3_os_rate_id : gen1_os_rate_id;
     assign os_training_control = gen3_mode ? gen3_os_training_control :
                                              gen1_os_training_control;
+    assign os_eq_control = gen3_mode ? gen3_os_eq_control : 8'd0;
+    assign os_eq_data = gen3_mode ? gen3_os_eq_data : 24'd0;
 
     pcie_gen1_os_tx u_os_tx (
         .clk              (phy_pclk),

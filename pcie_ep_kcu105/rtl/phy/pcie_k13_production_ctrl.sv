@@ -438,9 +438,14 @@ module pcie_k13_production_ctrl #(
     // traffic_quiesce is a packet-flow policy and is asserted already in
     // Recovery.RcvrCfg so the LTSSM can own the TS exchange.  Do not map that
     // level directly to TXEI or the endpoint hides its TS2 from the partner.
+    // traffic_quiesce is a protocol/DLL pause, not a PHY electrical-idle
+    // request.  Once the Rate Contract has completed PhyStatus, Recovery
+    // RcvrLock/RcvrCfg must be able to transmit Gen3 TS/EQ ordered sets;
+    // mapping the whole speed-wait interval to TXEI hides those TS from the
+    // peer and strands both LTSSMs in Recovery.Equalization.
     assign phy_txelecidle = pre_rate_txeq_active ||
                             (speed_traffic_quiesce &&
-                             (speed_state_w >= 3'd2)) ||
+                             (speed_state_w == 3'd2)) ||
                             ((active_target == 2'b10) &&
                              (speed_state_w == 3'd1) &&
                              pre_rate_txeq_ready) ||

@@ -1,5 +1,27 @@
 # K13 生产化 PHY Rate-Change 控制架构设计
 
+## 2026-08-20 仿真门更新
+
+许可证已恢复并通过 `27000@wx-linux` 验证。当前可复现的 RTL/行为 Partner 门为：
+
+```text
+K13 PHY Rate Contract       10/10 PASS
+K13 production controller    4/4 PASS
+K13 LTSSM + Partner          2/2 PASS
+K13_ENABLE=0 full-top lint   PASS
+K11-B2 VCS Gen1/config/BAR   PASS
+```
+
+Gen3 EQ 请求已改为使用 Gen3 TS 解析出的 `os_eq_control/os_eq_data`，不再使用
+`Rate ID[3]` 作为 EQ 请求代理。VCS 真实 Xilinx Root-Port 串行回归已完成
+compile/elaboration，并观察到 Endpoint/Root-Port 进入 Recovery、Gen3 rate 和
+`PhyStatus`；但 Vivado 2021.2 导入的 Root-Port GT 仿真模型在 Gen3 仍不释放
+RX reset（PIPE RX 数据保持无效），最终停在 `Recovery.Equalization`。该结果记录为
+仿真模型限制，不作为 KCU105 线缆、J74、Root Port、PERST# 或 REFCLK 的硬件结论。
+
+因此，上板门仍保持关闭：必须先以寄存化 Gen3 Partner/PIPE 行为模型完成 Gate C
+闭环及 fallback 回归，再执行 bitstream、Vivado 物理实现和实板验证。
+
 日期：2026-08-19  
 代码基线：`a803dd76429dca4a4db8be71c6ce1e02f8a57bab`  
 仓库：`FPGA-liyinlong08/pcie-ep`
