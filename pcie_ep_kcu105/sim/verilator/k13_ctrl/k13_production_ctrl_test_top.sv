@@ -68,8 +68,12 @@ module k13_production_ctrl_test_top #(
 
     pcie_k13_production_ctrl #(.K13_ENABLE(1),
                                .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
-                               .SPEED_TIMEOUT_CYCLES(32),
-                               .EQ_TIMEOUT_CYCLES(8),
+                               // EQ phases are deliberately serialized after
+                               // the rate operation; leave the semantic
+                               // Recovery.Speed wait window long enough for
+                               // all four PHY acknowledgements in this model.
+                               .SPEED_TIMEOUT_CYCLES(128),
+                               .EQ_TIMEOUT_CYCLES(16),
                                .GEN1_RELEASE_GAP_CYCLES(GEN1_RELEASE_GAP_CYCLES)) dut (
         .core_clk(core_clk), .core_rst_n(core_rst_n),
         .phy_clk(phy_clk), .phy_rst_n(phy_rst_n), .link_up(link_up),
@@ -167,7 +171,10 @@ module k13_production_ctrl_test_top #(
             // PG239 RXEQ=10 requires both indications.  This responder
             // intentionally models them independently so a done-only pulse
             // cannot create a false EQ pass.
-            if (ctrl_rxeq_ctrl == 2'b10 && os_count == 2'd3) begin
+            // Keep the PHY completion indication asserted while the command
+            // is active.  This models a sampled PG239 completion level and
+            // avoids losing a one-cycle pulse at the phase hand-off edge.
+            if (ctrl_rxeq_ctrl == 2'b10) begin
                 rx_done_r <= 1'b1;
                 rx_adapt_done_r <= !force_rx_done_without_adapt;
             end

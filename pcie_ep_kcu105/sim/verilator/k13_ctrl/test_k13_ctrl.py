@@ -49,6 +49,12 @@ async def production_gen3_speed_eq_path(dut):
             phases.append(phase)
         if int(dut.eq_done.value):
             break
+    # EQ_DONE is registered by the PHY controller; the semantic Recovery
+    # controller commits negotiated_speed on the following clock edge.
+    for _ in range(8):
+        if int(dut.negotiated_speed.value) == 2:
+            break
+        await advance(dut)
     assert int(dut.negotiated_speed.value) == 2
     assert phases == [0, 1, 2, 3, 4]
     assert int(dut.eq_failed.value) == 0

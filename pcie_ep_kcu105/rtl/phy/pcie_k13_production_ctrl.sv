@@ -117,18 +117,34 @@ module pcie_k13_production_ctrl #(
     wire       contract_rate_done;
     wire       contract_rate_failed;
     wire       contract_illegal_target_sticky;
-    // A TS accepted before PhyStatus completion belongs to the old
-    // Recovery.RcvrCfg exchange and must not close the new speed operation.
-    wire       post_rate_peer_speed_ok = ts_accept_w &&
-                                         (speed_state_w == 3'd4) &&
-                                         !contract_rate_done;
+    reg [1:0]  active_target;
+    wire       eq_done_w, eq_failed_w;
+    reg        post_rate_ts_seen;
+    // A TS accepted before RXEQ/EQ completion must remain pending; a one-cycle
+    // acceptance pulse must not close Recovery while the physical operation is
+    // still in progress.
+    wire       post_rate_peer_speed_ok =
+                                         // Normal post-rate completion is
+                                         // held until the accepted TS and
+                                         // Gen3 EQ transaction both finish.
+                                         (post_rate_ts_seen &&
+                                          (speed_state_w == 3'd4) &&
+                                          !contract_rate_done &&
+                                          ((active_target != 2'b10) || eq_done_w)) ||
+                                         // A successful Gen1 fallback has no
+                                         // EQ transaction to wait for.  Let
+                                         // Recovery.FallbackIdle commit the
+                                         // safe physical rate so LTSSM can
+                                         // return to Detect/L0 and issue a
+                                         // fresh partner retrain request.
+                                         ((speed_state_w == 3'd7) &&
+                                          (contract_active_rate == 2'b00));
 
     wire [1:0] eq_phy_txeq_ctrl;
     wire [3:0] eq_phy_txeq_preset;
     wire [5:0] eq_phy_txeq_coeff;
     wire [1:0] eq_phy_rxeq_ctrl;
     wire [3:0] eq_phy_rxeq_txpreset;
-    wire eq_done_w, eq_failed_w;
     reg eq_start_q;
     reg pre_rate_txeq_active;
     reg pre_rate_txeq_ready;
@@ -136,7 +152,6 @@ module pcie_k13_production_ctrl #(
     reg post_rate_rxeq_ready;
     reg post_rate_rxeq_failed;
     reg [31:0] post_rate_rxeq_timeout_count;
-    reg [1:0] active_target;
     // The mailbox request and active_target cross the acceptance edge at
     // different NBA boundaries.  Include the live request while it is
     // present; otherwise the first Recovery.Speed cycle can be interpreted
@@ -211,7 +226,10 @@ module pcie_k13_production_ctrl #(
             .retrain_accept(speed_retrain_accept),
             .phy_cdr_lost(phy_cdr_lost),
             .peer_speed_ok(post_rate_peer_speed_ok),
-            .peer_speed_reject(ts_reject_w),
+            // An EQ rejection is a peer/physical rejection of this speed
+            // operation; route it through the same Gen1 fallback path.
+            .peer_speed_reject(ts_reject_w || eq_failed_w ||
+                                post_rate_rxeq_failed),
             .state(speed_state_w),
             // 协议层状态
             .traffic_quiesce(speed_traffic_quiesce),
@@ -329,13 +347,25 @@ module pcie_k13_production_ctrl #(
             end
         end
 
+        // Preserve the peer TS acceptance across the RXEQ bootstrap window.
+        // The speed controller consumes this level only after EQ completion.
+        always @(posedge phy_clk or negedge phy_rst_n) begin
+            if (!phy_rst_n)
+                post_rate_ts_seen <= 1'b0;
+            else if ((speed_state_w == 3'd0) ||
+                     (active_target != 2'b10))
+                post_rate_ts_seen <= 1'b0;
+            else if ((speed_state_w == 3'd4) && ts_accept_w)
+                post_rate_ts_seen <= 1'b1;
+        end
+
         always @(posedge phy_clk or negedge phy_rst_n) begin
             if (!phy_rst_n)
                 eq_start_q <= 1'b0;
             else begin
                 eq_start_q <= 1'b0;
                 if ((speed_state_w == 3'd4) && (active_target == 2'b10) &&
-                    rxeq_bootstrap_ready && ts_accept_w &&
+                    rxeq_bootstrap_ready && (ts_accept_w || post_rate_ts_seen) &&
                     !eq_active && !eq_done && !eq_failed)
                     eq_start_q <= 1'b1;
             end
@@ -399,6 +429,7 @@ module pcie_k13_production_ctrl #(
         assign post_rate_rxeq_ready = 1'b0;
         assign post_rate_rxeq_failed = 1'b0;
         assign post_rate_rxeq_timeout_count = 32'd0;
+        assign post_rate_ts_seen = 1'b0;
         assign eq_start_q = 1'b0;
         assign eq_start_accept = 1'b0;
         assign eq_active = 1'b0;

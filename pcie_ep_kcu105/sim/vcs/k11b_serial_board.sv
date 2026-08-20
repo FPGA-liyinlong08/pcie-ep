@@ -20,6 +20,7 @@ module board;
     reg  b2_stress;
     reg  k13_retrain_active;
     reg  k13_retrain_monitor_armed;
+    reg  k13_retry_sent;
 
     integer b2_iter;
     integer b2_byte;
@@ -85,6 +86,7 @@ module board;
         b2_stress = $test$plusargs("K11B2_STRESS");
         k13_retrain_active = $test$plusargs("K13_RETRAIN");
         k13_retrain_monitor_armed = 1'b0;
+        k13_retry_sent = 1'b0;
         repeat (500) @(posedge refclk_p);
         sys_rst_n = 1'b1;
         $display("K11B_RESET_RELEASE time_ps=%0t disconnect=%0d", $time,
@@ -590,6 +592,7 @@ module board;
                         k13_seen_phystatus = 1'b0;
                         k13_seen_eq_phase = 5'd0;
                         k13_gen3_pipe_samples = 0;
+                        k13_retry_sent = 1'b0;
                         k13_rp_tx_edges_at_retrain = rp_tx_edge_count[0];
                         k13_ep_tx_edges_at_retrain = ep_tx_edge_count;
                         k13_retrain_monitor_armed = 1'b1;
@@ -620,6 +623,35 @@ module board;
                                (k13_wait_cycles < 20000)) begin
                             @(posedge EP.DUT.phy_pclk);
                             k13_wait_cycles = k13_wait_cycles + 1;
+                            // The first Gen3 attempt may deliberately take
+                            // the RXEQ done-only failure path.  Once the
+                            // endpoint has committed the safe Gen1 fallback,
+                            // model the Root Port's next retrain request so
+                            // the regression covers fallback -> re-rate.
+                            if (!k13_retry_sent &&
+                                EP.DUT.k13_fallback_sticky &&
+                                (EP.DUT.phy_rate == 2'b00) &&
+                                (EP.DUT.k13_speed_state == 3'd0)) begin
+                                RP.cfg_usrapp.TSK_WRITE_CFG_DW(
+                                    32'h3c, 32'h0000_0003, 4'h1);
+                                RP.tx_usrapp.DEFAULT_TAG =
+                                    RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                                RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                                    RP.tx_usrapp.DEFAULT_TAG, 12'h070,
+                                    32'h0000_0003, 4'h1);
+                                RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                                RP.tx_usrapp.DEFAULT_TAG =
+                                    RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                                RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                                    RP.tx_usrapp.DEFAULT_TAG, 12'h050,
+                                    32'h0000_0020, 4'h1);
+                                RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                                RP.cfg_usrapp.TSK_WRITE_CFG_DW(
+                                    32'h34, 32'h0081_0020, 4'hf);
+                                k13_retry_sent = 1'b1;
+                                k13_wait_cycles = 0;
+                                $display("K13_VCS_RETRAIN_RETRY target=3 after_gen1_fallback");
+                            end
                         end
 
                         if (k13_wait_cycles >= 20000) begin

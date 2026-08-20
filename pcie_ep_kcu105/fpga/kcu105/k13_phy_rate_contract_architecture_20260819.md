@@ -25,6 +25,25 @@ KCU105 线缆、J74、Root Port、PERST# 或 REFCLK 的硬件结论。
 因此，上板门仍保持关闭：必须先以寄存化 Gen3 Partner/PIPE 行为模型完成 Gate C
 闭环及 fallback 回归，再执行 bitstream、Vivado 物理实现和实板验证。
 
+### 2026-08-20 修正后的单元门与完整 VCS 结果
+
+本轮提交（提交点 `9258645` 之后）完成了以下语义修正：
+
+- `post_rate_ts_seen` 锁存已接受的 TS，Recovery 不会在 RXEQ/EQ 完成前提交
+  negotiated speed；
+- RXEQ bootstrap 的 `done=1/adapt_done=0` 接入统一 peer-reject/fallback；
+- Gen1 fallback 的物理完成可提交 `active_rate=Gen1`，随后允许新的 Root-Port
+  retrain 请求；
+- Verilator K13 production controller 回归保持 `4/4 PASS`。
+
+真实 Xilinx Root-Port VCS 已观察到第一次失败路径完整下行：
+`PhyStatus -> Gen3 -> RXEQ done-only -> Gen1 fallback`。Gate C 激励随后重新写入
+Root-Port Retrain；第二次 Gen3 TS1/TS2 已被 Endpoint 接收，但当前 K11 LTSSM 在
+fallback 后仍停留在 Recovery.RcvrCfg/Recovery.Speed 边界，未重新产生
+`recovery_speed_ready`，因此尚未达到 Gen3 L0/EqualizationComplete。该分叉属于
+LTSSM fallback 后重建上下文/重新进入 Recovery.Speed 的集成问题，不是 QPLL 锁定
+或线缆、J74、PERST#/REFCLK 问题。bitstream 门继续保持关闭。
+
 ### 2026-08-20 完整 VCS 首个分叉定位
 
 在同一套 Vivado 2021.2 XPM、`glbl.v`、IP sim source、GT/SecureIP simlib 和真实
