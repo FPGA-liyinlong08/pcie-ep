@@ -637,14 +637,13 @@ if {$ila_debug} {
   # USERRATESTART 和 RXRATE。后几项用于区分“QPLL 被 rate-change
   # 逻辑主动复位但未恢复”与“仅仅是 RX CDR 未锁定”，并还原完整
   # PCIEUSERRATE handshake。
+  # Vivado 2021.2 may prune PCIEUSERRATE outputs that are not exported by
+  # this generated PHY wrapper. Keep the probe width stable with the compact
+  # K13 contract bus; a future wrapper exposing raw pins takes precedence.
   set phy_probe_nets [list \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_n_pipe] \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_rise_pipe] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/pipe_rst_n$}] \
-    # Vivado 2021.2 may prune PCIEUSERRATE outputs that are not exported by
-    # this generated PHY wrapper.  Keep the probe width stable with the
-    # compact K13 contract bus; a future wrapper exposing the raw pins will
-    # automatically take precedence via the first candidate.
     [phy_boundary_net_first [list \
       {^u_endpoint/phy_txdata_valid$} \
       {^u_endpoint/u_phy_wrapper/phy_txdata_valid$}]] \
