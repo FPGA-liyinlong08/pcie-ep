@@ -13,3 +13,5 @@ vcs/build/
 *.log
 *.jou
 vcs_run*.out
+*.vcd
+*.fst

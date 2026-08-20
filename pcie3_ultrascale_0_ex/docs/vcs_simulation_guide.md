@@ -29,13 +29,15 @@
 
 | 项目 | 当前配置 |
 |---|---|
-| Vivado | `/home/Xilinx/Vivado/2023.1` |
+| Vivado | `/home/Xilinx/Vivado/2021.2` |
 | VCS | `/home/synopsys/vcs-mx/O-2018.09-SP2` |
 | VCS 架构兼容设置 | `VCS_ARCH_OVERRIDE=linux` |
 | Xilinx VCS 仿真库 | `/home/wx/Documents/vcs_compile_simlib` |
 | License Server | `27000@wx-linux` |
 | VCS 运行脚本 | `vcs/run_vcs.sh` |
 | 仿真输出目录 | `vcs/build` |
+
+版本核对结论：本 demo 的 `pcie3_ultrascale_0_ex.xpr`、PCIe IP 的 XCI 参数和已生成的 IP 仿真源均来自 Vivado 2021.2。此前脚本默认从 Vivado 2023.1 取 `xpm_cdc.sv`/`glbl.v`，会形成混合版本环境；当前已统一改为 Vivado 2021.2。`vcs_compile_simlib` 中的 `unisims_ver`、`secureip` 和 Xilinx IP 库也应与该版本匹配。
 
 旧版本 VCS 在当前 Linux 环境中需要显式使用 `-full64`，并设置：
 
@@ -75,6 +77,30 @@ export PATH="$VCS_HOME/bin:$PATH"
 TESTNAME=其他测试名 ./vcs/run_vcs.sh clean
 VCS_LICENSE_SERVER=27000@其他服务器 ./vcs/run_vcs.sh clean
 ```
+
+需要查看 PCIe Gen3 训练过程时，打开定向 VCD 和 LTSSM trace：
+
+```bash
+WAVEFORM=1 ./vcs/run_vcs.sh clean
+```
+
+输出文件为 `vcs/build/pcie_training.vcd` 和 `vcs/build/simulate.log`。VCD 可以使用 GTKWave 打开：
+
+```bash
+gtkwave vcs/build/pcie_training.vcd
+```
+
+波形重点观察 `cfg_ltssm_state`、`cfg_current_speed`、`cfg_negotiated_width`、`cfg_phy_link_status`、`pipe_tx_rate_i`、`pipe_tx_elec_idle`、`pipe_rx_elec_idle`、`gt_pcierategen3_o` 和 `pipe_rx_phy_status`。当前 testbench 还会在日志中打印 EP/RP 的 LTSSM 状态变化。
+
+本次波形/trace 的关键时间点如下，时间以仿真时间近似表示：
+
+- 约 `0~143 us`：EP/RP 经过 Detect、Polling 和 Configuration，`speed=1`。
+- 约 `147.8 us`：`pipe_tx_rate_i` 从 `00` 变化为 `10`，随后 `gt_pcierategen3_o` 出现速率切换活动。
+- 约 `168.4~190.9 us`：EP/RP 出现 `LTSSM=0x28/0x29`，对应 Gen3 Recovery/Equalization 相关阶段。
+- 约 `192.3 us`：EP/RP 的 `cfg_current_speed` 从 `1` 变为 `4`，即 Gen3/8.0 GT/s 编码。
+- 约 `193.4 us`：`user_lnk_up`/Transaction Link Up，之后 PIO 访问通过。
+
+因此，当前波形能看到与“低速初始建链 → PHY 速率切换 → Gen3 均衡 → Gen3 Link Up”一致的过程。需要注意，Xilinx 模型的 LTSSM 数值编码是 vendor-specific，初始低速阶段不会通过 `user_lnk_up` 单独标出一个可见的 `L0@2.5`；应结合 LTSSM、`cfg_phy_link_status`、PIPE rate 和 Electrical Idle 信号共同判断。
 
 脚本中的默认变量包括 `VCS_ROOT`、`VIVADO_ROOT`、`SIMLIB_DIR`、`LICENSE_SERVER`、`BUILD_DIR` 和 `TESTNAME`。换到其他 demo 时，优先修改这些变量或通过环境变量传入，不要把工具路径散落在多个命令中。
 

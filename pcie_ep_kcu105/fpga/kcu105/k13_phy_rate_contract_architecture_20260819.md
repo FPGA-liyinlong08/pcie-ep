@@ -15,16 +15,212 @@ K11-B2 VCS Gen1/config/BAR   PASS
 Gen3 EQ 请求已改为使用 Gen3 TS 解析出的 `os_eq_control/os_eq_data`，不再使用
 `Rate ID[3]` 作为 EQ 请求代理。VCS 真实 Xilinx Root-Port 串行回归已完成
 compile/elaboration，并观察到 Endpoint/Root-Port 进入 Recovery、Gen3 rate 和
-`PhyStatus`；但 Vivado 2021.2 导入的 Root-Port GT 仿真模型在 Gen3 仍不释放
-RX reset（PIPE RX 数据保持无效），最终停在 `Recovery.Equalization`。该结果记录为
-仿真模型限制，不作为 KCU105 线缆、J74、Root Port、PERST# 或 REFCLK 的硬件结论。
+`PhyStatus`；K13 集成路径随后出现 Gen3 PIPE RX 数据，但 TS/EQ 没有收敛，
+最终停在 `Recovery.RcvrCfg`。该 K13 集成结果不能再标记为“Vivado 模型限制”：
+同一 Vivado 2021.2 体系下的
+官方 `pcie3_ultrascale_0_ex` demo 已经完成 Gen3 Link Up。当前应继续定位 K13
+PHY/IP wrapper、reset/rate 接线和训练数据路径的第一个分叉；该结果仍不作为
+KCU105 线缆、J74、Root Port、PERST# 或 REFCLK 的硬件结论。
 
 因此，上板门仍保持关闭：必须先以寄存化 Gen3 Partner/PIPE 行为模型完成 Gate C
 闭环及 fallback 回归，再执行 bitstream、Vivado 物理实现和实板验证。
 
+### 2026-08-20 完整 VCS 首个分叉定位
+
+在同一套 Vivado 2021.2 XPM、`glbl.v`、IP sim source、GT/SecureIP simlib 和真实
+Xilinx Root-Port 下执行：
+
+```text
+K13_ENABLE=1 K13_VCS_RETRAIN=1 K11B2_MODE=1
+./sim/vcs/run_k11b_serial.sh
+```
+
+结果分两步记录：
+
+```text
+K11-B2 Gen1 建链/枚举/BAR       PASS
+Gen1 Recovery -> Recovery.Speed PASS
+phy_rate_cmd=Gen3               PASS
+PhyStatus                      PASS
+active_rate=Gen3                PASS
+Gen3 PIPE RX data_valid         PASS（切速后出现）
+完整 TS/EQ/L0                   FAIL
+```
+
+首轮默认 `K13_RXEQ_BOOTSTRAP=1` 的关键事件为：
+
+```text
+200707604 ps  PhyStatus=1，contract 完成
+200903529 ps  Gen3 parser 解出合法 TS1：link=9f、lane=0、Rate ID=0e
+之后          speed_ctrl 接受 peer TS 并回到 L0 上下文，但 eq_start_q 未启动
+最终          eq_phase=7、eq_done=0、ts_accept=0（测试窗口报告值）
+```
+
+第一个 RTL 时序分叉不是 QPLL 或 Gen3 RX reset：`active_rate=2`、`gen3_mode=1`，
+而 `eq_start_q` 同时要求 `post_rate_rxeq_ready`。本次真实 PHY 行为模型的
+`phy_rxeq_done` 会到达，但 `phy_rxeq_adapt_done` 保持 0；因此 bootstrap 永远
+不能置 ready，而 speed controller 又已经因 TS 完成 Recovery Idle/L0 的语义闭环，
+EQ 启动窗口被错过。
+
+按计划临时以 `K13_RXEQ_BOOTSTRAP=0` 复跑纯切速门后，结果进一步收敛为：
+
+```text
+Gen3 TS1/TS2 parser             PASS
+EQ phase 0/1 启动               PASS
+RXEQ phase 1                    FAIL（done=1，adapt_done=0）
+完整 Gen3 L0                    NOT PASS
+```
+
+这证明关闭 bootstrap 可以验证 rate/PhyStatus/TS 数据路径，但不能把该配置标记为
+完整 EQ PASS。下一步应在不伪造 `adapt_done`、不增加 EQ workaround 的前提下，
+重构 Recovery Idle 与 RXEQ/EQ 的握手：未完成 RXEQ 时保持 Recovery、锁存已接受
+的 peer TS，待 RXEQ 合法完成后再启动 EQ；若 RXEQ 明确拒绝或超时，则走统一
+Gen1 fallback。该修正完成前，不生成“Gen3 L0 PASS” bit，也不进入上板验证。
+
 日期：2026-08-19  
 代码基线：`a803dd76429dca4a4db8be71c6ce1e02f8a57bab`  
 仓库：`FPGA-liyinlong08/pcie-ep`
+
+## 2026-08-20 当前状态记录（VCS 与 KCU105 ILA）
+
+本节记录当前真实证据，避免把行为级 VCS 结果、PHY 物理锁定和完整 PCIe Gen3
+链路闭环混为一个 PASS。
+
+### 当前实板 ILA
+
+最新抓取文件：
+
+```text
+fpga/kcu105/build_k13_gen3_ila_rxeq_off/capture/iladata_retain.csv
+fpga/kcu105/build_k13_gen3_ila_rxeq_off/capture/iladata_qplllock_0to1_2608202001.csv
+```
+
+`iladata_retain.csv` 的结果：
+
+```text
+Recovery.Speed                  PASS
+Gen3 pre-rate TXEQ              PASS（phy_txeq_done=1）
+rate request / RATE_WAIT        PASS（进入等待PHY完成）
+phy_rate_cmd -> Gen3            本窗口尚未采到
+QPLL1LOCK                       全程为1
+PhyStatus                       未观察到
+LTSSM                            仍停在 Recovery.Speed
+```
+
+原因是该次采样在约 2344 点接受 rate request，而正常切速保留 2500 个
+`phy_pclk` 的 Golden gap；4096 点窗口在真正的 `phy_rate_cmd=Gen3` 之前结束。
+
+`iladata_qplllock_0to1_2608202001.csv` 的结果：
+
+```text
+phy_rate / rxrate                采样开始时已为 Gen3（2）
+QPLL1LOCK                        sample 2048: 0 -> 1
+PCIERATEGEN3                     sample 2060 -> 2260 有效脉冲
+QPLL1RESET / QPLL1PD             本探针窗口均为0
+RXRESETDONE                      sample 2259: 1 -> 0，之后未恢复
+PhyStatus                        0
+TS accept / EQ active            0
+LTSSM                            全窗口 Recovery.Speed (0x12)
+```
+
+这证明 QPLL1LOCK 可以恢复到 1，但不等于 Gen1→Gen3 已闭环。当前失败分叉位于
+QPLL lock 之后的 RX reset/PhyStatus/Recovery.Speed 退出路径；本次没有观察到
+`QPLL1RESET`，因此不能仅凭该文件确认正确的 QPLL reset→unlock→relock 因果链。
+该文件起始时 `fallback/timeout/eq_failed` sticky 位已经为 1，下一轮判断前必须
+先经 Detect/重启清除旧上下文。
+
+当前实板结论：
+
+```text
+QPLL1LOCK recovery       PASS（观测到0→1）
+Gen3 rate command         PASS（第二份文件开始时已为2）
+PhyStatus completion      FAIL / 未发生
+Recovery.Speed exit       FAIL
+完整 Gen1→Gen3 L0         NOT PASS
+```
+
+### VCS 仿真已知问题与边界
+
+已完成的 VCS 结果必须按以下边界解释：
+
+1. K13 Rate Contract 单元和窄场景 controller 仿真通过了 Gen1→Gen3 请求、TXEQ
+   preset 顺序及行为模型 `PhyStatus` 完成。这只证明 semantic contract 的时序，
+   不证明 GT/QPLL 物理锁定或完整 PCIe L0。
+2. 真实 Endpoint + Xilinx Root-Port/GT 行为模型已经 compile/elaboration 通过，
+   可观察 Recovery、Gen3 rate、`PhyStatus` 和切速后的 PIPE RX 数据；当前联合
+   仿真失败在 K13 自有 TS/EQ 握手：默认 RXEQ bootstrap 尚未完成时，speed controller
+   已接受 peer TS 并关闭 Recovery，导致 EQ 启动窗口错过；关闭 bootstrap 后又在
+   RXEQ phase 1 看到 `done=1, adapt_done=0`，因此不能伪造完整 EQ/L0 PASS。这是
+   K13 时序/PHY 合法完成条件尚未闭环，不是线缆、J74、Root Port、PERST# 或 REFCLK
+   的结论。
+3. 早期 VCS 封装把 `qpll1lock_us_out/qpll1lock_usp_out` 等端口固定为 0，因而旧的
+   VCS PASS 不能推导 QPLL 已锁定。当前工程已增加 QPLL observability，但行为模型
+   仍不是 GT/QPLL 的物理锁定模型，QPLL 结论必须以实板 ILA 为准。
+4. 早期完整联合仿真还暴露了 Gen3 TS/EQ 边界问题：Rate ID capability 位曾被当作
+   EQ request 代理，以及独立 Partner/解析器可能形成零时间环路。现已改为解析
+   `os_eq_control/os_eq_data`，Partner 发送由独立脚本化状态机驱动；当前已实证
+   Gen3 TS parser 和 EQ phase 0/1 的启动，但 RXEQ 合法完成、phase 2/3、
+   Recovery.Idle、Gen3 L0 TLP/DLL/BAR 仍未完成。
+
+已解决的控制层问题：
+
+```text
+rate_req_ready 不再由实时 link_up 门控
+rate_failed 不再作为阻塞 fallback 的 sticky 完成电平
+same-rate 请求返回单拍 rate_done
+普通升速保留 Golden gap，fallback 走统一 Rate Contract
+phy_rate_cmd 与 active_rate 已拆分
+QPLL lock 已加入 VCS/ILA 观测路径
+```
+
+下一轮硬件抓取应在干净 Detect/Gen1 上下文开始，使用至少 8192 点窗口，并同时
+观察 `phy_rate_cmd`、`active_rate`、`PCIERATEGEN3`、GT primitive 的
+`QPLL1RESET/QPLL1PD/QPLL1LOCK`、`RXRESETDONE`、`PhyStatus` 和 LTSSM。只有看到
+`phy_rate_cmd=Gen3 → QPLL 1→0→1 → PhyStatus → active_rate=Gen3 → 离开
+Recovery.Speed`，才能进入真实 Gen3 EQ/L0 验证。
+
+### 官方 `pcie3_ultrascale_0_ex` VCS 训练波形的借鉴
+
+线程 `codex://threads/01a01e97-182a-7d40-bb9e-e38467b7f467` 使用官方
+`pcie3_ultrascale_0` Endpoint + Xilinx UltraScale Root-Port example top，在
+Vivado 2021.2 VCS 仿真库和完整 `board` testbench 下导出了 EP/RP 两端训练信号。
+该波形观察到：
+
+```text
+0~143 us       Detect/Polling/Configuration，speed=1
+147.8 us       pipe_tx_rate_i: 00 -> 10，Gen3 rate 控制启动
+168.4~190.9 us LTSSM 进入 0x28/0x29，Recovery/Equalization 相关阶段
+192.3 us       cfg_current_speed: 1 -> 4（8.0 GT/s）
+193.4 us       user_lnk_up，PIO 访问通过
+```
+
+它对本工程完整 VCS 的直接借鉴不是“把 demo 的 PASS 直接等同于 K13 PASS”，而是
+提供了一个已知可工作的**仿真环境基线和事件顺序基线**：
+
+1. 官方 demo 的 Endpoint/RP/GT 模型能完成 Gen3 RX 训练并最终 Link Up。因此我们
+   之前完整 K13 VCS 停在 `Recovery.Equalization`，不能再笼统归因于“Vivado
+   Gen3 模型必然不支持 RX”。两边现在确认使用同一 Vivado 2021.2 体系，下一步
+   应对比 PHY/IP 生成版本、GT wrapper、simlib 实例、reset/clock/rate 接线和
+   Endpoint 数据路径的差异。
+2. demo 的 Gen3 Link Up 由官方 hard-IP LTSSM/PCS/EQ 自动完成，不能证明我们自有
+   `pcie_k13_production_ctrl`、Rate Contract、TS parser 或自有 MAC 的语义正确性。
+   它应作为 Partner/PHY 模型资格门，不能替代 K13 控制器集成门。
+3. K13 完整 VCS 应复用相同的观测方法：同时记录 EP/RP `cfg_ltssm_state`、
+   `cfg_current_speed`、`cfg_negotiated_width`、`cfg_phy_link_status`、
+   `pipe_tx_rate_i`、TX/RX Electrical Idle、`PCIERATEGEN3`、`PhyStatus` 和
+   `user_lnk_up`，并用第一处分叉事件比较，而不是只看最终 `PhyStatus`。
+4. 推荐新增一个“模型资格/适配”阶段：先在同一 VCS/Vivado simlib 下复跑官方 demo，
+   再保留官方 Root-Port/GT Partner，只替换为 K13 Endpoint；若 demo 通过而 K13
+   仍停在 Equalization，问题就收敛到 K13 的 rate/reset、RX reset release、TS/EQ
+   parser 或 128b/130b 接口，而不是主机链路环境。
+5. demo 工程还给出了完整 source-list 的最低要求：`board.v`、`imports/*.v`、
+   IP `sim/` wrapper、GT/XPM、`glbl.v` 和 `secureip/unisims_ver/xpm` 预编译库。
+   这可用于复核 K13 VCS 的源清单，但不能用“compile/elaboration PASS”替代训练
+   波形和 L0 断言。
+
+因此，官方 demo 将此前 VCS 结论从“可能是模型限制”进一步收敛为：**同一
+Vivado 2021.2 环境本身具备 Gen3 训练能力；K13 完整仿真应定位其与官方模型在
+PHY/IP wrapper、reset、rate 握手、RX reset 释放和训练数据路径上的第一个差异。**
 
 ## 1. 背景与已闭环事实
 

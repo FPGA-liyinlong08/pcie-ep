@@ -9,9 +9,10 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DEMO_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 BUILD_DIR=${BUILD_DIR:-$SCRIPT_DIR/build}
 TESTNAME=${TESTNAME:-pio_writeReadBack_test0}
+WAVEFORM=${WAVEFORM:-0}
 
 VCS_ROOT=${VCS_ROOT:-/home/synopsys/vcs-mx/O-2018.09-SP2}
-VIVADO_ROOT=${VIVADO_ROOT:-/home/Xilinx/Vivado/2023.1}
+VIVADO_ROOT=${VIVADO_ROOT:-/home/Xilinx/Vivado/2021.2}
 SIMLIB_DIR=${XILINX_VCS_SIMLIB:-/home/wx/Documents/vcs_compile_simlib}
 LICENSE_SERVER=${VCS_LICENSE_SERVER:-27000@wx-linux}
 
@@ -46,7 +47,7 @@ cd "$BUILD_DIR"
 
 if [[ "${1:-}" == "clean" ]]; then
   rm -rf "$BUILD_DIR/vcs_lib" csrc board_simv board_simv.daidir ucli.key 64
-  rm -f vlogan.log elaborate.log simulate.log synopsys_sim.setup
+  rm -f vlogan.log elaborate.log simulate.log waveform.log pcie_training.vcd synopsys_sim.setup
   mkdir -p "$BUILD_DIR/vcs_lib/xil_defaultlib"
 fi
 
@@ -74,6 +75,10 @@ vcs -full64 -t ps -debug_acc+pp+dmptf -licqueue \
   -l elaborate.log -o board_simv xil_defaultlib.board xil_defaultlib.glbl
 
 echo "[VCS] running TESTNAME=$TESTNAME"
-./board_simv -licqueue -l simulate.log +TESTNAME="$TESTNAME"
+SIM_ARGS=(+TESTNAME="$TESTNAME")
+if [[ "$WAVEFORM" == "1" ]]; then
+  SIM_ARGS+=(+DUMP_WAVEFORM +TRACE_LTSSM)
+fi
+./board_simv -licqueue -l simulate.log "${SIM_ARGS[@]}"
 
 echo "[VCS] completed; log: $BUILD_DIR/simulate.log"

@@ -123,6 +123,74 @@ module board;
  wire [5:0]     cfg_ltssm_state;
  assign cfg_ltssm_state   =  board.EP.pcie3_ultrascale_0_i.inst.cfg_ltssm_state;
 
+ wire [5:0]     rp_cfg_ltssm_state;
+ wire [2:0]     ep_cfg_current_speed;
+ wire [3:0]     ep_cfg_negotiated_width;
+ wire [1:0]     ep_cfg_phy_link_status;
+ wire           ep_cfg_phy_link_down;
+ wire           ep_user_lnk_up;
+ wire [2:0]     rp_cfg_current_speed;
+ wire [3:0]     rp_cfg_negotiated_width;
+ wire [1:0]     rp_cfg_phy_link_status;
+ wire           rp_cfg_phy_link_down;
+ wire           rp_user_lnk_up;
+
+ assign rp_cfg_ltssm_state = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.cfg_ltssm_state;
+ assign ep_cfg_current_speed = EP.pcie3_ultrascale_0_i.inst.cfg_current_speed;
+ assign ep_cfg_negotiated_width = EP.pcie3_ultrascale_0_i.inst.cfg_negotiated_width;
+ assign ep_cfg_phy_link_status = EP.pcie3_ultrascale_0_i.inst.cfg_phy_link_status;
+ assign ep_cfg_phy_link_down = EP.pcie3_ultrascale_0_i.inst.cfg_phy_link_down;
+ assign ep_user_lnk_up = EP.user_lnk_up;
+ assign rp_cfg_current_speed = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.cfg_current_speed;
+ assign rp_cfg_negotiated_width = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.cfg_negotiated_width;
+ assign rp_cfg_phy_link_status = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.cfg_phy_link_status;
+ assign rp_cfg_phy_link_down = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.cfg_phy_link_down;
+ assign rp_user_lnk_up = RP.user_lnk_up;
+
+ // Optional targeted waveform dump for PCIe Gen3 link training.
+ // Enable with +DUMP_WAVEFORM. The output is written in the current run directory.
+ initial begin
+   if ($test$plusargs("DUMP_WAVEFORM")) begin
+     $dumpfile("pcie_training.vcd");
+     $dumpvars(0, cfg_ltssm_state);
+     $dumpvars(0, rp_cfg_ltssm_state);
+     $dumpvars(0, ep_cfg_current_speed);
+     $dumpvars(0, ep_cfg_negotiated_width);
+     $dumpvars(0, ep_cfg_phy_link_status);
+     $dumpvars(0, ep_cfg_phy_link_down);
+     $dumpvars(0, ep_user_lnk_up);
+     $dumpvars(0, rp_cfg_current_speed);
+     $dumpvars(0, rp_cfg_negotiated_width);
+     $dumpvars(0, rp_cfg_phy_link_status);
+     $dumpvars(0, rp_cfg_phy_link_down);
+     $dumpvars(0, rp_user_lnk_up);
+     $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.pipe_tx_rate_i);
+     $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.pipe_tx_elec_idle);
+     $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.pipe_rx_elec_idle);
+     $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.gt_pcierategen3_o);
+     $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.pipe_rx_phy_status);
+   end
+ end
+
+ reg trace_ltssm;
+ initial trace_ltssm = $test$plusargs("TRACE_LTSSM");
+
+ always @(cfg_ltssm_state) begin
+   if (trace_ltssm)
+     $display("[%t] EP LTSSM=0x%02h speed=%0d width=%0d phy_status=%b phy_down=%b link_up=%b",
+              $realtime, cfg_ltssm_state, ep_cfg_current_speed,
+              ep_cfg_negotiated_width, ep_cfg_phy_link_status,
+              ep_cfg_phy_link_down, ep_user_lnk_up);
+ end
+
+ always @(rp_cfg_ltssm_state) begin
+   if (trace_ltssm)
+     $display("[%t] RP LTSSM=0x%02h speed=%0d width=%0d phy_status=%b phy_down=%b link_up=%b",
+              $realtime, rp_cfg_ltssm_state, rp_cfg_current_speed,
+              rp_cfg_negotiated_width, rp_cfg_phy_link_status,
+              rp_cfg_phy_link_down, rp_user_lnk_up);
+ end
+
  
 
  
