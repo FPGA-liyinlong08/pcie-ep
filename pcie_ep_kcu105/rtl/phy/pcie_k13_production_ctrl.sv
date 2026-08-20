@@ -94,6 +94,7 @@ module pcie_k13_production_ctrl #(
 
     // 内部 TS 仲裁（来自 u_ts_guard 的输出，仅在 K13 enabled branch 驱动）
     wire       ts_accept_w;
+    wire       ts2_accept_w;   // 仅 TS2 合法——speed_ctrl 完成 + EQ 启动的真正 gate
     wire       ts_reject_w;
 
     // Recovery speed controller → contract 的 semantic handshake
@@ -176,6 +177,7 @@ module pcie_k13_production_ctrl #(
                                                    active_target),
             .ts_eq_request(ts_eq_request), .expected_lane(expected_lane),
             .expected_link(expected_link), .ts_accept(ts_accept_w),
+            .ts2_accept(ts2_accept_w),
             .ts_reject(ts_reject_w), .malformed_sticky(ts_malformed),
             .illegal_rate_sticky(ts_illegal_rate),
             .lane_link_mismatch_sticky(ts_lane_link_mismatch)
@@ -199,7 +201,7 @@ module pcie_k13_production_ctrl #(
             // 内部诊断
             .retrain_accept(speed_retrain_accept),
             .phy_cdr_lost(phy_cdr_lost),
-            .peer_speed_ok(ts_accept_w), .peer_speed_reject(ts_reject_w),
+            .peer_speed_ok(ts2_accept_w), .peer_speed_reject(ts_reject_w),
             .state(speed_state_w),
             // 协议层状态
             .traffic_quiesce(speed_traffic_quiesce),
@@ -321,7 +323,7 @@ module pcie_k13_production_ctrl #(
             else begin
                 eq_start_q <= 1'b0;
                 if ((speed_state_w == 3'd4) && (active_target == 2'b10) &&
-                    rxeq_bootstrap_ready && ts_accept_w &&
+                    rxeq_bootstrap_ready && ts2_accept_w &&
                     !eq_active && !eq_done && !eq_failed)
                     eq_start_q <= 1'b1;
             end
@@ -443,9 +445,13 @@ module pcie_k13_production_ctrl #(
     assign recovery_active = speed_recovery_active || eq_active ||
                              pre_rate_txeq_active || post_rate_rxeq_active ||
                              contract_rate_busy;
-    // recovery_speed_done：speed_state 进入 ST_RECOVERY_IDLE (3'd4) 或
-    // ST_FALLBACK_IDLE (3'd7) 即表示物理切速完成、等对端 TS / link stable
-    assign recovery_speed_done = (speed_state_w == 3'd4) ||
+    // recovery_speed_done：speed_state 进入 ST_L0 (3'd0) 或 ST_FALLBACK_IDLE
+    // (3'd7) 才表示物理切速真正完成。ST_RECOVERY_IDLE (3'd4) 只是合同协商
+    // 完、speed_ctrl 进入等 peer_speed_ok 的过渡态——若把它也算 done,
+    // LTSSM 会在进 RECOVERY_SPEED 同一拍就退到 RCVRLOCK, partner 还没发完
+    // EIEOS+TS1, ts_accept_w 永远不上升, speed_ctrl 走 2048 cycle timeout
+    // → ST_FALLBACK_REQUEST, 整个 Gen3 切速失败。
+    assign recovery_speed_done = (speed_state_w == 3'd0) ||
                                  (speed_state_w == 3'd7);
     assign negotiated_speed = post_rate_rxeq_failed ? 2'b00 : speed_negotiated;
     assign speed_state = speed_state_w;
@@ -467,21 +473,23 @@ module pcie_k13_production_ctrl #(
     // Lightweight simulation assertion for the Recovery.Speed boundary.  The
     // Python directed test also checks this externally, but keeping the
     // invariant beside the mux catches regressions in any simulator or top.
-    reg txelecidle_window_q;
-    always @(posedge phy_clk or negedge phy_rst_n) begin
-        if (!phy_rst_n) begin
-            txelecidle_window_q <= 1'b0;
-        end else begin
-            if (txelecidle_window_q && !phy_txelecidle && !phy_phystatus)
-                $error("K13 Recovery.Speed TXELECIDLE gap before PhyStatus");
-            if (phy_phystatus)
-                txelecidle_window_q <= 1'b0;
-            else if ((active_target == 2'b10) &&
-                     (pre_rate_txeq_active || (speed_state_w == 3'd2)))
-                txelecidle_window_q <= 1'b1;
-            else if ((active_target != 2'b10) || (speed_state_w == 3'd0))
-                txelecidle_window_q <= 1'b0;
-        end
+    //
+    // 组合 window：open iff 任一 active transition 还在进行
+    //   - pre_rate_txeq_active:    TXEQ 还在跑
+    //   - contract_rate_busy:      contract 状态机在 transition
+    //   - speed_state_w == 1..4:   speed ctrl 还在 recovery (QUIESCE/RATE_REQUEST/
+    //                               RATE_WAIT/RECOVERY_IDLE)
+    // 不再用 reg + NBA 的 stale window_q (会在 RECOVERY_IDLE→L0 跳变
+    // 的那一拍误触发)。组合检查任何时刻 window_open=1 但
+    // phy_txelecidle 意外掉到 0 且 phystatus 还没到的真 bug。
+    wire txelecidle_window = pre_rate_txeq_active || contract_rate_busy ||
+                             (speed_state_w == 3'd1) ||
+                             (speed_state_w == 3'd2) ||
+                             (speed_state_w == 3'd3) ||
+                             (speed_state_w == 3'd4);
+    always @* begin
+        if (txelecidle_window && !phy_txelecidle && !phy_phystatus)
+            $error("K13 Recovery.Speed TXELECIDLE gap before PhyStatus");
     end
 `endif
 endmodule

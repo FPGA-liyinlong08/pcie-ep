@@ -9,6 +9,7 @@ K13_RXEQ_BOOTSTRAP ?= 1
 COMPILE_ARGS += -GK13_RXEQ_BOOTSTRAP=$(K13_RXEQ_BOOTSTRAP)
 VERILOG_SOURCES := \
 	$(PROJECT_DIR)/rtl/common/pcie_retrain_cdc_mailbox.sv \
+	$(PROJECT_DIR)/rtl/phy/pcie_phy_rate_contract.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_recovery_speed_ctrl.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_equalization_ctrl.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_recovery_ts_guard.sv \

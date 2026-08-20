@@ -18,6 +18,7 @@ module pcie_recovery_ts_guard (
     input wire [2:0] expected_lane,
     input wire [7:0] expected_link,
     output reg       ts_accept,
+    output reg       ts2_accept,   // 仅 TS2 合法时拉高——speed_ctrl 完成 / EQ 启动都应等 TS2
     output reg       ts_reject,
     output reg       malformed_sticky,
     output reg       illegal_rate_sticky,
@@ -33,16 +34,25 @@ module pcie_recovery_ts_guard (
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ts_accept <= 1'b0;
+            ts2_accept <= 1'b0;
             ts_reject <= 1'b0;
             malformed_sticky <= 1'b0;
             illegal_rate_sticky <= 1'b0;
             lane_link_mismatch_sticky <= 1'b0;
         end else begin
             ts_accept <= 1'b0;
+            ts2_accept <= 1'b0;
             ts_reject <= 1'b0;
             if (ts_valid && ts_complete) begin
                 if (fields_legal) begin
                     ts_accept <= 1'b1;
+                    // TS2 是 partner 对 rate change 的最终确认:
+                    //  partner 在 RECOVERY_SPEED 先发 TS1 (请求), 后发 TS2 (确认)
+                    //  speed_ctrl 的 ST_RECOVERY_IDLE 必须等 TS2 才能认为 peer
+                    //  真的接受了新速率——否则一拍 TS1 就误判 done, LTSSM 提前
+                    //  退 RECOVERY_SPEED, partner 还没发 TS2, 整个闭环崩。
+                    if (ts_is_ts2)
+                        ts2_accept <= 1'b1;
                 end else begin
                     ts_reject <= 1'b1;
                     if (!type_legal || !eq_legal)

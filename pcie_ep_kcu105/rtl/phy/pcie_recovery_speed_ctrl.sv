@@ -7,9 +7,14 @@
 //
 // 8 态 FSM（Doc Section 9）：
 //   ST_L0                稳态，等 retrain 请求
-//   ST_QUIESCE           等 ltssm_speed_ready
-//   ST_RATE_REQUEST      驱动 rate_req_valid/target，等 rate_req_ready
-//   ST_RATE_WAIT         已被 contract 接受，等 rate_op_done/failed
+//   ST_QUIESCE           立即驱动 rate_req_valid，等 rate_req_ready
+//                       (破除 ltssm_speed_ready ↔ rate_change 死锁：
+//                        contract 必须先动 phy_rate_cmd, LTSSM 才能解扰 TS,
+//                        才能进 RECOVERY_SPEED, 才能让 ltssm_speed_ready=1。
+//                        若 QUIESCE 等 ltssm_speed_ready, 则永远等不到。)
+//   ST_RATE_REQUEST      保留态：若上层选择"两阶段"提交, 可在此态等 contract 接受
+//                       (默认路径下, QUIESCE 直接跳到 RATE_WAIT, 不经过本态)
+//   ST_RATE_WAIT         等 rate_op_done/failed
 //   ST_RECOVERY_IDLE     物理切速完成，等 peer TS
 //   ST_FALLBACK_REQUEST  fallback 路径：发 Gen1 请求
 //   ST_FALLBACK_WAIT     等 Gen1 物理完成
@@ -73,6 +78,10 @@ module pcie_recovery_speed_ctrl #(
         recovery_active = 1'b0;
         case (state)
             ST_QUIESCE: begin
+                // 立即驱动请求：破除 ltssm_speed_ready 死锁
+                // (contract 接受后才推进 phy_rate_cmd, LTSSM 才能解扰 TS)
+                rate_req_valid  = 1'b1;
+                rate_req_target = pending_speed;
                 traffic_quiesce = 1'b1;
                 recovery_active = 1'b1;
             end
@@ -140,9 +149,13 @@ module pcie_recovery_speed_ctrl #(
                         fallback_taken_sticky <= 1'b1;
                         timeout_count        <= 32'd0;
                         state                <= ST_FALLBACK_REQUEST;
-                    end else if (ltssm_speed_ready) begin
+                    end else if (rate_req_ready) begin
+                        // contract 已接受请求, 直接进 RATE_WAIT
+                        // (ltssm_speed_ready 在新架构下不再是 gate——
+                        //  若等它, 则永远等不到: LTSSM 需要先看到 phy_rate_cmd=Gen3
+                        //  才能解扰 partner 的 Gen3 TS, 才能进 RECOVERY_SPEED)
                         timeout_count <= 32'd0;
-                        state         <= ST_RATE_REQUEST;
+                        state         <= ST_RATE_WAIT;
                     end else if (timeout_expired) begin
                         speed_timeout_sticky <= 1'b1;
                         fallback_taken_sticky <= 1'b1;

@@ -17,7 +17,12 @@ module pcie_ltssm_mac_gen1 #(
     // 保持Detect assist，等待Root Port的RX activity。默认关闭。
     parameter integer G9_WAIT_REMOTE_DETECT = 0,
     // 默认按250 MHz PIPE时钟等待25 ms；上板若确认phy_pclk不同，可由构建参数覆盖。
-    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
+    // K13集成测试用：testbench只发Gen1格式TS1/TS2（16-bit symbols，无sync_header），
+    // partner在RECOVERY_SPEED/RECOVERY_IDLE发Gen3格式（带sync_header的scrambled blocks）。
+    // 设1后 os_ts*/os_link*/os_lane*/os_rate_id/os_malformed 全部走Gen1 os_rx，
+    // 保持Gate C闭环验证可观测。生产RTL/上板必须保持0。
+    parameter integer K13_TEST_GEN1_OS_ONLY = 0
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -77,6 +82,8 @@ module pcie_ltssm_mac_gen1 #(
     input  wire        speed_retrain_active,
     input  wire        recovery_speed_done,
     output wire        recovery_speed_ready,
+    output wire        recovery_speed_changed, // 调试探针: 一次 Recovery 内已走过 RECOVERY_SPEED
+                                              // (在 L0 清 0, 进 RECOVERY_SPEED 时置 1)
     output reg  [5:0]  ltssm_state,
     output wire        link_up,
     output wire [2:0]  negotiated_width,
@@ -94,7 +101,10 @@ module pcie_ltssm_mac_gen1 #(
     output wire [7:0]  os_lane_number,
     output wire [7:0]  os_rate_id,
     output wire [7:0]  os_training_control,
-    output wire        os_tx_complete
+    output wire        os_tx_complete,
+    // === 调试探针：暴露 Gen1 os_rx 内部 FSM 状态 ===
+    output wire        os_dbg_active,
+    output wire [2:0]  os_dbg_word_index
 );
     localparam [5:0] DETECT_QUIET         = 6'd0;
     localparam [5:0] DETECT_ACTIVE        = 6'd1;
@@ -151,7 +161,7 @@ module pcie_ltssm_mac_gen1 #(
     reg        cfg_complete_pending;
     // 一次Recovery内只允许执行一次速率切换；PhyStatus完成后重新经过
     // RcvrLock/RcvrCfg，再进入Recovery.Idle/EQ。
-    reg        recovery_speed_changed;
+    reg        recovery_speed_changed_reg;
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
@@ -170,6 +180,8 @@ module pcie_ltssm_mac_gen1 #(
     wire [7:0] gen1_os_link_number, gen1_os_lane_number;
     wire [7:0] gen1_os_n_fts, gen1_os_rate_id, gen1_os_training_control;
     wire       gen1_os_link_is_pad, gen1_os_lane_is_pad;
+    wire       gen1_os_dbg_active;
+    wire [2:0] gen1_os_dbg_word_index;
     wire       gen3_os_ts1_valid, gen3_os_ts2_valid, gen3_os_malformed;
     wire [7:0] gen3_os_link_number, gen3_os_lane_number;
     wire [7:0] gen3_os_n_fts, gen3_os_rate_id, gen3_os_training_control;
@@ -409,7 +421,9 @@ module pcie_ltssm_mac_gen1 #(
         .lane_is_pad      (gen1_os_lane_is_pad),
         .n_fts            (gen1_os_n_fts),
         .rate_id          (gen1_os_rate_id),
-        .training_control (gen1_os_training_control)
+        .training_control (gen1_os_training_control),
+        .dbg_active       (gen1_os_dbg_active),
+        .dbg_word_index   (gen1_os_dbg_word_index)
     );
 
     pcie_gen3_os_rx u_gen3_os_rx (
@@ -425,17 +439,35 @@ module pcie_ltssm_mac_gen1 #(
         .eq_control(gen3_os_eq_control), .eq_data(gen3_os_eq_data)
     );
 
-    assign os_ts1_valid = gen3_mode ? gen3_os_ts1_valid : gen1_os_ts1_valid;
-    assign os_ts2_valid = gen3_mode ? gen3_os_ts2_valid : gen1_os_ts2_valid;
-    assign os_malformed = gen3_mode ? gen3_os_malformed : gen1_os_malformed;
-    assign os_link_number = gen3_mode ? gen3_os_link_number : gen1_os_link_number;
-    assign os_link_is_pad = gen3_mode ? gen3_os_link_is_pad : gen1_os_link_is_pad;
-    assign os_lane_number = gen3_mode ? gen3_os_lane_number : gen1_os_lane_number;
-    assign os_lane_is_pad = gen3_mode ? gen3_os_lane_is_pad : gen1_os_lane_is_pad;
-    assign os_n_fts = gen3_mode ? gen3_os_n_fts : gen1_os_n_fts;
-    assign os_rate_id = gen3_mode ? gen3_os_rate_id : gen1_os_rate_id;
-    assign os_training_control = gen3_mode ? gen3_os_training_control :
-                                             gen1_os_training_control;
+    // K13 testbench: mux by ltssm_state (RECOVERY_SPEED/RECOVERY_IDLE → partner's
+    // scrambled Gen3 data; other states → testbench's raw Gen1 symbols).
+    // K13 testbench override: when K13_TEST_GEN1_OS_ONLY=1, always use Gen1
+    // os_rx regardless of gen3_mode. The testbench sends Gen1-format TS1/TS2
+    // (16-bit symbols without sync_header) and Gen3 os_rx can't parse them.
+    // Production / board: keep 0, mux is driven by gen3_mode.
+    assign os_ts1_valid = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                          gen3_os_ts1_valid : gen1_os_ts1_valid;
+    assign os_ts2_valid = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                          gen3_os_ts2_valid : gen1_os_ts2_valid;
+    assign os_malformed = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                          gen3_os_malformed : gen1_os_malformed;
+    assign os_dbg_active = gen1_os_dbg_active;
+    assign os_dbg_word_index = gen1_os_dbg_word_index;
+    assign os_link_number = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                            gen3_os_link_number : gen1_os_link_number;
+    assign os_link_is_pad = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                            gen3_os_link_is_pad : gen1_os_link_is_pad;
+    assign os_lane_number = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                            gen3_os_lane_number : gen1_os_lane_number;
+    assign os_lane_is_pad = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                            gen3_os_lane_is_pad : gen1_os_lane_is_pad;
+    assign os_n_fts = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                      gen3_os_n_fts : gen1_os_n_fts;
+    assign os_rate_id = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                        gen3_os_rate_id : gen1_os_rate_id;
+    assign os_training_control = (gen3_mode && !K13_TEST_GEN1_OS_ONLY) ?
+                                 gen3_os_training_control :
+                                 gen1_os_training_control;
 
     pcie_gen1_os_tx u_os_tx (
         .clk              (phy_pclk),
@@ -607,6 +639,7 @@ module pcie_ltssm_mac_gen1 #(
                                  (ltssm_state == RECOVERY_SPEED)) ? 3'd1 : 3'd0;
     assign negotiated_speed   = 2'b00;
     assign recovery_speed_ready = (ltssm_state == RECOVERY_SPEED);
+    assign recovery_speed_changed = recovery_speed_changed_reg;
 
     always @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) begin
@@ -633,7 +666,7 @@ module pcie_ltssm_mac_gen1 #(
             dbg_cfg_idle_seen <= 1'b0;
             dbg_l0_seen <= 1'b0;
             cfg_complete_pending <= 1'b0;
-            recovery_speed_changed <= 1'b0;
+            recovery_speed_changed_reg <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
             if (ltssm_state == CFG_COMPLETE)
@@ -672,7 +705,7 @@ module pcie_ltssm_mac_gen1 #(
                 dbg_cfg_complete_seen <= 1'b0;
                 dbg_cfg_idle_seen <= 1'b0;
                 dbg_l0_seen <= 1'b0;
-                recovery_speed_changed <= 1'b0;
+                recovery_speed_changed_reg <= 1'b0;
             end else begin
                 case (ltssm_state)
                     DETECT_QUIET: begin
@@ -943,7 +976,7 @@ module pcie_ltssm_mac_gen1 #(
                     STATE_L0: begin
                         state_timer <= 32'd0;
                         rx_ts_count <= 5'd0;
-                        recovery_speed_changed <= 1'b0;
+                        recovery_speed_changed_reg <= 1'b0;
                         if (hot_reset_req ||
                             ((os_ts1_valid || os_ts2_valid) &&
                              os_training_control[0])) begin
@@ -977,7 +1010,7 @@ module pcie_ltssm_mac_gen1 #(
                         if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
-                                if (speed_retrain_active && !recovery_speed_changed)
+                                if (speed_retrain_active && !recovery_speed_changed_reg)
                                     ltssm_state <= RECOVERY_SPEED;
                                 else
                                     ltssm_state <= RECOVERY_IDLE;
@@ -996,7 +1029,7 @@ module pcie_ltssm_mac_gen1 #(
                         state_timer <= state_timer + 1'b1;
                         rx_ts_count <= 5'd0;
                         if (recovery_speed_done) begin
-                            recovery_speed_changed <= 1'b1;
+                            recovery_speed_changed_reg <= 1'b1;
                             ltssm_state <= RECOVERY_RCVRLOCK;
                             state_timer <= 32'd0;
                         end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin

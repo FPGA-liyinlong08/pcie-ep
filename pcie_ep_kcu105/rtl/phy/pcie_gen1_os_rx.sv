@@ -19,7 +19,10 @@ module pcie_gen1_os_rx (
     output reg         lane_is_pad,
     output reg  [7:0]  n_fts,
     output reg  [7:0]  rate_id,
-    output reg  [7:0]  training_control
+    output reg  [7:0]  training_control,
+    // === 调试探针：暴露内部 FSM 状态用于 LTSSM 集成诊断 ===
+    output wire        dbg_active,
+    output wire [2:0]  dbg_word_index
 );
     localparam [7:0] K_COM = 8'hbc;
     localparam [7:0] K_PAD = 8'hf7;
@@ -31,6 +34,8 @@ module pcie_gen1_os_rx (
     reg [2:0] word_index;
     reg [1:0] identifier_kind;
     reg       parse_error;
+    assign dbg_active = active;
+    assign dbg_word_index = word_index;
 
     wire [7:0] symbol0 = in_data[7:0];
     wire [7:0] symbol1 = in_data[15:8];
