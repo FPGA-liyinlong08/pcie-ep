@@ -48,7 +48,9 @@ module k13_phy_rate_change_tb;
     reg retrain_pulse = 1'b0;
 
     wire [3:0] phy_rxeq_txpreset = ctrl_rxeq_txpreset;
-    wire as_mac_in_detect = 1'b1;
+    // The new contract uses this only to rebuild Gen1 context after Detect;
+    // this narrow PHY boundary test starts after initial link bring-up.
+    wire as_mac_in_detect = 1'b0;
     // K13 的 Recovery 活跃窗口对应 LTSSM 的 CDR hold 请求。
     wire as_cdr_hold_req = ctrl_recovery_active;
     wire ltssm_speed_ready = (ctrl_speed_state == 3'd1);
@@ -100,6 +102,7 @@ module k13_phy_rate_change_tb;
     ) ctrl (
         .core_clk(phy_coreclk), .core_rst_n(ctrl_phy_rst_n),
         .phy_clk(phy_pclk), .phy_rst_n(ctrl_phy_rst_n), .link_up(1'b1),
+        .reinitialize_gen1(as_mac_in_detect),
         .ltssm_speed_ready(ltssm_speed_ready),
         .retrain_pulse(retrain_pulse), .target_speed(2'b10),
         .partner_retrain_valid(partner_retrain_valid),
@@ -111,12 +114,14 @@ module k13_phy_rate_change_tb;
         .ts_is_ts2(ts_is_ts2), .ts_lane(ts_lane), .ts_link(ts_link),
         .ts_rate(ts_rate), .ts_eq_request(ts_eq_request),
         .expected_lane(3'd0), .expected_link(8'd0),
-        .phy_rate(ctrl_rate), .phy_txelecidle(ctrl_txelecidle),
+        .phy_rate_cmd(ctrl_rate), .active_rate(),
+        .phy_txelecidle(ctrl_txelecidle),
         .phy_txeq_ctrl(ctrl_txeq_ctrl), .phy_txeq_preset(ctrl_txeq_preset),
         .phy_txeq_coeff(ctrl_txeq_coeff), .phy_rxeq_ctrl(ctrl_rxeq_ctrl),
         .phy_rxeq_txpreset(ctrl_rxeq_txpreset),
         .traffic_quiesce(ctrl_traffic_quiesce),
         .recovery_active(ctrl_recovery_active),
+        .rate_contract_illegal(),
         .negotiated_speed(ctrl_negotiated_speed), .speed_state(ctrl_speed_state),
         .eq_active(ctrl_eq_active), .eq_done(ctrl_eq_done),
         .eq_failed(ctrl_eq_failed), .eq_phase(ctrl_eq_phase),

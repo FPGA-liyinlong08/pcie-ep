@@ -56,6 +56,7 @@ cd "${script_dir}"
 
 "${vcs_home}/bin/vlogan" -full64 -sverilog -work xil_defaultlib \
     "${project_dir}/rtl/common/pcie_retrain_cdc_mailbox.sv" \
+    "${project_dir}/rtl/phy/pcie_phy_rate_contract.sv" \
     "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv" \
     "${project_dir}/rtl/phy/pcie_recovery_ts_guard.sv" \
     "${project_dir}/rtl/phy/pcie_equalization_ctrl.sv" \

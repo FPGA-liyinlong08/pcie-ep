@@ -160,6 +160,7 @@ fi
     "${project_dir}/rtl/ep/k11a_offline_top.sv" \
     "${project_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" \
     "${project_dir}/rtl/common/pcie_retrain_cdc_mailbox.sv" \
+    "${project_dir}/rtl/phy/pcie_phy_rate_contract.sv" \
     "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv" \
     "${project_dir}/rtl/phy/pcie_equalization_ctrl.sv" \
     "${project_dir}/rtl/phy/pcie_recovery_ts_guard.sv" \

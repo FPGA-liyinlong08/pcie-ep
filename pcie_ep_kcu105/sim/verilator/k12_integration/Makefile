@@ -6,6 +6,7 @@ MODULE := test_k12_integration
 SIM_BUILD ?= sim_build
 COMPILE_ARGS += --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD
 VERILOG_SOURCES := $(PROJECT_DIR)/rtl/common/pcie_retrain_cdc_mailbox.sv \
+	$(PROJECT_DIR)/rtl/phy/pcie_phy_rate_contract.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_recovery_speed_ctrl.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_equalization_ctrl.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_recovery_ts_guard.sv \

@@ -84,20 +84,22 @@ module kcu105_pcie_ep_gen1_top #(
     wire os_ts1_valid, os_ts2_valid, os_malformed, os_tx_complete;
     wire [7:0] os_link_number, os_lane_number, os_rate_id, os_training_control;
     wire k13_phy_txelecidle;
-    wire [1:0] k13_phy_rate, k13_phy_txeq_ctrl, k13_phy_rxeq_ctrl;
+    wire [1:0] k13_phy_rate_cmd, k13_active_rate, k13_phy_txeq_ctrl, k13_phy_rxeq_ctrl;
     wire [3:0] k13_phy_txeq_preset, k13_phy_rxeq_txpreset;
     wire [5:0] k13_phy_txeq_coeff;
-    wire k13_traffic_quiesce, k13_recovery_active;
+    wire k13_traffic_quiesce, k13_recovery_active, k13_recovery_speed_done;
     wire [1:0] k13_negotiated_speed;
     wire [2:0] k13_speed_state, k13_eq_phase;
     wire k13_eq_active, k13_eq_done, k13_eq_failed;
     wire k13_ts_accept, k13_ts_reject, k13_cdr_loss_sticky;
     wire k13_fallback_sticky, k13_illegal_ts_sticky, k13_speed_timeout_sticky;
+    wire [3:0] k13_rate_contract_state;
+    wire       k13_rate_contract_busy, k13_rate_contract_done,
+               k13_rate_contract_failed, k13_rate_contract_illegal;
     wire ltssm_recovery_speed_ready;
-    // 正常切速和Gen1 fallback都必须向生产LTSSM确认Recovery.Speed完成；
-    // 否则fallback虽已收到PhyStatus，LTSSM仍会在Recovery.Speed超时掉线。
-    wire k13_recovery_speed_done = (k13_speed_state == 3'd3) ||
-                                    (k13_speed_state == 3'd5);
+    // 协议层使用的"活动速率"——K13 时来自 contract active_rate，K11 时自环
+    wire [1:0] active_phy_rate_int = (K13_ENABLE != 0) ? k13_active_rate
+                                                      : ltssm_phy_rate;
     wire [1:0] ltssm_negotiated_speed;
     reg [24:0] heartbeat_count;
 
@@ -253,7 +255,8 @@ module kcu105_pcie_ep_gen1_top #(
     ) u_k13_production_ctrl (
         .core_clk(phy_coreclk), .core_rst_n(core_rst_n),
         .phy_clk(phy_pclk), .phy_rst_n(pipe_rst_n),
-        .link_up(link_up), .ltssm_speed_ready(ltssm_recovery_speed_ready),
+        .link_up(link_up), .reinitialize_gen1(as_mac_in_detect),
+        .ltssm_speed_ready(ltssm_recovery_speed_ready),
         .retrain_pulse(core_retrain_link_pulse),
         .target_speed(core_target_link_speed),
         .partner_retrain_valid(k13_partner_retrain_valid),
@@ -267,25 +270,36 @@ module kcu105_pcie_ep_gen1_top #(
         .ts_lane(os_lane_number[2:0]), .ts_link(os_link_number),
         .ts_rate(k13_ts_rate), .ts_eq_request(k13_ts_eq_request),
         .expected_lane(3'd0), .expected_link(link_number),
-        .phy_rate(k13_phy_rate), .phy_txelecidle(k13_phy_txelecidle),
+        // Rate contract 是 raw phy_rate 唯一 owner
+        .phy_rate_cmd(k13_phy_rate_cmd),
+        .active_rate(k13_active_rate),
+        .phy_txelecidle(k13_phy_txelecidle),
         .phy_txeq_ctrl(k13_phy_txeq_ctrl), .phy_txeq_preset(k13_phy_txeq_preset),
         .phy_txeq_coeff(k13_phy_txeq_coeff), .phy_rxeq_ctrl(k13_phy_rxeq_ctrl),
         .phy_rxeq_txpreset(k13_phy_rxeq_txpreset),
         .traffic_quiesce(k13_traffic_quiesce), .recovery_active(k13_recovery_active),
+        .recovery_speed_done(k13_recovery_speed_done),
         .negotiated_speed(k13_negotiated_speed), .speed_state(k13_speed_state),
         .eq_active(k13_eq_active), .eq_done(k13_eq_done), .eq_failed(k13_eq_failed),
         .eq_phase(k13_eq_phase), .ts_accept(k13_ts_accept), .ts_reject(k13_ts_reject),
         .cdr_loss_sticky(k13_cdr_loss_sticky),
         .speed_timeout_sticky(k13_speed_timeout_sticky),
         .fallback_sticky(k13_fallback_sticky),
-        .illegal_ts_sticky(k13_illegal_ts_sticky)
+        .illegal_ts_sticky(k13_illegal_ts_sticky),
+        // Rate contract 调试
+        .rate_contract_state(k13_rate_contract_state),
+        .rate_contract_busy(k13_rate_contract_busy),
+        .rate_contract_done(k13_rate_contract_done),
+        .rate_contract_failed(k13_rate_contract_failed),
+        .rate_contract_illegal(k13_rate_contract_illegal)
     );
 
-    assign phy_rate = (K13_ENABLE != 0) &&
-                      (k13_recovery_active || (k13_negotiated_speed != 2'b00))
-                      ? k13_phy_rate : ltssm_phy_rate;
-    assign phy_txelecidle = (K13_ENABLE != 0) && k13_recovery_active
-                             ? k13_phy_txelecidle : ltssm_phy_txelecidle;
+    // K13 启用时，wrapper.phy_rate 由 contract.phy_rate_cmd 拥有（=active_rate 稳态，
+    // transition 时 = target）；K11 关闭时直接走 ltssm_phy_rate 自环。
+    assign phy_rate = (K13_ENABLE != 0) ? k13_phy_rate_cmd : ltssm_phy_rate;
+    assign phy_txelecidle = (K13_ENABLE != 0)
+                             ? (ltssm_phy_txelecidle | k13_phy_txelecidle)
+                             : ltssm_phy_txelecidle;
     assign phy_txeq_ctrl = (K13_ENABLE != 0) && k13_recovery_active
                            ? k13_phy_txeq_ctrl : ltssm_phy_txeq_ctrl;
     assign phy_txeq_preset = (K13_ENABLE != 0) && k13_recovery_active
@@ -313,7 +327,8 @@ module kcu105_pcie_ep_gen1_top #(
         assign mac_tx_valid = mac_tx_valid_core;
         assign negotiated_speed = ltssm_negotiated_speed;
         assign k13_phy_txelecidle = 1'b0;
-        assign k13_phy_rate = 2'b00;
+        assign k13_phy_rate_cmd = 2'b00;
+        assign k13_active_rate = 2'b00;
         assign k13_phy_txeq_ctrl = 2'b00;
         assign k13_phy_txeq_preset = 4'd0;
         assign k13_phy_txeq_coeff = 6'd0;
@@ -321,6 +336,7 @@ module kcu105_pcie_ep_gen1_top #(
         assign k13_phy_rxeq_txpreset = 4'd0;
         assign k13_traffic_quiesce = 1'b0;
         assign k13_recovery_active = 1'b0;
+        assign k13_recovery_speed_done = 1'b0;
         assign k13_negotiated_speed = 2'b00;
         assign k13_speed_state = 3'd0;
         assign k13_eq_phase = 3'd7;
@@ -333,6 +349,11 @@ module kcu105_pcie_ep_gen1_top #(
         assign k13_speed_timeout_sticky = 1'b0;
         assign k13_fallback_sticky = 1'b0;
         assign k13_illegal_ts_sticky = 1'b0;
+        assign k13_rate_contract_state = 4'h0;
+        assign k13_rate_contract_busy = 1'b0;
+        assign k13_rate_contract_done = 1'b0;
+        assign k13_rate_contract_failed = 1'b0;
+        assign k13_rate_contract_illegal = 1'b0;
     end endgenerate
 
     kcu105_pcie_phy_wrapper u_phy_wrapper (
@@ -381,7 +402,7 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_rxstart_block(phy_rxstart_block),
         .phy_rxsync_header(phy_rxsync_header), .phy_rxvalid(phy_rxvalid),
         .phy_phystatus(phy_phystatus), .phy_rxelecidle(phy_rxelecidle),
-        .phy_rxstatus(phy_rxstatus), .active_phy_rate(phy_rate),
+        .phy_rxstatus(phy_rxstatus), .active_phy_rate(active_phy_rate_int),
         .phy_txdata(phy_txdata),
         .phy_txdatak(phy_txdatak), .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block), .phy_txsync_header(phy_txsync_header),

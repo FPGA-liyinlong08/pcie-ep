@@ -72,10 +72,12 @@ K12-A只在以下条件全部满足后修改生产LTSSM：CDC mailbox定向和�
 |---:|---|---|
 | 0 | `ST_L0` | Gen1/已协商速率，允许事务 |
 | 1 | `ST_QUIESCE` | `traffic_quiesce=1`，禁止新事务 |
-| 2 | `ST_SPEED_WAIT` | `phy_txelecidle=1`，驱动目标`phy_rate`，等待`phy_phystatus` |
-| 3 | `ST_RECOVERY_IDLE` | 目标速率保持，等待对端确认 |
-| 4 | `ST_FALLBACK_WAIT` | 驱动Gen1并等待PHY完成 |
-| 5 | `ST_FALLBACK_IDLE` | Gen1保持，等待对端确认 |
+| 2 | `ST_RATE_REQUEST` | 发出semantic `rate_req_*`请求 |
+| 3 | `ST_RATE_WAIT` | 等待`rate_op_done/failed` |
+| 4 | `ST_RECOVERY_IDLE` | 仅在`active_rate==pending_speed`后接受对端TS |
+| 5 | `ST_FALLBACK_REQUEST` | 发出Gen1 `fallback_req`，不受持续CDR loss阻塞 |
+| 6 | `ST_FALLBACK_WAIT` | 等待Gen1物理完成，失败时保持Recovery |
+| 7 | `ST_FALLBACK_IDLE` | Gen1保持，等待对端确认 |
 
 K12-B只证明状态和错误出口；真正的Recovery状态、TS边界以及PHY端口接线必须在
 K12-C之前由行为PHY和真实串行环境再次确认。
@@ -84,6 +86,7 @@ K12-C的EQ控制器仅使用K02已有PHY端口：Phase 0/2驱动`phy_txeq_ctrl/p
 Phase 1/3驱动`phy_rxeq_ctrl/txpreset`，分别等待`phy_txeq_done`/`phy_rxeq_done`。
 它尚未改变K03/K11端口的固定0默认值。
 
-K12-E的`k12e_phy_monitor`只观测真实PHY的`phy_pclk`、`phy_rate`、`phy_phystatus`、
+K12-E的`k12e_phy_monitor`通过`pcie_phy_rate_contract`影子实例只观测真实PHY的
+`phy_pclk`、`phy_rate`、`phy_phystatus`、
 `phy_txeq_done`和`phy_rxeq_done`，不驱动K11生产控制线；Gen1 release下要求feedback
 为已知值且TX/RX EQ control为0。真实Gen3 retrain/EQ驱动接线进入K13。

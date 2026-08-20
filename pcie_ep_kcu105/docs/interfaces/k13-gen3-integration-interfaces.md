@@ -68,7 +68,9 @@ LTSSM输出。`mac_tx_valid`在`traffic_quiesce=1`时必须被抑制，同时不
 
 | 信号 | 位宽 | 语义 |
 |---|---:|---|
-| `negotiated_speed` | 2 | 已完成握手的速率；失败回退后为Gen1 |
+| `phy_rate_cmd` | 2 | Rate Contract送PHY的命令；可先于物理完成变化 |
+| `active_rate` | 2 | `PhyStatus`完成后提交；LTSSM parser唯一速率上下文 |
+| `negotiated_speed` | 2 | 新速率TS确认后的配置速率；失败回退后为Gen1 |
 | `speed_state` | 3 | K12-B局部状态编码，不能当作6位生产LTSSM编码 |
 | `eq_active/done/failed` | 各1 | EQ进行、完成和失败状态 |
 | `eq_phase` | 3 | `0～3`为Phase，`4`为完成，禁用值为`7` |
@@ -78,8 +80,9 @@ LTSSM输出。`mac_tx_valid`在`traffic_quiesce=1`时必须被抑制，同时不
 | `speed_timeout_sticky` | 1 | 等待LTSSM Speed边界或PHY `phystatus`超时后保持至复位 |
 | `illegal_ts_sticky` | 1 | malformed、非法Rate或Lane/Link不匹配的汇总 |
 
-`speed_state`当前编码沿用K12：`0=L0`、`1=QUIESCE`、`2=SPEED_WAIT`、
-`3=RECOVERY_IDLE`、`4=FALLBACK_WAIT`、`5=FALLBACK_IDLE`。
+`speed_state`当前编码为：`0=L0`、`1=QUIESCE`、`2=RATE_REQUEST`、
+`3=RATE_WAIT`、`4=RECOVERY_IDLE`、`5=FALLBACK_REQUEST`、
+`6=FALLBACK_WAIT`、`7=FALLBACK_IDLE`。
 
 生产LTSSM增加`RECOVERY_SPEED=18`和双向握手：`recovery_speed_ready`授权
 K13切速，`recovery_speed_done`通知PHY切速完成。LTSSM在旧速率完成

@@ -33,7 +33,10 @@ module k12_behavioral_partner_top (
     wire mailbox_accept_w;
     wire [1:0] negotiated_speed_w;
     wire [2:0] speed_state_w;
-    wire [1:0] phy_rate_w;
+    wire [1:0] contract_rate_cmd_w, contract_active_rate_w;
+    wire contract_rate_ready_w, contract_rate_done_w, contract_rate_failed_w;
+    wire speed_rate_req_valid, speed_fallback_req;
+    wire [1:0] speed_rate_req_target;
     wire phy_phystatus_w, peer_speed_ok_w, peer_speed_reject_w;
     wire speed_timeout_w, illegal_speed_w, speed_fallback_w, illegal_eq_param_w;
     wire cdr_loss_w;
@@ -57,21 +60,45 @@ module k12_behavioral_partner_top (
         .d_retrain_accept(mailbox_accept_w)
     );
 
-    pcie_recovery_speed_ctrl #(.SPEED_TIMEOUT_CYCLES(8)) u_speed (
+    pcie_recovery_speed_ctrl #(.SPEED_TIMEOUT_CYCLES(32)) u_speed (
         .clk(phy_clk), .rst_n(phy_rst_n), .link_up(link_up),
+        .reinitialize_gen1(1'b0),
         .retrain_valid(mailbox_valid_w),
         .retrain_target_speed(mailbox_speed_w),
         .ltssm_speed_ready(os_tx_complete_r),
+        .rate_req_valid(speed_rate_req_valid),
+        .rate_req_target(speed_rate_req_target),
+        .fallback_req(speed_fallback_req),
+        .rate_req_ready(contract_rate_ready_w),
+        .rate_op_done(contract_rate_done_w),
+        .rate_op_failed(contract_rate_failed_w),
+        .active_rate(contract_active_rate_w),
         .retrain_accept(mailbox_accept_w),
-        .phy_phystatus(phy_phystatus_w),
         .phy_cdr_lost(force_cdr_lost), .peer_speed_ok(peer_speed_ok_w),
         .peer_speed_reject(peer_speed_reject_w),
-        .state(speed_state_w), .phy_rate(phy_rate_w),
-        .phy_txelecidle(), .traffic_quiesce(), .recovery_active(),
+        .state(speed_state_w),
+        .traffic_quiesce(), .recovery_active(),
         .negotiated_speed(negotiated_speed_w),
         .speed_timeout_sticky(speed_timeout_w),
         .peer_reject_sticky(), .illegal_speed_sticky(illegal_speed_w),
         .cdr_loss_sticky(cdr_loss_w), .fallback_taken_sticky(speed_fallback_w)
+    );
+
+    pcie_phy_rate_contract #(
+        .RATE_TIMEOUT_CYCLES(32), .GEN1_RELEASE_GAP_CYCLES(1)
+    ) u_rate_contract (
+        .clk(phy_clk), .rst_n(phy_rst_n), .link_ready(link_up),
+        .reinitialize_gen1(1'b0),
+        .rate_req_valid(speed_rate_req_valid),
+        .rate_req_target(speed_rate_req_target),
+        .fallback_req(speed_fallback_req),
+        .rate_req_ready(contract_rate_ready_w),
+        .phy_phystatus(phy_phystatus_w),
+        .phy_rate_cmd(contract_rate_cmd_w),
+        .force_txelecidle(), .active_rate(contract_active_rate_w),
+        .rate_busy(), .rate_done(contract_rate_done_w),
+        .rate_failed(contract_rate_failed_w), .dbg_state(),
+        .phystatus_seen(), .timeout_sticky()
     );
 
     pcie_equalization_ctrl #(.EQ_TIMEOUT_CYCLES(8)) u_eq (
@@ -158,10 +185,10 @@ module k12_behavioral_partner_top (
             peer_ts_is_ts1_r <= 1'b0;
             peer_ts_is_ts2_r <= 1'b0;
 
-            if (phy_rate_w != partner_rate) begin
+            if (contract_rate_cmd_w != partner_rate) begin
                 rate_pending <= 1'b1;
                 if ((rate_pending && os_tx_complete_r) || force_early_done) begin
-                    partner_rate <= phy_rate_w;
+                    partner_rate <= contract_rate_cmd_w;
                     phy_phystatus_r <= 1'b1;
                     rate_pending <= 1'b0;
                     if (!os_tx_complete_r && force_early_done)
@@ -174,14 +201,14 @@ module k12_behavioral_partner_top (
                 rate_delay <= 3'd0;
             end
 
-            if (speed_state_w == 3'd3 && os_tx_complete_r) begin
+            if (speed_state_w == 3'd4 && os_tx_complete_r) begin
                 peer_ts_valid_r <= 1'b1;
                 peer_ts_complete_r <= 1'b1;
                 peer_ts_is_ts1_r <= 1'b1;
                 peer_ts_is_ts2_r <= force_peer_reject || force_ts_malformed;
                 peer_ts_lane_r <= force_ts_lane_mismatch ? 3'd1 : 3'd0;
                 peer_ts_link_r <= 8'd0;
-                peer_ts_rate_r <= force_ts_malformed ? 2'b11 : phy_rate_w;
+                peer_ts_rate_r <= force_ts_malformed ? 2'b11 : contract_rate_cmd_w;
                 peer_ts_eq_request_r <= 1'b0;
             end
 
@@ -203,7 +230,7 @@ module k12_behavioral_partner_top (
 
             // 负向测试开关的语义是强制 Partner 越过 Ordered Set 边界完成。
             // 独立置位 sticky，避免测试结果依赖故障注入恰好落在哪个采样相位。
-            if (force_early_done && ((phy_rate_w != partner_rate) ||
+            if (force_early_done && ((contract_rate_cmd_w != partner_rate) ||
                                      (txeq_ctrl_w != 2'b00) ||
                                      (rxeq_ctrl_w != 2'b00)))
                 boundary_violation_r <= 1'b1;
@@ -214,7 +241,7 @@ module k12_behavioral_partner_top (
     assign mailbox_valid = mailbox_valid_w;
     assign mailbox_target_speed = mailbox_speed_w;
     assign speed_state = speed_state_w;
-    assign phy_rate = phy_rate_w;
+    assign phy_rate = contract_rate_cmd_w;
     assign speed_retrain_accept = mailbox_accept_w;
     assign negotiated_speed = negotiated_speed_w;
     assign speed_fallback_taken = speed_fallback_w;

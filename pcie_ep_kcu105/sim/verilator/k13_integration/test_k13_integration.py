@@ -165,6 +165,7 @@ async def train_gen1_to_l0(dut):
 
 async def phy_command_responder(dut):
     previous_rate = int(dut.phy_rate.value)
+    phystatus_hold = 0
     txeq_seen = False
     rxeq_seen = False
     while True:
@@ -174,7 +175,11 @@ async def phy_command_responder(dut):
         txeq = int(dut.phy_txeq_ctrl.value)
         rxeq = int(dut.phy_rxeq_ctrl.value)
         await writable()
-        dut.phy_phystatus.value = int(rate != previous_rate)
+        if rate != previous_rate:
+            phystatus_hold = 2
+        dut.phy_phystatus.value = int(phystatus_hold > 0)
+        if phystatus_hold:
+            phystatus_hold -= 1
         previous_rate = rate
         dut.phy_txeq_done.value = int(txeq != 0 and not txeq_seen)
         dut.phy_rxeq_done.value = int(rxeq == 2 and not rxeq_seen)
@@ -258,12 +263,22 @@ async def production_ltssm_gen1_to_gen3_eq_closed_loop(dut):
     assert int(dut.phy_rate.value) == 2
     assert saw_ts1 and saw_ts2, (
         f"Gen3 TS不完整: ts1={saw_ts1} ts2={saw_ts2} "
-        f"ltssm={int(dut.ltssm_state.value)} speed={int(dut.speed_state.value)}"
+        f"ltssm={int(dut.ltssm_state.value)} speed={int(dut.speed_state.value)} "
+        f"cmd={int(dut.phy_rate_cmd.value)} active={int(dut.active_rate.value)} "
+        f"reinit={int(dut.reinitialize_gen1.value)} done={int(dut.recovery_speed_done.value)} "
+        f"contract={int(dut.rate_contract_state.value)}"
+        f" partner={int(dut.partner_source_active.value)}"
     )
     assert saw_recovery_idle
     assert int(dut.as_cdr_hold_req.value) == 0
     assert int(dut.ts_reject.value) == 0
-    assert int(dut.fallback_sticky.value) == 0
+    assert int(dut.fallback_sticky.value) == 0, (
+        f"fallback sticky speed={int(dut.speed_state.value)} "
+        f"active={int(dut.active_rate.value)} ts_accept={int(dut.ts_accept.value)} "
+        f"ts_reject={int(dut.ts_reject.value)} "
+        f"partner={int(dut.partner_source_active.value)} "
+        f"ltssm={int(dut.ltssm_state.value)}"
+    )
     assert int(dut.eq_failed.value) == 0
     assert saw_eq_done
     assert phases == [0, 1, 2, 3, 4]

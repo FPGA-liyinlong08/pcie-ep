@@ -16,9 +16,12 @@ module k12e_phy_monitor (
     input wire [1:0] phy_rxeq_ctrl
 );
     wire [2:0] speed_state;
-    wire [1:0] shadow_rate;
+    wire [1:0] shadow_rate_cmd, shadow_active_rate;
+    wire shadow_rate_req_valid, shadow_fallback_req, shadow_rate_req_ready;
+    wire [1:0] shadow_rate_req_target;
+    wire shadow_rate_done, shadow_rate_failed;
     wire shadow_retrain_accept, shadow_quiesce, shadow_active;
-    wire shadow_negotiated_speed;
+    wire [1:0] shadow_negotiated_speed;
     wire shadow_speed_timeout, shadow_peer_reject, shadow_illegal_speed;
     wire shadow_cdr_loss, shadow_fallback;
     wire shadow_eq_start_accept, shadow_eq_active, shadow_eq_done, shadow_eq_failed;
@@ -32,17 +35,39 @@ module k12e_phy_monitor (
 
     pcie_recovery_speed_ctrl u_shadow_speed (
         .clk(clk), .rst_n(rst_n), .link_up(link_up),
+        .reinitialize_gen1(1'b0),
         .retrain_valid(1'b0), .retrain_target_speed(2'b00),
         .ltssm_speed_ready(1'b1),
-        .retrain_accept(shadow_retrain_accept), .phy_phystatus(phy_phystatus),
+        .rate_req_valid(shadow_rate_req_valid),
+        .rate_req_target(shadow_rate_req_target),
+        .fallback_req(shadow_fallback_req),
+        .rate_req_ready(shadow_rate_req_ready),
+        .rate_op_done(shadow_rate_done), .rate_op_failed(shadow_rate_failed),
+        .active_rate(shadow_active_rate),
+        .retrain_accept(shadow_retrain_accept),
         .phy_cdr_lost(1'b0), .peer_speed_ok(1'b0), .peer_speed_reject(1'b0),
-        .state(speed_state), .phy_rate(shadow_rate), .phy_txelecidle(),
+        .state(speed_state),
         .traffic_quiesce(shadow_quiesce), .recovery_active(shadow_active),
-        .negotiated_speed(), .speed_timeout_sticky(shadow_speed_timeout),
+        .negotiated_speed(shadow_negotiated_speed),
+        .speed_timeout_sticky(shadow_speed_timeout),
         .peer_reject_sticky(shadow_peer_reject),
         .illegal_speed_sticky(shadow_illegal_speed),
         .cdr_loss_sticky(shadow_cdr_loss),
         .fallback_taken_sticky(shadow_fallback)
+    );
+
+    pcie_phy_rate_contract u_shadow_rate_contract (
+        .clk(clk), .rst_n(rst_n), .link_ready(link_up),
+        .reinitialize_gen1(1'b0),
+        .rate_req_valid(shadow_rate_req_valid),
+        .rate_req_target(shadow_rate_req_target),
+        .fallback_req(shadow_fallback_req),
+        .rate_req_ready(shadow_rate_req_ready),
+        .phy_phystatus(phy_phystatus),
+        .phy_rate_cmd(shadow_rate_cmd), .force_txelecidle(),
+        .active_rate(shadow_active_rate), .rate_busy(),
+        .rate_done(shadow_rate_done), .rate_failed(shadow_rate_failed),
+        .dbg_state(), .phystatus_seen(), .timeout_sticky()
     );
 
     pcie_equalization_ctrl u_shadow_eq (
@@ -71,7 +96,8 @@ module k12e_phy_monitor (
                 (phy_phystatus === 1'b0 || phy_phystatus === 1'b1) &&
                 (phy_txeq_done === 1'b0 || phy_txeq_done === 1'b1) &&
                 (phy_rxeq_done === 1'b0 || phy_rxeq_done === 1'b1) &&
-                (shadow_rate == 2'b00) && !shadow_eq_active) begin
+                (shadow_rate_cmd == 2'b00) &&
+                (shadow_active_rate == 2'b00) && !shadow_eq_active) begin
                 if (stable_count == 5'd15) begin
                     reported <= 1'b1;
                     $display("K12E_REAL_PHY_ADAPTER_PASS gen1_phy_feedback=known eq_controls=zero");

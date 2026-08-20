@@ -447,7 +447,8 @@ set sv_files [list \
   rtl/phy/pcie_gen3_os_tx.sv rtl/phy/pcie_gen1_framer.sv \
   rtl/common/pcie_link_loss_trigger.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
-  rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_recovery_speed_ctrl.sv \
+  rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \
+  rtl/phy/pcie_recovery_speed_ctrl.sv \
   rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
   rtl/phy/pcie_k13_production_ctrl.sv \
   rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \

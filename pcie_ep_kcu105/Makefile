@@ -279,7 +279,8 @@ k11b2-lint:
 		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
 		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_ltssm_mac_gen1.sv \
-		rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_recovery_speed_ctrl.sv \
+		rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \
+		rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
 		rtl/phy/pcie_k13_production_ctrl.sv \
 		rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
@@ -336,9 +337,9 @@ k12b-speed:
 		echo "错误：K12-B Recovery.Speed回归失败"; exit 1; \
 	fi
 	@grep -q 'normal_gen1_to_gen3_speed_handshake' sim/verilator/k12b_speed/results.xml
-	@grep -q 'phy_done_timeout_falls_back_to_gen1' sim/verilator/k12b_speed/results.xml
+	@grep -q 'internal_speed_timeout_falls_back_to_gen1' sim/verilator/k12b_speed/results.xml
 	@grep -q 'peer_reject_falls_back_to_gen1' sim/verilator/k12b_speed/results.xml
-	@grep -q 'illegal_target_is_accepted_without_phy_action' sim/verilator/k12b_speed/results.xml
+	@grep -q 'illegal_target_is_rejected_at_l0' sim/verilator/k12b_speed/results.xml
 	@echo "K12B_RECOVERY_SPEED_PASS"
 
 k12b-checker-selftest:
@@ -346,6 +347,15 @@ k12b-checker-selftest:
 
 k12b: k12b-checker-selftest k12b-speed-lint k12b-speed
 	@echo "K12B_PASS"
+
+k13-rate-contract:
+	$(MAKE) -C sim/verilator/k13_rate_contract \
+		SIM_BUILD=sim_build_k13_rate_contract \
+		COCOTB_RESULTS_FILE=results.xml results.xml
+	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k13_rate_contract/results.xml; then \
+		echo "错误：K13 PHY Rate Contract回归失败"; exit 1; \
+	fi
+	@echo "K13_RATE_CONTRACT_PASS"
 
 k12c-eq-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
@@ -374,6 +384,7 @@ k12-integration-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		--top-module k12_behavioral_partner_top \
 		rtl/common/pcie_retrain_cdc_mailbox.sv \
+		rtl/phy/pcie_phy_rate_contract.sv \
 		rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_equalization_ctrl.sv \
 		rtl/phy/pcie_recovery_ts_guard.sv \
@@ -402,11 +413,15 @@ k12de-vcs-serial:
 k12de: k12-integration k12de-vcs-serial
 	@echo "K12DE_PASS"
 
+k12: k12a k12b k12c k12de
+	@echo "K12_A_TO_E_PASS"
+
 k13-ctrl-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		--top-module pcie_k13_production_ctrl \
 		-GK13_ENABLE=1 \
 		rtl/common/pcie_retrain_cdc_mailbox.sv \
+		rtl/phy/pcie_phy_rate_contract.sv \
 		rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_equalization_ctrl.sv \
 		rtl/phy/pcie_recovery_ts_guard.sv \
@@ -429,6 +444,7 @@ k13-integration-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		--top-module k13_ltssm_partner_top \
 		rtl/common/pcie_retrain_cdc_mailbox.sv \
+		rtl/phy/pcie_phy_rate_contract.sv \
 		rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_equalization_ctrl.sv \
 		rtl/phy/pcie_recovery_ts_guard.sv \
