@@ -943,6 +943,11 @@ module k11b_endpoint_compat #(
 `else
     localparam integer K13_ENABLED = 0;
 `endif
+`ifdef K13_RXEQ_BOOTSTRAP_VALUE
+    localparam integer K13_RXEQ_BOOTSTRAP_CFG = `K13_RXEQ_BOOTSTRAP_VALUE;
+`else
+    localparam integer K13_RXEQ_BOOTSTRAP_CFG = 1;
+`endif
 
     kcu105_pcie_ep_gen1_top #(
         .DETECT_QUIET_CYCLES   (DETECT_QUIET_CYCLES),
@@ -954,7 +959,8 @@ module k11b_endpoint_compat #(
         // same-rate Recovery before asserting the rate-change handshake.
         // Keep these above that real serial-model latency.
         .K13_SPEED_TIMEOUT_CYCLES(65_536),
-        .K13_EQ_TIMEOUT_CYCLES (65_536)
+        .K13_EQ_TIMEOUT_CYCLES (65_536),
+        .K13_RXEQ_BOOTSTRAP    (K13_RXEQ_BOOTSTRAP_CFG)
     ) DUT (
         .pcie_refclk_p(pcie_refclk_p), .pcie_refclk_n(pcie_refclk_n),
         .pcie_perst_n(pcie_perst_n), .pcie_rxp(pcie_rxp), .pcie_rxn(pcie_rxn),
