@@ -61,7 +61,8 @@ if {$k13_enable} {
 }
 set impl_dir    [file join $script_dir $build_name impl]
 set capture_dir [file join $script_dir $build_name capture]
-set bit_path    [file join $impl_dir k11b2_gen1_endpoint_ila.bit]
+set bit_name    [expr {$k13_enable ? "k13_gen3_endpoint_ila.bit" : "k11b2_gen1_endpoint_ila.bit"}]
+set bit_path    [file join $impl_dir $bit_name]
 set ltx_path    [file join $impl_dir k11b2_gen1_endpoint_ila.ltx]
 
 set server_url localhost:3122
