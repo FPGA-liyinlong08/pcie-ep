@@ -130,6 +130,12 @@ fi)
 $(if [[ "${ila_debug}" == "1" ]]; then
   printf '%s\n' 'Timing 38-164'
   printf '%s\n' 'Timing 38-436'
+  if [[ "${K13_GT_PRIMITIVE_DEBUG:-0}" == "1" ]]; then
+    # Exposing GT primitive rate/PLL pins makes the generated clock select
+    # inputs observable; Vivado then reports the documented worst-case clock
+    # derivation warnings for the variable TXOUTCLKSEL/BUFG_GT DIV pins.
+    printf '%s\n' 'Timing 38-252' 'Timing 38-277'
+  fi
 fi)
 Vivado 12-975
 EOF
