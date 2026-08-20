@@ -89,7 +89,8 @@ module k13_ltssm_partner_top #(
     wire [3:0] rx_pkt_error;
     wire tx_pkt_ready;
 
-    wire [1:0] k13_rate, k13_active_rate, k13_txeq_ctrl, k13_rxeq_ctrl;
+    wire [1:0] k13_rate, k13_active_rate, k13_requested_rate,
+               k13_txeq_ctrl, k13_rxeq_ctrl;
     wire k13_txelecidle, traffic_quiesce;
     wire [1:0] phy_rate_w, phy_txeq_ctrl_w, phy_rxeq_ctrl_w;
     wire phy_txelecidle_w;
@@ -185,6 +186,7 @@ module k13_ltssm_partner_top #(
         .expected_lane(3'd0), .expected_link(link_number),
         .reinitialize_gen1(as_mac_in_detect),
         .phy_rate_cmd(k13_rate), .active_rate(k13_active_rate),
+        .requested_rate(k13_requested_rate),
         .phy_txelecidle(k13_txelecidle),
         .phy_txeq_ctrl(k13_txeq_ctrl), .phy_txeq_preset(k13_txeq_preset),
         .phy_txeq_coeff(k13_txeq_coeff), .phy_rxeq_ctrl(k13_rxeq_ctrl),
@@ -236,6 +238,7 @@ module k13_ltssm_partner_top #(
         .phy_phystatus(phy_phystatus), .phy_rxelecidle(lt_rxelecidle),
         .phy_rxstatus(phy_rxstatus),
         .active_phy_rate(k13_active_rate),
+        .recovery_target_rate(k13_requested_rate),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),
         .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block),

@@ -31,6 +31,7 @@ module pcie_ltssm_mac_gen1 #(
     input  wire        phy_rxelecidle,
     input  wire [2:0]  phy_rxstatus,
     input  wire [1:0]  active_phy_rate,
+    input  wire [1:0]  recovery_target_rate,
 
     output wire [31:0] phy_txdata,
     output wire [1:0]  phy_txdatak,
@@ -213,9 +214,11 @@ module pcie_ltssm_mac_gen1 #(
     // directed Recovery speed change, advertise the higher-rate capability
     // together with the speed-change indication; advertising 0e from reset
     // makes the Xilinx Root Port model reject the initial Gen1 exchange.
+    wire       advertise_gen3_rate = speed_retrain_active &&
+                                     (recovery_target_rate == 2'b10);
     wire [7:0] tx_os_rate_id = TX_RATE_ID |
-        (speed_retrain_active ? 8'h0c : 8'h00) |
-        ((speed_retrain_active && (active_phy_rate != 2'b10) &&
+        (advertise_gen3_rate ? 8'h0c : 8'h00) |
+        ((advertise_gen3_rate && (active_phy_rate != 2'b10) &&
           ((ltssm_state == RECOVERY_RCVRLOCK) ||
            (ltssm_state == RECOVERY_RCVRCFG))) ? 8'h80 : 8'h00);
     wire [31:0] os_tx_data;

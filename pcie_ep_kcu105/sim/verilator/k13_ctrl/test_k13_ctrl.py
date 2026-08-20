@@ -38,8 +38,12 @@ async def production_gen3_speed_eq_path(dut):
     phases = []
     saw_speed_idle_gap = False
     saw_gen3_preset = False
+    saw_requested_before_active = False
     for _ in range(80):
         await advance(dut)
+        if int(dut.requested_rate.value) == 2:
+            if int(dut.active_rate.value) == 0:
+                saw_requested_before_active = True
         saw_gen3_preset |= int(dut.txeq_ctrl.value) != 0
         if saw_gen3_preset and int(dut.speed_state.value) in (1, 2):
             if int(dut.phy_txelecidle.value) != 1:
@@ -56,6 +60,7 @@ async def production_gen3_speed_eq_path(dut):
             break
         await advance(dut)
     assert int(dut.negotiated_speed.value) == 2
+    assert saw_requested_before_active
     assert phases == [0, 1, 2, 3, 4]
     assert int(dut.eq_failed.value) == 0
     assert not saw_speed_idle_gap, "Gen3 Recovery.Speed TXELECIDLE window has a gap"

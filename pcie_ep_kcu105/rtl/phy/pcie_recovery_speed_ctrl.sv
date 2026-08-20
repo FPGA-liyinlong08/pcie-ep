@@ -22,6 +22,10 @@ module pcie_recovery_speed_ctrl #(
     input  wire       rate_op_done,
     input  wire       rate_op_failed,
     input  wire [1:0] active_rate,
+    // Latched semantic target for the current Recovery transaction.  This is
+    // intentionally separate from active_rate: the latter commits only after
+    // PhyStatus, while LTSSM must advertise the requested rate earlier.
+    output wire [1:0] requested_rate,
 
     output reg        retrain_accept,
     input  wire       phy_cdr_lost,
@@ -57,6 +61,14 @@ module pcie_recovery_speed_ctrl #(
     // add a second live-link gate here or the request is lost in the handoff.
     wire retrain_qualified = retrain_valid;
     wire timeout_expired = timeout_count >= (TIMEOUT_LIMIT - 1);
+
+    // During an explicit Gen1 fallback the pending transaction remains the
+    // original target for diagnostics/retry bookkeeping, but LTSSM must
+    // advertise Gen1 until the fallback operation has completed.
+    assign requested_rate = ((state == ST_FALLBACK_REQUEST) ||
+                             (state == ST_FALLBACK_WAIT) ||
+                             (state == ST_FALLBACK_IDLE)) ? 2'b00 :
+                            pending_speed;
 
     always @* begin
         rate_req_valid  = 1'b0;

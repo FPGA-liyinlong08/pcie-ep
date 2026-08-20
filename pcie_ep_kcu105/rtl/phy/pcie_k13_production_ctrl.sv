@@ -52,6 +52,7 @@ module pcie_k13_production_ctrl #(
     // PHY command (来自 contract) 与 protocol 状态
     output wire [1:0] phy_rate_cmd,        // 替换原 phy_rate：去 wrapper
     output wire [1:0] active_rate,         // 来自 contract：去 LTSSM active_phy_rate
+    output wire [1:0] requested_rate,      // 当前 Recovery 目标，独立于 active commit
     output wire       phy_txelecidle,      // OR-arbitrated
     output wire [1:0] phy_txeq_ctrl,
     output wire [3:0] phy_txeq_preset,
@@ -101,6 +102,7 @@ module pcie_k13_production_ctrl #(
     // Recovery speed controller → contract 的 semantic handshake
     wire       speed_rate_req_valid;
     wire [1:0] speed_rate_req_target;
+    wire [1:0] speed_requested_rate;
     wire       speed_fallback_req;
     wire       speed_recovery_active;
     wire [2:0] speed_state_w;
@@ -222,6 +224,7 @@ module pcie_k13_production_ctrl #(
             .rate_op_done(contract_rate_done),
             .rate_op_failed(contract_rate_failed),
             .active_rate(contract_active_rate),
+            .requested_rate(speed_requested_rate),
             // 内部诊断
             .retrain_accept(speed_retrain_accept),
             .phy_cdr_lost(phy_cdr_lost),
@@ -400,6 +403,7 @@ module pcie_k13_production_ctrl #(
         assign active_target = 2'b00;
         assign speed_rate_req_valid = 1'b0;
         assign speed_rate_req_target = 2'b00;
+        assign speed_requested_rate = 2'b00;
         assign speed_fallback_req = 1'b0;
         assign speed_recovery_active = 1'b0;
         assign speed_state_w = 3'd0;
@@ -452,6 +456,7 @@ module pcie_k13_production_ctrl #(
     // 只能通过强制把 active_target 锁回 Gen1（等 speed ctrl 触发 fallback）。
     assign phy_rate_cmd = contract_phy_rate_cmd;
     assign active_rate  = contract_active_rate;
+    assign requested_rate = speed_requested_rate;
 
     assign eq_done = eq_done_w;
     assign eq_failed = eq_failed_w || post_rate_rxeq_failed;

@@ -173,6 +173,7 @@ module kcu105_pcie_gen1_top #(
         .phy_rxelecidle         (phy_rxelecidle),
         .phy_rxstatus           (phy_rxstatus),
         .active_phy_rate        (phy_rate),
+        .recovery_target_rate   (2'b00),
         .phy_txdata             (phy_txdata),
         .phy_txdatak            (phy_txdatak),
         .phy_txdata_valid       (phy_txdata_valid),

@@ -24,6 +24,7 @@ module k13_production_ctrl_test_top #(
     input wire force_rx_done_without_adapt,
     // 暴露给 cocotb 的观察信号 (新接口)
     output wire [1:0] phy_rate_cmd, output wire [1:0] active_rate,
+    output wire [1:0] requested_rate,
     output wire [1:0] negotiated_speed,
     output wire phy_txelecidle,
     output wire [2:0] speed_state, output wire eq_active, output wire eq_done,
@@ -52,7 +53,7 @@ module k13_production_ctrl_test_top #(
     reg [1:0] ts_rate_r;
     reg tx_done_r, rx_done_r, rx_adapt_done_r;
 
-    wire [1:0] ctrl_phy_rate_cmd, ctrl_active_rate;
+    wire [1:0] ctrl_phy_rate_cmd, ctrl_active_rate, ctrl_requested_rate;
     wire ctrl_txelecidle;
     wire [1:0] ctrl_txeq_ctrl, ctrl_rxeq_ctrl;
     wire [3:0] ctrl_txeq_preset, ctrl_rxeq_txpreset;
@@ -91,6 +92,7 @@ module k13_production_ctrl_test_top #(
         // === 新 contract 接口 ===
         .phy_rate_cmd(ctrl_phy_rate_cmd),
         .active_rate(ctrl_active_rate),
+        .requested_rate(ctrl_requested_rate),
         .phy_txelecidle(ctrl_txelecidle),
         .phy_txeq_ctrl(ctrl_txeq_ctrl), .phy_txeq_preset(ctrl_txeq_preset),
         .phy_txeq_coeff(ctrl_txeq_coeff), .phy_rxeq_ctrl(ctrl_rxeq_ctrl),
@@ -110,6 +112,8 @@ module k13_production_ctrl_test_top #(
         .rate_contract_failed(ctrl_rate_failed),
         .rate_contract_illegal(rate_contract_illegal)
     );
+
+    assign requested_rate = ctrl_requested_rate;
 
     always @(posedge phy_clk or negedge phy_rst_n) begin
         if (!phy_rst_n) begin

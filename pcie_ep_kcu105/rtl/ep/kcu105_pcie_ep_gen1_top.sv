@@ -86,7 +86,8 @@ module kcu105_pcie_ep_gen1_top #(
     wire [7:0] os_eq_control;
     wire [23:0] os_eq_data;
     wire k13_phy_txelecidle;
-    wire [1:0] k13_phy_rate_cmd, k13_active_rate, k13_phy_txeq_ctrl, k13_phy_rxeq_ctrl;
+    wire [1:0] k13_phy_rate_cmd, k13_active_rate, k13_requested_rate,
+               k13_phy_txeq_ctrl, k13_phy_rxeq_ctrl;
     wire [3:0] k13_phy_txeq_preset, k13_phy_rxeq_txpreset;
     wire [5:0] k13_phy_txeq_coeff;
     wire k13_traffic_quiesce, k13_recovery_active, k13_recovery_speed_done;
@@ -283,6 +284,7 @@ module kcu105_pcie_ep_gen1_top #(
         // Rate contract 是 raw phy_rate 唯一 owner
         .phy_rate_cmd(k13_phy_rate_cmd),
         .active_rate(k13_active_rate),
+        .requested_rate(k13_requested_rate),
         .phy_txelecidle(k13_phy_txelecidle),
         .phy_txeq_ctrl(k13_phy_txeq_ctrl), .phy_txeq_preset(k13_phy_txeq_preset),
         .phy_txeq_coeff(k13_phy_txeq_coeff), .phy_rxeq_ctrl(k13_phy_rxeq_ctrl),
@@ -339,6 +341,7 @@ module kcu105_pcie_ep_gen1_top #(
         assign k13_phy_txelecidle = 1'b0;
         assign k13_phy_rate_cmd = 2'b00;
         assign k13_active_rate = 2'b00;
+        assign k13_requested_rate = 2'b00;
         assign k13_phy_txeq_ctrl = 2'b00;
         assign k13_phy_txeq_preset = 4'd0;
         assign k13_phy_txeq_coeff = 6'd0;
@@ -417,6 +420,7 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_rxsync_header(phy_rxsync_header), .phy_rxvalid(phy_rxvalid),
         .phy_phystatus(phy_phystatus), .phy_rxelecidle(phy_rxelecidle),
         .phy_rxstatus(phy_rxstatus), .active_phy_rate(active_phy_rate_int),
+        .recovery_target_rate((K13_ENABLE != 0) ? k13_requested_rate : 2'b00),
         .phy_txdata(phy_txdata),
         .phy_txdatak(phy_txdatak), .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block), .phy_txsync_header(phy_txsync_header),
