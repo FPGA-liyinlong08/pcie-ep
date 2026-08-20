@@ -32,6 +32,7 @@ module pcie_ltssm_mac_gen1 #(
     input  wire [2:0]  phy_rxstatus,
     input  wire [1:0]  active_phy_rate,
     input  wire [1:0]  recovery_target_rate,
+    input  wire        recovery_fallback_active,
 
     output wire [31:0] phy_txdata,
     output wire [1:0]  phy_txdatak,
@@ -980,7 +981,18 @@ module pcie_ltssm_mac_gen1 #(
                     end
                     RECOVERY_RCVRLOCK: begin
                         state_timer <= state_timer + 1'b1;
-                        if (os_ts1_valid && !os_link_is_pad && !os_lane_is_pad &&
+                        // An EQ/peer failure can be reported after the
+                        // original Gen3 Recovery.Speed has already returned
+                        // to RcvrLock.  Re-enter Speed for the explicit Gen1
+                        // fallback while active_phy_rate is still Gen3, so
+                        // the Root Port observes the fallback PhyStatus in
+                        // the same Recovery transaction.
+                        if (recovery_fallback_active &&
+                            (active_phy_rate != 2'b00)) begin
+                            ltssm_state <= RECOVERY_SPEED;
+                            state_timer <= 32'd0;
+                            rx_ts_count <= 5'd0;
+                        end else if (os_ts1_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
                                 ltssm_state <= RECOVERY_RCVRCFG;
@@ -1000,7 +1012,9 @@ module pcie_ltssm_mac_gen1 #(
                         if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
-                                if (speed_retrain_active && !recovery_speed_changed)
+                                if (speed_retrain_active &&
+                                    (!recovery_speed_changed ||
+                                     recovery_fallback_active))
                                     ltssm_state <= RECOVERY_SPEED;
                                 else
                                     ltssm_state <= RECOVERY_IDLE;

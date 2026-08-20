@@ -421,6 +421,8 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_phystatus(phy_phystatus), .phy_rxelecidle(phy_rxelecidle),
         .phy_rxstatus(phy_rxstatus), .active_phy_rate(active_phy_rate_int),
         .recovery_target_rate((K13_ENABLE != 0) ? k13_requested_rate : 2'b00),
+        .recovery_fallback_active((K13_ENABLE != 0) &&
+                                  (k13_speed_state >= 3'd5)),
         .phy_txdata(phy_txdata),
         .phy_txdatak(phy_txdatak), .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block), .phy_txsync_header(phy_txsync_header),

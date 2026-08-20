@@ -239,6 +239,7 @@ module k13_ltssm_partner_top #(
         .phy_rxstatus(phy_rxstatus),
         .active_phy_rate(k13_active_rate),
         .recovery_target_rate(k13_requested_rate),
+        .recovery_fallback_active(speed_state >= 3'd5),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),
         .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block),
