@@ -114,7 +114,10 @@ warning_ids="$(grep '^WARNING: \[' "${build_dir}/vivado.log" \
   | sed -E 's/^WARNING: \[([^]]+)\].*/\1/' | sort -u)"
 expected_warning_ids="$(cat <<EOF
 $(if [[ "${ila_debug}" == "1" ]]; then
-  printf '%s\n' 'DRC PDCN-1569' 'DRC RTSTAT-10' 'Route 35-328'
+  printf '%s\n' 'DRC PDCN-1569' 'DRC RTSTAT-10'
+fi)
+$(if [[ "${ila_debug}" == "1" || "${k13_enable}" == "1" ]]; then
+  printf '%s\n' 'Route 35-328'
 fi)
 $(if [[ "${K11B2_ILA_RESUME:-0}" != "1" ]]; then
   printf '%s\n' \
@@ -131,7 +134,7 @@ fi)
 Vivado 12-975
 EOF
 )"
-expected_warning_ids="$(printf '%s\n' "${expected_warning_ids}" | sed '/^$/d')"
+expected_warning_ids="$(printf '%s\n' "${expected_warning_ids}" | sed '/^$/d' | sort -u)"
 if [[ "${warning_ids}" != "${expected_warning_ids}" ]]; then
   echo "错误：K11-B2 Warning ID集合与固定allowlist不一致" >&2
   printf '实际：\n%s\n期望：\n%s\n' "${warning_ids}" "${expected_warning_ids}" >&2

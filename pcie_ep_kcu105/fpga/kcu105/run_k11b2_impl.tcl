@@ -872,8 +872,11 @@ if {[regexp -line {^CDC-[0-9]+[ \t]+Critical[ \t]+[1-9][0-9]*} $cdc_text]} {
 }
 
 set bit_name [expr {$g2_gen1_only ? "g2_gen1_cpll_endpoint.bit" :
-                     ($ila_debug ? "k11b2_gen1_endpoint_ila.bit" :
-                                   "k11b2_gen1_endpoint.bit")}]
+                     ($k13_enable ?
+                      ($ila_debug ? "k13_gen3_endpoint_ila.bit" :
+                                    "k13_gen3_endpoint.bit") :
+                      ($ila_debug ? "k11b2_gen1_endpoint_ila.bit" :
+                                    "k11b2_gen1_endpoint.bit"))}]
 write_bitstream -force [file join $build_dir $bit_name]
 if {$ila_debug} {
   write_debug_probes -force [file join $build_dir k11b2_gen1_endpoint_ila.ltx]
