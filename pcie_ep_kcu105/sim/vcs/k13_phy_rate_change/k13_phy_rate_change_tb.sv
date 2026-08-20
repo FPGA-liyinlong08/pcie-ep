@@ -96,6 +96,17 @@ module k13_phy_rate_change_tb;
         .phy_rxeq_adapt_done(phy_rxeq_adapt_done), .phy_rxeq_done(phy_rxeq_done)
     );
 
+    // The public pcie_phy_0 simulation wrapper does not expose GT common
+    // status.  Observe the generated GT Wizard internals directly so this
+    // test can distinguish a controller PhyStatus response from a real
+    // QPLL1 lock/re-lock event.  These are the same nets used by the
+    // corresponding Hardware ILA probe.
+    wire qpll1lock = phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.qpll1lock_out[0];
+    wire qpll1reset = phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.qpll1reset_in[0];
+    wire pcierateqpllreset = phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.pcierateqpllreset_out[0];
+    wire pcierategen3 = phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.pcierategen3_out[0];
+    wire pcieusergen3rdy = phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.pcieusergen3rdy_out[0];
+
     pcie_k13_production_ctrl #(
         .K13_ENABLE(1), .K13_RXEQ_BOOTSTRAP(0),
         .SPEED_TIMEOUT_CYCLES(500000), .EQ_TIMEOUT_CYCLES(500000)
@@ -139,14 +150,20 @@ module k13_phy_rate_change_tb;
     reg rate_change_window;
     reg retrain_issued;
     reg failed;
+    reg qpll_seen_before_rate;
+    reg qpll_unlock_seen;
+    reg qpll_relock_seen;
 
     initial begin
         trace_fd = $fopen("k13_phy_rate_change_trace.csv", "w");
-        $fdisplay(trace_fd, "cycle,time_ps,rate,powerdown,txelecidle,txeq_ctrl,txeq_preset,txeq_done,phystatus,cdr_hold,speed_state,recovery_active");
+        $fdisplay(trace_fd, "cycle,time_ps,rate,powerdown,txelecidle,txeq_ctrl,txeq_preset,txeq_done,phystatus,cdr_hold,speed_state,recovery_active,qpll1lock,qpll1reset,pcierateqpllreset,pcierategen3,pcieusergen3rdy");
         cycle = 0; seen_rate_gen3 = 1'b0; seen_phystatus = 1'b0;
         seen_txeq_preset = 1'b0;
         rate_change_window = 1'b0;
         retrain_issued = 1'b0; failed = 1'b0;
+        qpll_seen_before_rate = 1'b0;
+        qpll_unlock_seen = 1'b0;
+        qpll_relock_seen = 1'b0;
         repeat (500) @(posedge refclk);
         phy_rst_n = 1'b1;
         wait (phy_phystatus_rst === 1'b0);
@@ -173,6 +190,18 @@ module k13_phy_rate_change_tb;
             $display("K13_PHY_RATE_CHANGE_VCS_FAIL reason=no_pre_rate_txeq_preset");
         if (!seen_phystatus)
             $display("K13_PHY_RATE_CHANGE_VCS_FAIL reason=phystatus_timeout cycles=%0d", timeout_cycles);
+        $display("K13_PHY_RATE_CHANGE_QPLL initial_lock_seen=%0d qpll1lock=%0d qpll1reset=%0d pcierateqpllreset=%0d pcierategen3=%0d pcieusergen3rdy=%0d unlock_seen=%0d relock_seen=%0d",
+                 qpll_seen_before_rate,
+                 qpll1lock, qpll1reset, pcierateqpllreset, pcierategen3,
+                 pcieusergen3rdy, qpll_unlock_seen, qpll_relock_seen);
+        if (qpll_seen_before_rate && (qpll1lock === 1'b1)) begin
+            $display("K13_PRODUCTION_PHY_QPLL_LOCK_VCS_PASS initial_lock=1 final_lock=1 unlock_seen=%0d relock_seen=%0d",
+                     qpll_unlock_seen, qpll_relock_seen);
+        end else begin
+            $display("K13_PRODUCTION_PHY_QPLL_LOCK_VCS_FAIL initial_lock=%0d final_lock=%0d",
+                     qpll_seen_before_rate, qpll1lock);
+            failed = 1'b1;
+        end
         if (seen_rate_gen3 && seen_txeq_preset && seen_phystatus && !failed) begin
             $display("K13_PRODUCTION_PHY_RATE_CHANGE_VCS_PASS rate=gen1_to_gen3 pre_rate_txeq=1 phystatus=1");
         end else begin
@@ -186,11 +215,12 @@ module k13_phy_rate_change_tb;
 
     always @(posedge phy_pclk) begin
         if (ctrl_phy_rst_n === 1'b1) begin
-            $fdisplay(trace_fd, "%0d,%0t,%02b,%02b,%0d,%02b,%0d,%0d,%0d,%0d,%0d,%0d",
+            $fdisplay(trace_fd, "%0d,%0t,%02b,%02b,%0d,%02b,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d",
                       cycle, $time, ctrl_rate, phy_powerdown, ctrl_txelecidle,
                       ctrl_txeq_ctrl, ctrl_txeq_preset, phy_txeq_done,
                       phy_phystatus, as_cdr_hold_req, ctrl_speed_state,
-                      ctrl_recovery_active);
+                      ctrl_recovery_active, qpll1lock, qpll1reset,
+                      pcierateqpllreset, pcierategen3, pcieusergen3rdy);
             if ((ctrl_txeq_ctrl == 2'b01) && (ctrl_txeq_preset == 4'd4))
                 seen_txeq_preset = 1'b1;
             if ((ctrl_rate == 2'b10) && !seen_txeq_preset) begin
@@ -199,6 +229,12 @@ module k13_phy_rate_change_tb;
             end
             if (ctrl_rate == 2'b10) seen_rate_gen3 = 1'b1;
             if (ctrl_rate == 2'b10) rate_change_window = 1'b1;
+            if (!rate_change_window && (qpll1lock === 1'b1))
+                qpll_seen_before_rate = 1'b1;
+            if (rate_change_window && (qpll1lock === 1'b0))
+                qpll_unlock_seen = 1'b1;
+            if (rate_change_window && qpll_unlock_seen && (qpll1lock === 1'b1))
+                qpll_relock_seen = 1'b1;
             if (rate_change_window && (phy_phystatus === 1'b1))
                 seen_phystatus = 1'b1;
             if (retrain_issued && rate_change_window && !seen_phystatus &&

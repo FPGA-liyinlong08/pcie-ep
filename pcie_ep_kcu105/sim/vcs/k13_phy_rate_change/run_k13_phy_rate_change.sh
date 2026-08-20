@@ -98,4 +98,6 @@ fi
 
 grep -q 'K13_PRODUCTION_PHY_RATE_CHANGE_VCS_PASS' \
     "${result_dir}/k13_phy_rate_change_simulation.log"
+grep -q 'K13_PRODUCTION_PHY_QPLL_LOCK_VCS_PASS' \
+    "${result_dir}/k13_phy_rate_change_simulation.log"
 echo "K13_PRODUCTION_PHY_RATE_CHANGE_VCS_PASS result_dir=${result_dir}"
