@@ -1,0 +1,15 @@
+# Vivado/XSim generated directories.
+.Xil/
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.sim/
+
+# The VCS executable, csrc tree and runtime artifacts are generated locally.
+vcs/build/
+
+# Tool logs and one-off run captures.
+*.log
+*.jou
+vcs_run*.out
