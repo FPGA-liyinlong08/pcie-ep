@@ -44,6 +44,12 @@ fallback 后仍停留在 Recovery.RcvrCfg/Recovery.Speed 边界，未重新产�
 LTSSM fallback 后重建上下文/重新进入 Recovery.Speed 的集成问题，不是 QPLL 锁定
 或线缆、J74、PERST#/REFCLK 问题。bitstream 门继续保持关闭。
 
+另对 LTSSM 的 `recovery_speed_changed` 增加了新 retrain 上升沿清零，避免同一
+条链路在 fallback 后永久跳过 Recovery.Speed。该修正已通过 K11B2 顶层 lint；
+VCS 仍显示第二次激励在 Endpoint Recovery.RcvrLock 只收到 5 个 TS1 后超时，
+尚未形成第二次 `recovery_speed_ready`。因此当前状态是“fallback 语义已闭环、
+fallback 后真实 LTSSM/Root-Port 重训练仍未闭环”，不宣称 Gen3 PASS。
+
 ### 2026-08-20 完整 VCS 首个分叉定位
 
 在同一套 Vivado 2021.2 XPM、`glbl.v`、IP sim source、GT/SecureIP simlib 和真实

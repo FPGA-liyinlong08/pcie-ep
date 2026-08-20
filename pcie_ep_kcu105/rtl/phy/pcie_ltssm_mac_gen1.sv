@@ -157,6 +157,9 @@ module pcie_ltssm_mac_gen1 #(
     // 一次Recovery内只允许执行一次速率切换；PhyStatus完成后重新经过
     // RcvrLock/RcvrCfg，再进入Recovery.Idle/EQ。
     reg        recovery_speed_changed;
+    // A later retrain after Gen1 fallback starts a new Recovery transaction;
+    // clear the one-speed-per-recovery guard only on a new semantic request.
+    reg        speed_retrain_active_q;
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
@@ -646,8 +649,12 @@ module pcie_ltssm_mac_gen1 #(
             dbg_l0_seen <= 1'b0;
             cfg_complete_pending <= 1'b0;
             recovery_speed_changed <= 1'b0;
+            speed_retrain_active_q <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
+            if (speed_retrain_active && !speed_retrain_active_q)
+                recovery_speed_changed <= 1'b0;
+            speed_retrain_active_q <= speed_retrain_active;
             if (ltssm_state == CFG_COMPLETE)
                 dbg_cfg_complete_seen <= 1'b1;
             if (ltssm_state == CFG_IDLE)
@@ -685,6 +692,7 @@ module pcie_ltssm_mac_gen1 #(
                 dbg_cfg_idle_seen <= 1'b0;
                 dbg_l0_seen <= 1'b0;
                 recovery_speed_changed <= 1'b0;
+                speed_retrain_active_q <= 1'b0;
             end else begin
                 case (ltssm_state)
                     DETECT_QUIET: begin
