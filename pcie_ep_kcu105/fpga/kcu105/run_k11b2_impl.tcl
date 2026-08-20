@@ -655,9 +655,15 @@ if {$ila_debug} {
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierategen3_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateqpllreset_out\[0\]$}] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateqpllpd_out\[0\]$}] \
-    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateidle_out\[0\]$}] \
-    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieusergen3rdy_out\[0\]$}] \
-    [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieuserratestart_out\[0\]$}] \
+    [phy_boundary_net_first [list \
+      {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateidle_out\[0\]$} \
+      {^u_endpoint/g_ila_debug\.dbg_k13_top\[0\]$}]] \
+    [phy_boundary_net_first [list \
+      {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieusergen3rdy_out\[0\]$} \
+      {^u_endpoint/g_ila_debug\.dbg_k13_top\[1\]$}]] \
+    [phy_boundary_net_first [list \
+      {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieuserratestart_out\[0\]$} \
+      {^u_endpoint/g_ila_debug\.dbg_k13_top\[2\]$}]] \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_phystatus_rst_fall_pipe]]
   add_ila_probe u_ila_pipe 6 $phy_probe_nets
 
