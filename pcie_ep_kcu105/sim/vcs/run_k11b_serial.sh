@@ -25,11 +25,14 @@ k12e_mode="${K12E_VCS:-0}"
 k13_enable="${K13_ENABLE:-0}"
 k13_retrain="${K13_VCS_RETRAIN:-0}"
 k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
+k13_rxeq_two_pass="${K13_RXEQ_TWO_PASS:-0}"
 k13_fallback_wait="${K13_FALLBACK_WAIT:-20000}"
 k13_waveform="${K13_WAVEFORM:-0}"
 k13_trace="${K13_TRACE:-0}"
 k13_pipe_compare="${K13_PIPE_COMPARE:-0}"
 k13_retrain_source="${K13_RETRAIN_SOURCE:-dual}"
+k13_local_loopback="${K13_LOCAL_LOOPBACK:-0}"
+k13_gen3_cold_phy="${K13_GEN3_COLD_PHY:-0}"
 case "${k13_retrain_source}" in
     dual|rp|ep) ;;
     *)
@@ -40,6 +43,7 @@ esac
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 tb_defines+=(+define+K13_RXEQ_BOOTSTRAP_VALUE=${k13_rxeq_bootstrap})
+tb_defines+=(+define+K13_RXEQ_TWO_PASS_VALUE=${k13_rxeq_two_pass})
 if [[ "${b2_mode}" == "1" ]]; then
     tb_defines+=(+define+K11B2_DUT)
 fi
@@ -220,6 +224,12 @@ if [[ "${b2_mode}" == "1" ]]; then
     fi
     if [[ "${k13_pipe_compare}" == "1" ]]; then
         b2_plusargs+=(+K13_PIPE_COMPARE)
+    fi
+    if [[ "${k13_local_loopback}" == "1" ]]; then
+        b2_plusargs+=(+K13_LOCAL_LOOPBACK)
+    fi
+    if [[ "${k13_gen3_cold_phy}" == "1" ]]; then
+        b2_plusargs+=(+K13_GEN3_COLD_PHY)
     fi
     case "${k13_retrain_source}" in
         rp) b2_plusargs+=(+K13_RETRAIN_SOURCE_RP) ;;

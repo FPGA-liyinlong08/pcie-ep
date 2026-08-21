@@ -175,7 +175,22 @@ module pcie_ltssm_mac_gen1 #(
     wire       os_link_is_pad;
     wire       os_lane_is_pad;
     wire [7:0] os_n_fts;
-    wire       gen3_mode = active_phy_rate == 2'b10;
+    // During a K13 Gen1->Gen3 Recovery transaction, the PHY command reaches
+    // Gen3 before Rate Contract commits active_phy_rate on PhyStatus.  The
+    // partner may already emit EIEOS/TS at that point; keep the Gen3 RX
+    // parser enabled from the semantic Gen3 request so it can acquire the
+    // EIEOS/LFSR boundary instead of starting in the middle of a TS block.
+    wire       gen3_rate_pending = speed_retrain_active &&
+                                   (recovery_target_rate == 2'b10) &&
+                                   (ltssm_state == RECOVERY_SPEED);
+    wire       gen3_mode = (active_phy_rate == 2'b10) || gen3_rate_pending;
+    // A Gen3 Root Port can remain in Recovery.Equalization and exchange
+    // phase-0 TS1s with EQ fields while this compact LTSSM is represented by
+    // Recovery.RcvrCfg. Respond with TS1 during that phase; ordinary TS2
+    // RcvrCfg traffic (used by the directed harness) remains unchanged.
+    reg        gen3_eq_ts1_response_hold;
+    wire       gen3_eq_ts1_response = gen3_mode &&
+                                      gen3_eq_ts1_response_hold;
     wire       gen1_os_ts1_valid, gen1_os_ts2_valid, gen1_os_malformed;
     wire [7:0] gen1_os_link_number, gen1_os_lane_number;
     wire [7:0] gen1_os_n_fts, gen1_os_rate_id, gen1_os_training_control;
@@ -578,7 +593,9 @@ module pcie_ltssm_mac_gen1 #(
                 tx_os_lane_pad = 1'b1;
             end
             CFG_LANENUM_ACCEPT, RECOVERY_RCVRLOCK: tx_os_mode = 2'd1;
-            CFG_COMPLETE, RECOVERY_RCVRCFG:       tx_os_mode = 2'd2;
+            CFG_COMPLETE:                         tx_os_mode = 2'd2;
+            RECOVERY_RCVRCFG:                     tx_os_mode =
+                gen3_eq_ts1_response ? 2'd1 : 2'd2;
             RECOVERY_SPEED: begin
                 tx_os_enable = 1'b0;
             end
@@ -588,7 +605,13 @@ module pcie_ltssm_mac_gen1 #(
 
     assign phy_txdata         = gen3_mode ? gen3_os_tx_data :
                                              {16'd0, tx_scrambled_data};
-    assign phy_txdatak        = tx_scrambled_datak;
+    // Gen3 128b/130b PIPE does not use the Gen1 K-character bitmap.  The
+    // legacy 8b/10b ordered-set generator still drives tx_scrambled_datak
+    // (for example 2'b01 on a TS first word); forwarding that bitmap while
+    // active_phy_rate=Gen3 marks the 32-bit lane as a control character and
+    // can prevent the partner PCS from asserting RXDATA_VALID.  Gen3 carries
+    // block type in TXSYNC_HEADER instead, so TXDATAK must be zero.
+    assign phy_txdatak        = gen3_mode ? 2'b00 : tx_scrambled_datak;
     assign phy_txdata_valid   = gen3_mode ? gen3_os_tx_valid :
                                              tx_scrambled_valid;
     assign phy_txstart_block  = gen3_mode && gen3_os_tx_start_block;
@@ -658,11 +681,32 @@ module pcie_ltssm_mac_gen1 #(
             cfg_complete_pending <= 1'b0;
             recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= 1'b0;
+            gen3_eq_ts1_response_hold <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
             if (speed_retrain_active && !speed_retrain_active_q)
                 recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= speed_retrain_active;
+            // speed_retrain_active is a Recovery.Speed transaction flag and
+            // is cleared as soon as PhyStatus completes.  Gen3 equalization
+            // continues in RcvrCfg after that point, so it must not be used
+            // to release an in-flight TS1 response.  Otherwise a TS1 can be
+            // truncated and the next TS2 can start in the middle of the
+            // Ordered Set (observed as two mode-1 words followed by mode-2).
+            // Keep the response hold while the active PHY rate is Gen3 and
+            // the LTSSM remains in RcvrCfg; clear it only on TS2/malformed or
+            // when leaving that state.
+            if (!gen3_mode ||
+                ((active_phy_rate != 2'b10) && !speed_retrain_active) ||
+                (ltssm_state != RECOVERY_RCVRCFG))
+                gen3_eq_ts1_response_hold <= 1'b0;
+            else if (os_ts2_valid || os_malformed)
+                gen3_eq_ts1_response_hold <= 1'b0;
+            else if (os_ts1_valid &&
+                     ((os_eq_control != 8'd0) || (os_eq_data != 24'd0)))
+                // Hold the response mode for the entire next TS block;
+                // os_ts1_valid itself is only a one-cycle completion pulse.
+                gen3_eq_ts1_response_hold <= 1'b1;
             if (ltssm_state == CFG_COMPLETE)
                 dbg_cfg_complete_seen <= 1'b1;
             if (ltssm_state == CFG_IDLE)

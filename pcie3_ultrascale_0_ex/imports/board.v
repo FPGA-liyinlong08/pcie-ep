@@ -147,6 +147,15 @@ module board;
  assign rp_cfg_phy_link_down = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.cfg_phy_link_down;
  assign rp_user_lnk_up = RP.user_lnk_up;
 
+ // RXEQ observability for demo-vs-EP comparison.  These are the lane-0
+ // PIPE-side command/feedback signals inside the generated EP core.
+ wire [1:0] ep_pipe_rx_eqcontrol = EP.pcie3_ultrascale_0_i.inst.pipe_rx_eqcontrol[1:0];
+ wire [3:0] ep_pipe_rx_eq_txpreset = EP.pcie3_ultrascale_0_i.inst.pipe_rx_eq_txpreset[3:0];
+ wire       ep_pipe_rx_eqdone = EP.pcie3_ultrascale_0_i.inst.pipe_rx_eqdone[0];
+ wire       ep_pipe_rx_eq_adapt_done = EP.pcie3_ultrascale_0_i.inst.pipe_rx_eq_adapt_done[0];
+ wire [2:0] ep_phy_rxeq_fsm = EP.pcie3_ultrascale_0_i.inst.phy_rxeq_fsm[2:0];
+ reg trace_ltssm;
+
  // Optional targeted waveform dump for PCIe Gen3 link training.
  // Enable with +DUMP_WAVEFORM. The output is written in the current run directory.
  initial begin
@@ -169,10 +178,22 @@ module board;
      $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.pipe_rx_elec_idle);
      $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.gt_pcierategen3_o);
      $dumpvars(0, EP.pcie3_ultrascale_0_i.inst.pipe_rx_phy_status);
+     $dumpvars(0, ep_pipe_rx_eqcontrol);
+     $dumpvars(0, ep_pipe_rx_eq_txpreset);
+     $dumpvars(0, ep_pipe_rx_eqdone);
+     $dumpvars(0, ep_pipe_rx_eq_adapt_done);
+     $dumpvars(0, ep_phy_rxeq_fsm);
    end
  end
 
- reg trace_ltssm;
+ always @(ep_pipe_rx_eqcontrol or ep_pipe_rx_eq_txpreset or
+          ep_pipe_rx_eqdone or ep_pipe_rx_eq_adapt_done or ep_phy_rxeq_fsm) begin
+   if (trace_ltssm)
+     $display("[%t] EP RXEQ ctrl=%02b txpreset=%0d done=%0d adapt_done=%0d fsm=%0d",
+              $realtime, ep_pipe_rx_eqcontrol, ep_pipe_rx_eq_txpreset,
+              ep_pipe_rx_eqdone, ep_pipe_rx_eq_adapt_done, ep_phy_rxeq_fsm);
+ end
+
  initial trace_ltssm = $test$plusargs("TRACE_LTSSM");
 
  always @(cfg_ltssm_state) begin

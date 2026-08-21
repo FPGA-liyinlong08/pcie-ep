@@ -15,6 +15,9 @@
 module pcie_k13_production_ctrl #(
     parameter integer K13_ENABLE = 0,
     parameter integer K13_RXEQ_BOOTSTRAP = 1,
+    // RXEQ feedback compatibility: 0 keeps strict done+adapt_done behavior;
+    // 1 clears and re-issues a done-only RXEQ request once.
+    parameter integer K13_RXEQ_TWO_PASS = 0,
     // 250 MHz PIPE下分别为4 ms；行为仿真继续通过参数覆盖缩短。
     parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer EQ_TIMEOUT_CYCLES    = 1_000_000,
@@ -154,6 +157,16 @@ module pcie_k13_production_ctrl #(
     reg post_rate_rxeq_ready;
     reg post_rate_rxeq_failed;
     reg [31:0] post_rate_rxeq_timeout_count;
+    // Some generated PHY/OS receiver paths present the completed TS pulse
+    // in the same clock boundary in which the guard's registered accept
+    // pulse is updated. Keep a semantic qualification here as well, so a
+    // legal post-rate TS cannot be lost at that NBA hand-off.
+    wire post_rate_ts_qualified = ts_valid && ts_complete &&
+                                   (ts_is_ts1 ^ ts_is_ts2) &&
+                                   (ts_rate == active_target) &&
+                                   (ts_lane == expected_lane) &&
+                                   (ts_link == expected_link) &&
+                                   (!ts_eq_request || (ts_rate == 2'b10));
     // The mailbox request and active_target cross the acceptance edge at
     // different NBA boundaries.  Include the live request while it is
     // present; otherwise the first Recovery.Speed cycle can be interpreted
@@ -358,7 +371,13 @@ module pcie_k13_production_ctrl #(
             else if ((speed_state_w == 3'd0) ||
                      (active_target != 2'b10))
                 post_rate_ts_seen <= 1'b0;
-            else if ((speed_state_w == 3'd4) && ts_accept_w)
+            // The peer may send the first post-rate Gen3 TS1/TS2 while the
+            // rate contract is still in RATE_WAIT (state 3), before the
+            // PhyStatus completion moves speed_ctrl to Recovery.Idle (4).
+            // Preserve that acceptance across the state transition so the
+            // later EQ/peer-speed gate cannot lose an already valid TS.
+            else if ((speed_state_w >= 3'd3) &&
+                     (ts_accept_w || post_rate_ts_qualified))
                 post_rate_ts_seen <= 1'b1;
         end
 
@@ -375,7 +394,8 @@ module pcie_k13_production_ctrl #(
         end
 
         pcie_equalization_ctrl #(
-            .EQ_TIMEOUT_CYCLES(EQ_TIMEOUT_CYCLES)
+            .EQ_TIMEOUT_CYCLES(EQ_TIMEOUT_CYCLES),
+            .RXEQ_TWO_PASS(K13_RXEQ_TWO_PASS)
         ) u_eq (
             .clk(phy_clk), .rst_n(phy_rst_n && !speed_cdr_loss),
             .eq_start(eq_start_q), .target_speed(active_target),

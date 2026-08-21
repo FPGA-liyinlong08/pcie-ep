@@ -1,7 +1,11 @@
 // K12-C：Gen3 Equalization Phase 0～3独立控制器。
 // 只负责命令保持、参数门禁和done/timeout，不解析TS或接入生产LTSSM。
 module pcie_equalization_ctrl #(
-    parameter integer EQ_TIMEOUT_CYCLES = 32
+    parameter integer EQ_TIMEOUT_CYCLES = 32,
+    // Some generated PHY models report the first CTRL=2 coefficient pass as
+    // DONE without ADAPT_DONE.  Keep the strict PG239 behavior by default;
+    // the compatibility mode explicitly clears and retries once.
+    parameter integer RXEQ_TWO_PASS = 0
 ) (
     input wire clk, input wire rst_n,
     input wire eq_start, input wire [1:0] target_speed,
@@ -21,19 +25,22 @@ module pcie_equalization_ctrl #(
     output reg illegal_param_sticky,
     output reg phase_timeout_sticky
 );
-    localparam [2:0] ST_IDLE = 3'd0;
-    localparam [2:0] ST_P0_TX = 3'd1;
-    localparam [2:0] ST_P1_RX = 3'd2;
-    localparam [2:0] ST_P2_TX = 3'd3;
-    localparam [2:0] ST_P3_RX = 3'd4;
-    localparam [2:0] ST_DONE = 3'd5;
-    localparam [2:0] ST_FAIL = 3'd6;
+    localparam [3:0] ST_IDLE = 4'd0;
+    localparam [3:0] ST_P0_TX = 4'd1;
+    localparam [3:0] ST_P1_RX = 4'd2;
+    localparam [3:0] ST_P2_TX = 4'd3;
+    localparam [3:0] ST_P3_RX = 4'd4;
+    localparam [3:0] ST_DONE = 4'd5;
+    localparam [3:0] ST_FAIL = 4'd6;
+    localparam [3:0] ST_P1_RX_CLEAR = 4'd7;
+    localparam [3:0] ST_P3_RX_CLEAR = 4'd8;
     localparam integer TIMEOUT_LIMIT = (EQ_TIMEOUT_CYCLES < 1) ? 1 : EQ_TIMEOUT_CYCLES;
 
-    reg [2:0] state;
+    reg [3:0] state;
     reg [3:0] saved_tx_preset, saved_rx_txpreset;
     reg [5:0] saved_tx_coeff;
     reg [31:0] timeout_count;
+    reg p1_retry_used, p3_retry_used;
     wire params_legal = (target_speed == 2'b10) &&
                         (tx_preset <= 4'd9) &&
                         (rx_txpreset <= 4'd9) &&
@@ -45,7 +52,8 @@ module pcie_equalization_ctrl #(
 
     always @* begin
         eq_active = (state == ST_P0_TX) || (state == ST_P1_RX) ||
-                    (state == ST_P2_TX) || (state == ST_P3_RX);
+                    (state == ST_P1_RX_CLEAR) || (state == ST_P2_TX) ||
+                    (state == ST_P3_RX) || (state == ST_P3_RX_CLEAR);
         eq_done = (state == ST_DONE);
         eq_failed = (state == ST_FAIL);
         phase = 3'd7;
@@ -64,6 +72,11 @@ module pcie_equalization_ctrl #(
                 phase = 3'd1; phy_rxeq_ctrl = 2'b10;
                 phy_rxeq_txpreset = saved_rx_txpreset;
             end
+            ST_P1_RX_CLEAR: begin
+                // Hold CTRL low long enough for the PHY's two-stage input
+                // synchronizer to observe the end of the first pass.
+                phase = 3'd1;
+            end
             ST_P2_TX: begin
                 phase = 3'd2; phy_txeq_ctrl = 2'b10;
                 phy_txeq_preset = saved_tx_preset; phy_txeq_coeff = saved_tx_coeff;
@@ -71,6 +84,9 @@ module pcie_equalization_ctrl #(
             ST_P3_RX: begin
                 phase = 3'd3; phy_rxeq_ctrl = 2'b10;
                 phy_rxeq_txpreset = saved_rx_txpreset;
+            end
+            ST_P3_RX_CLEAR: begin
+                phase = 3'd3;
             end
             ST_DONE: phase = 3'd4;
             ST_FAIL: phase = 3'd5;
@@ -82,6 +98,7 @@ module pcie_equalization_ctrl #(
         if (!rst_n) begin
             state <= ST_IDLE; timeout_count <= 32'd0;
             saved_tx_preset <= 4'd0; saved_rx_txpreset <= 4'd0; saved_tx_coeff <= 6'd0;
+            p1_retry_used <= 1'b0; p3_retry_used <= 1'b0;
             eq_start_accept <= 1'b0;
             illegal_param_sticky <= 1'b0; phase_timeout_sticky <= 1'b0;
         end else begin
@@ -98,6 +115,8 @@ module pcie_equalization_ctrl #(
                             saved_tx_preset <= tx_preset;
                             saved_rx_txpreset <= rx_txpreset;
                             saved_tx_coeff <= tx_coeff;
+                            p1_retry_used <= 1'b0;
+                            p3_retry_used <= 1'b0;
                             state <= ST_P0_TX;
                             timeout_count <= 32'd0;
                         end
@@ -114,13 +133,26 @@ module pcie_equalization_ctrl #(
                     if (phy_rxeq_success) begin
                         timeout_count <= 32'd0; state <= ST_P2_TX;
                     end else if (phy_rxeq_done) begin
-                        // The PHY rejected this adaptation proposal.  Clear
-                        // the command by entering the failure state instead
-                        // of falsely reporting a completed phase.
-                        phase_timeout_sticky <= 1'b1;
-                        timeout_count <= 32'd0; state <= ST_FAIL;
+                        if ((RXEQ_TWO_PASS != 0) && !p1_retry_used) begin
+                            p1_retry_used <= 1'b1;
+                            timeout_count <= 32'd0; state <= ST_P1_RX_CLEAR;
+                        end else begin
+                            // Strict mode, or a failed second pass: a done
+                            // pulse without adaptation must not complete EQ.
+                            phase_timeout_sticky <= 1'b1;
+                            timeout_count <= 32'd0; state <= ST_FAIL;
+                        end
                     end else if (timeout_expired) begin
                         phase_timeout_sticky <= 1'b1; timeout_count <= 32'd0; state <= ST_FAIL;
+                    end else timeout_count <= timeout_count + 1'b1;
+                end
+                ST_P1_RX_CLEAR: begin
+                    // Keep CTRL=00 for two full controller cycles and wait
+                    // for the old level-held DONE to clear.  The generated
+                    // PHY has both a two-stage CTRL synchronizer and a DONE
+                    // level that can outlive the command by one cycle.
+                    if ((timeout_count >= 32'd2) && !phy_rxeq_done) begin
+                        timeout_count <= 32'd0; state <= ST_P1_RX;
                     end else timeout_count <= timeout_count + 1'b1;
                 end
                 ST_P2_TX: begin
@@ -134,10 +166,20 @@ module pcie_equalization_ctrl #(
                     if (phy_rxeq_success) begin
                         timeout_count <= 32'd0; state <= ST_DONE;
                     end else if (phy_rxeq_done) begin
-                        phase_timeout_sticky <= 1'b1;
-                        timeout_count <= 32'd0; state <= ST_FAIL;
+                        if ((RXEQ_TWO_PASS != 0) && !p3_retry_used) begin
+                            p3_retry_used <= 1'b1;
+                            timeout_count <= 32'd0; state <= ST_P3_RX_CLEAR;
+                        end else begin
+                            phase_timeout_sticky <= 1'b1;
+                            timeout_count <= 32'd0; state <= ST_FAIL;
+                        end
                     end else if (timeout_expired) begin
                         phase_timeout_sticky <= 1'b1; timeout_count <= 32'd0; state <= ST_FAIL;
+                    end else timeout_count <= timeout_count + 1'b1;
+                end
+                ST_P3_RX_CLEAR: begin
+                    if ((timeout_count >= 32'd2) && !phy_rxeq_done) begin
+                        timeout_count <= 32'd0; state <= ST_P3_RX;
                     end else timeout_count <= timeout_count + 1'b1;
                 end
                 ST_DONE: begin

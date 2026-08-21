@@ -140,6 +140,8 @@ async def rx_done_timeout_fails_and_clears_commands(dut):
 @cocotb.test()
 async def rx_done_without_adapt_fails(dut):
     """A PHY done pulse without adaptation must never complete RXEQ."""
+    if os.environ.get("K12C_TWO_PASS") == "1":
+        return
     cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     await reset_dut(dut)
     await start_eq(dut)
@@ -153,6 +155,38 @@ async def rx_done_without_adapt_fails(dut):
     assert int(dut.eq_done.value) == 0
     assert int(dut.eq_failed.value) == 1
     assert int(dut.phy_rxeq_ctrl.value) == 0
+
+
+@cocotb.test()
+async def rx_done_without_adapt_retries_when_two_pass_enabled(dut):
+    """Compatibility mode clears CTRL=2 and retries one coefficient pass."""
+    if os.environ.get("K12C_TWO_PASS") != "1":
+        return
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
+    await reset_dut(dut)
+    await start_eq(dut)
+    dut.phy_txeq_done.value = 1
+    await advance(dut)
+    dut.phy_txeq_done.value = 0
+    assert int(dut.phase.value) == PHASE1
+
+    # First CTRL=2 pass: DONE without ADAPT_DONE is not final success.
+    dut.phy_rxeq_done.value = 1
+    dut.phy_rxeq_adapt_done.value = 0
+    await advance(dut)
+    assert int(dut.phase.value) == PHASE1
+    assert int(dut.phy_rxeq_ctrl.value) == 0
+
+    # The clear state holds CTRL=00 for two full clocks before CTRL=2 is retried.
+    dut.phy_rxeq_done.value = 0
+    await advance(dut, 3)
+    assert int(dut.phase.value) == PHASE1
+    assert int(dut.phy_rxeq_ctrl.value) == 2
+
+    dut.phy_rxeq_adapt_done.value = 1
+    dut.phy_rxeq_done.value = 1
+    await advance(dut)
+    assert int(dut.phase.value) == PHASE2
 
 
 @cocotb.test()

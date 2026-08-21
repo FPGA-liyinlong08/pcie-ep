@@ -5,6 +5,8 @@ TOPLEVEL := pcie_equalization_ctrl
 MODULE := test_k12c_eq
 SIM_BUILD ?= sim_build
 COMPILE_ARGS += --timing -Wall -Wno-fatal -Wno-TIMESCALEMOD -GEQ_TIMEOUT_CYCLES=4
+TWO_PASS ?= 0
+COMPILE_ARGS += -GRXEQ_TWO_PASS=$(TWO_PASS)
 VERILOG_SOURCES := $(PROJECT_DIR)/rtl/phy/pcie_equalization_ctrl.sv
 
 ifeq ($(NEGATIVE_STUB),1)
@@ -20,3 +22,9 @@ checker-selftest:
 	@grep -q '<failure' results_negative.xml
 	@grep -Fxq 'K12C_NEGATIVE_CHECKER_OBSERVED phase_order' k12c_negative_checker_observed.txt
 	@echo "K12_CHECKER_SELFTEST_PASS phase_order=1 eq_done_order=1"
+
+.PHONY: two-pass
+two-pass:
+	@$(MAKE) clean
+	@K12C_TWO_PASS=1 $(MAKE) TWO_PASS=1 COCOTB_RESULTS_FILE=results_two_pass.xml results_two_pass.xml
+	@echo "K12C_RXEQ_TWO_PASS_PASS"
