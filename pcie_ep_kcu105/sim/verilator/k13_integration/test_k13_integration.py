@@ -188,6 +188,57 @@ async def phy_command_responder(dut):
         rxeq_seen = rxeq != 0
 
 
+async def phy_command_responder_with_one_rxeq_failure(dut):
+    """Respond to two Gen3 attempts; inject done-only RXEQ on the first."""
+    previous_rate = int(dut.phy_rate.value)
+    phystatus_hold = 0
+    attempt = 0
+    txeq_seen = False
+    rxeq_seen = False
+    while True:
+        await RisingEdge(dut.phy_pclk)
+        await ReadOnly()
+        rate = int(dut.phy_rate.value)
+        txeq = int(dut.phy_txeq_ctrl.value)
+        rxeq = int(dut.phy_rxeq_ctrl.value)
+        await writable()
+        if rate != previous_rate:
+            phystatus_hold = 2
+            txeq_seen = False
+            rxeq_seen = False
+            if rate == 2:
+                attempt += 1
+        dut.phy_phystatus.value = int(phystatus_hold > 0)
+        if phystatus_hold:
+            phystatus_hold -= 1
+        dut.phy_txeq_done.value = int(txeq != 0 and not txeq_seen)
+        if rxeq == 2 and not rxeq_seen:
+            dut.phy_rxeq_done.value = 1
+            # First Gen3 attempt deliberately omits AdaptDone.  The second
+            # attempt supplies both completion indications.
+            dut.phy_rxeq_adapt_done.value = int(attempt >= 2)
+        else:
+            dut.phy_rxeq_done.value = 0
+            dut.phy_rxeq_adapt_done.value = 0
+        txeq_seen = txeq != 0
+        rxeq_seen = rxeq != 0
+        previous_rate = rate
+
+
+async def drive_fallback_gen1_partner(dut):
+    """Independent Gen1 Partner FSM used only for fallback/retry coverage."""
+    while True:
+        await tick(dut)
+        if int(dut.fallback_sticky.value) and int(dut.phy_rate.value) == 0:
+            break
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+    await send_ts(dut, 1, 16, link=0, lane=0, rate=0x02)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 16, link=0, lane=0, rate=0x02)
+    await wait_state(dut, RECOVERY_IDLE)
+    await send_idle(dut, 8)
+
+
 async def capture_gen3_training_prefix(dut, words=8):
     """Capture the first valid Gen3 PIPE words independently of the partner RX."""
     captured = []
@@ -350,3 +401,78 @@ async def partner_initiated_speed_change_closes_recovery_and_eq(dut):
     assert int(dut.fallback_sticky.value) == 0
     assert int(dut.eq_failed.value) == 0
     assert int(dut.negotiated_speed.value) == 2
+
+
+@cocotb.test()
+async def production_gen3_failure_fallback_then_retry(dut):
+    """Gate C: first Gen3 RXEQ failure must recover to Gen1, then retry Gen3."""
+    global partner_lfsr
+    partner_lfsr = 0xFFFF
+    cocotb.start_soon(Clock(dut.phy_pclk, 8, units="ns").start())
+    cocotb.start_soon(Clock(dut.core_clk, 10, units="ns").start())
+    for name in (
+        "pipe_rst_n", "core_rst_n", "phy_rxdata", "phy_rxdatak",
+        "phy_rxdata_valid", "phy_rxstart_block", "phy_rxsync_header",
+        "phy_rxvalid", "phy_phystatus", "phy_rxelecidle", "phy_rxstatus",
+        "phy_cdr_lost", "phy_txeq_done", "phy_rxeq_adapt_done",
+        "phy_rxeq_done", "retrain_pulse", "gen3_partner_enable",
+    ):
+        getattr(dut, name).value = 0
+    dut.phy_rxelecidle.value = 1
+    dut.target_speed.value = 2
+    await tick(dut, 3)
+    await writable()
+    dut.pipe_rst_n.value = 1
+    dut.core_rst_n.value = 1
+
+    await train_gen1_to_l0(dut)
+    assert int(dut.link_up.value) == 1
+    cocotb.start_soon(phy_command_responder_with_one_rxeq_failure(dut))
+    cocotb.start_soon(drive_fallback_gen1_partner(dut))
+    dut.gen3_partner_enable.value = 1
+
+    dut.retrain_pulse.value = 1
+    await RisingEdge(dut.core_clk)
+    await writable()
+    dut.retrain_pulse.value = 0
+
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+    await send_ts(dut, 1, 8, link=0, lane=0, rate=0x8E)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 8, link=0, lane=0, rate=0x8E)
+    await wait_state(dut, RECOVERY_SPEED)
+
+    # The independent Gen1 Partner FSM takes over after the controller's
+    # first RXEQ done-only failure and closes the fallback Recovery exchange.
+    await wait_state(dut, L0, timeout=20000)
+    assert int(dut.fallback_sticky.value) == 1
+    assert int(dut.phy_rate.value) == 0
+    assert int(dut.active_rate.value) == 0
+    assert int(dut.negotiated_speed.value) == 0
+
+    # A fresh directed retrain is now issued from a real Gen1 L0 boundary.
+    dut.retrain_pulse.value = 1
+    await RisingEdge(dut.core_clk)
+    await writable()
+    dut.retrain_pulse.value = 0
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+    await send_ts(dut, 1, 8, link=0, lane=0, rate=0x8E)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 8, link=0, lane=0, rate=0x8E)
+    await wait_state(dut, RECOVERY_SPEED)
+
+    # The current production LTSSM's Gen3 Recovery.Idle boundary is the
+    # completed Gate-C target here; Gen3 L0 data-stream/SDS is the subsequent
+    # protocol-freeze gate and is intentionally not claimed by this test.
+    for _ in range(8000):
+        await tick(dut)
+        if (int(dut.eq_done.value) and
+                int(dut.ltssm_state.value) == RECOVERY_IDLE and
+                int(dut.phy_rate.value) == 2):
+            break
+    assert int(dut.phy_rate.value) == 2
+    assert int(dut.active_rate.value) == 2
+    assert int(dut.negotiated_speed.value) == 2
+    assert int(dut.ltssm_state.value) == RECOVERY_IDLE
+    assert int(dut.eq_done.value) == 1
+    assert int(dut.eq_failed.value) == 0

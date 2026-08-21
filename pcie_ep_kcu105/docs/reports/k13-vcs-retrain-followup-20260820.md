@@ -23,6 +23,24 @@
 - 真实 Xilinx Root-Port VCS 的初始 Gen1 枚举、BAR、InitFC/DLL 仍 PASS；首次
   Gen3 速率命令、Gen3 `PhyStatus` 和 RXEQ failure→Gen1 fallback 事件可观察。
 
+## 独立 Partner Gate C 进展
+
+在 `sim/verilator/k13_integration` 增加了独立的脚本化 Partner 状态流程：第一次
+Gen3 只返回 RXEQ `done`（不返回 `AdaptDone`），等待 DUT 完成 Gen1 fallback 并由
+Partner 发送 Gen1 TS1/TS2、Idle；确认回到 Gen1 L0 后再次发起 Gen3 Retrain，第二次
+提供完整 RXEQ completion。全量三项 K13 integration 回归通过：
+
+```text
+production_ltssm_gen1_to_gen3_eq_closed_loop                 PASS
+partner_initiated_speed_change_closes_recovery_and_eq        PASS
+production_gen3_failure_fallback_then_retry                  PASS
+```
+
+第三项的验收边界是第二次 Gen3 `Recovery.Idle`、`phy_rate=Gen3`、`active_rate=Gen3`、
+`negotiated_speed=Gen3` 和 `eq_done=1`。当前 `pcie_ltssm_mac_gen1` 尚未把 Gen3
+Recovery.Idle 的 Data Stream/SDS 转成 L0，因此该测试没有宣称 Gen3 L0；这保留给后续
+Gen3 协议冻结门。
+
 ## 真实 Root-Port VCS 当前分叉
 
 命令：
