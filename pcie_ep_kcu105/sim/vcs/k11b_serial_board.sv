@@ -846,7 +846,7 @@ module board;
             // commits its own directed speed change.
             if ((RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b10) &&
                 (k13_rp_tx_contract_samples < 64)) begin
-                $display("K13_RP_TX_CONTRACT n=%0d time_ps=%0t rp_state=%0h rate=%02b idle=%0d valid=%0d start=%0d header=%02b data=%08x ep_state=%0d ep_rate=%02b ep_rxvalid=%0d ep_rxdata_valid=%0d rp_rxvalid=%0d rp_rxdata_valid=%0d rp_rxidle=%0d rp_cdr=%0d rp_rxreset=%0d rp_rateidle=%0d rp_rate_start=%0d",
+                $display("K13_RP_TX_CONTRACT n=%0d time_ps=%0t rp_state=%0h rate=%02b idle=%0d valid=%0d start=%0d header=%02b data=%08x ep_state=%0d ep_rate=%02b ep_rxvalid=%0d ep_rxdata_valid=%0d rp_rxvalid=%0d rp_rxdata_valid=%0d rp_rxidle=%0d rp_cdr=%0d rp_rxreset=%0d rp_rateidle=%0d rp_rate_start=%0d rp_txreset=%0d rp_qplllock=%0d rp_gtpower=%0d rp_gt_txidle=%0d rp_gt_txvalid=%0d rp_gt_txstart=%0d rp_gt_txheader=%02b rp_gt_txdata=%08x",
                          k13_rp_tx_contract_samples, $time,
                          RP.cfg_ltssm_state,
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
@@ -863,7 +863,15 @@ module board;
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxcdrlock[0],
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxresetdone[0],
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcierateidle[0],
-                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcieuserratestart[0]);
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcieuserratestart[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_txresetdone[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_qpll1lock[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_gtpowergood[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXELECIDLE,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXDATA_VALID,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXSTART_BLOCK,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXSYNC_HEADER,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXDATA);
                 k13_rp_tx_contract_samples = k13_rp_tx_contract_samples + 1;
             end
         end

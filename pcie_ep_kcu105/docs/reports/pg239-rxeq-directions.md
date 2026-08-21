@@ -225,3 +225,23 @@ EP 发端首个序列也已抓到完整的 4 个 EIEOS block，随后从 `start_
 已经处于 Gen3 ready、串行输入已非电气空闲，但 128b/130b block lock 没有建立，
 且没有产生 `RXSTATUS=100` 解码错误。下一步应核对 GT channel 的 block-lock/接收
 时钟与官方 demo 配置，而不是继续修改 LTSSM/EQ 控制器。
+
+### RP 发端窗口（2026-08-21，待许可证恢复后复测）
+
+现有同一轮日志还显示 RP 在切到 Gen3、进入 `cfg_ltssm_state=0xc` 后，其 PIPE 发端
+连续采样为 `rate=10, valid=1, start=0, header=00, data=00000000, idle=1`，而 EP
+此时仍处于速率切换前的等待窗口。也就是说，RP 已提出 Gen3 速率，但尚未在 PIPE/GT
+发端送出可供 EP 接收的 TS Ordered Set；这与 RP RX 原始端没有 `RXDATA_VALID` 是
+同一方向的证据。该现象不能归因于 QPLL1：若 QPLL1 是主因，应先看到 GT reset/lock
+或 rate-ready 不成立，而此前事件已经记录 `rp_gt_rate=10, rp_rategen3=1,
+rp_gen3rdy=1`。
+
+本轮只增加只读证字段（`GT_TXRESETDONE`、`GT_QPLL1LOCK`、`GT_GTPOWERGOOD` 及
+`rp_gt_channel` 的 TX idle/valid/start/header/data），不改 vendor PHY 或 LTSSM。
+许可证服务恢复后，下一次完整 VCS 将用这些字段判定：
+
+1. RP 的 GT TX reset/lock 已完成但仍保持 `TXELECIDLE=1`，则卡点在 RP 的
+   Recovery TS 发端门控/时序；
+2. RP 的 `TXRESETDONE` 或 `QPLL1LOCK` 未恢复，才重新打开 GT reset/QPLL 分支；
+3. RP 已输出真实 TS1/TS2 而 EP 仍无 RX valid，才回到 EP→RP 的 128b/130b block-lock
+   或串行时钟映射。
