@@ -8,6 +8,8 @@
   RXEQ bootstrap 门。
 - `65a0bbb`：RXEQ/peer 失败发生在原 Gen3 `Recovery.Speed` 已结束之后时，LTSSM
   重新进入一次 `Recovery.Speed`，完成显式 Gen1 fallback 的 PhyStatus 握手。
+- `f2ebd9d`：partner retrain 只接受 `Rate ID[7]=1` 的定向 TS1；fallback 后的
+  `0x0e` 能力广告不再被误当成新的 Gen3 请求。Rate ID[3:0] 仍只用于解码能力。
 - 工作区诊断改动：VCS 只在 Endpoint 与 Root Port 都稳定 Gen1 L0（含 DLL Active、
   `user_lnk_up`）后才允许第二次 Retrain；增加双方 fallback 原始 PIPE 采样，并将
   等待窗口改为 `K13_FALLBACK_WAIT` 可配置（默认 20,000 个 `phy_pclk`）。
