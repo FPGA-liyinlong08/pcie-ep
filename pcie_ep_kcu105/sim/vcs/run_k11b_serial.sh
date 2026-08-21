@@ -26,6 +26,8 @@ k13_enable="${K13_ENABLE:-0}"
 k13_retrain="${K13_VCS_RETRAIN:-0}"
 k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
 k13_fallback_wait="${K13_FALLBACK_WAIT:-20000}"
+k13_waveform="${K13_WAVEFORM:-0}"
+k13_trace="${K13_TRACE:-0}"
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 tb_defines+=(+define+K13_RXEQ_BOOTSTRAP_VALUE=${k13_rxeq_bootstrap})
@@ -201,6 +203,12 @@ if [[ "${b2_mode}" == "1" ]]; then
         b2_plusargs+=(+K13_RETRAIN)
     fi
     b2_plusargs+=(+K13_FALLBACK_WAIT=${k13_fallback_wait})
+    if [[ "${k13_waveform}" == "1" ]]; then
+        b2_plusargs+=(+K13_DUMP_WAVEFORM)
+    fi
+    if [[ "${k13_trace}" == "1" ]]; then
+        b2_plusargs+=(+K13_TRACE)
+    fi
     set +e
     timeout --foreground "${simulation_timeout}" \
         "${run_dir}/k11b_simv" "${b2_plusargs[@]}" -licqueue \
@@ -270,8 +278,15 @@ else
 fi
 
 set +e
+normal_plusargs=()
+if [[ "${k13_waveform}" == "1" ]]; then
+    normal_plusargs+=(+K13_DUMP_WAVEFORM)
+fi
+if [[ "${k13_trace}" == "1" ]]; then
+    normal_plusargs+=(+K13_TRACE)
+fi
 timeout --foreground "${simulation_timeout}" \
-    "${run_dir}/k11b_simv" -licqueue -l build/k11b_simulate.log
+    "${run_dir}/k11b_simv" "${normal_plusargs[@]}" -licqueue -l build/k11b_simulate.log
 simulate_status=$?
 set -e
 if [[ ${simulate_status} -eq 124 ]]; then

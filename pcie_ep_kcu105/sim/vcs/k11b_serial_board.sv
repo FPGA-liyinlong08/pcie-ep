@@ -70,6 +70,90 @@ module board;
     wire [7:0] rp_rxp;
     wire [7:0] rp_rxn;
 
+`ifdef K13_DUT
+    // Scalar trace aliases mirror the useful part of the Xilinx demo board
+    // trace.  Keeping these aliases at board scope makes the VCD portable
+    // across VCS versions and avoids dumping the full encrypted RP/GT model.
+    wire [5:0] trace_rp_ltssm_state = RP.cfg_ltssm_state;
+    wire [1:0] trace_rp_current_speed = RP.cfg_current_speed;
+    wire [3:0] trace_rp_negotiated_width = RP.cfg_negotiated_width;
+    wire       trace_rp_phy_link_status = RP.cfg_phy_link_status;
+    wire       trace_rp_phy_link_down = RP.cfg_phy_link_down;
+    wire       trace_rp_user_lnk_up = RP.user_lnk_up;
+    wire [5:0] trace_ep_ltssm_state = EP.DUT.ltssm_state;
+    wire       trace_ep_link_up = EP.DUT.link_up;
+    wire       trace_ep_dll_active = EP.DUT.dll_active;
+    wire [1:0] trace_ep_phy_rate = EP.DUT.phy_rate;
+    wire [1:0] trace_ep_phy_rate_cmd = EP.DUT.k13_phy_rate_cmd;
+    wire [1:0] trace_ep_active_rate = EP.DUT.k13_active_rate;
+    wire [1:0] trace_ep_negotiated_speed = EP.DUT.negotiated_speed;
+    wire [2:0] trace_ep_speed_state = EP.DUT.k13_speed_state;
+    wire [2:0] trace_ep_eq_phase = EP.DUT.k13_eq_phase;
+    wire       trace_ep_eq_active = EP.DUT.k13_eq_active;
+    wire       trace_ep_eq_done = EP.DUT.k13_eq_done;
+    wire       trace_ep_eq_failed = EP.DUT.k13_eq_failed;
+    wire       trace_ep_fallback = EP.DUT.k13_fallback_sticky;
+    wire       trace_ep_speed_timeout = EP.DUT.k13_speed_timeout_sticky;
+    wire       trace_ep_phystatus = EP.DUT.phy_phystatus;
+    wire       trace_ep_txei = EP.DUT.phy_txelecidle;
+    wire [1:0] trace_ep_txeq_ctrl = EP.DUT.phy_txeq_ctrl;
+    wire [1:0] trace_ep_rxeq_ctrl = EP.DUT.phy_rxeq_ctrl;
+
+    // The demo's text trace is intentionally opt-in: normal regressions keep
+    // their existing log volume, while a failing retrain can be compared
+    // event-for-event with the demo's EP/RP trace.
+    always @(trace_rp_ltssm_state or trace_rp_current_speed or
+             trace_rp_user_lnk_up or trace_ep_ltssm_state or
+             trace_ep_phy_rate_cmd or trace_ep_phy_rate or
+             trace_ep_active_rate or trace_ep_speed_state or
+             trace_ep_eq_phase or trace_ep_eq_active or trace_ep_eq_done or
+             trace_ep_fallback or trace_ep_phystatus) begin
+        if (sys_rst_n && $test$plusargs("K13_TRACE"))
+            $display("K13_TRACE time_ps=%0t rp_state=%0h rp_speed=%0d rp_width=%0d rp_link=%0d ep_state=%0d cmd=%0d phy_rate=%0d active=%0d negotiated=%0d speed_state=%0d eq_active=%0d eq_phase=%0d eq_done=%0d fallback=%0d phystatus=%0d",
+                     $time, trace_rp_ltssm_state, trace_rp_current_speed,
+                     trace_rp_negotiated_width, trace_rp_user_lnk_up,
+                     trace_ep_ltssm_state, trace_ep_phy_rate_cmd,
+                     trace_ep_phy_rate, trace_ep_active_rate,
+                     trace_ep_negotiated_speed, trace_ep_speed_state,
+                     trace_ep_eq_active, trace_ep_eq_phase, trace_ep_eq_done,
+                     trace_ep_fallback, trace_ep_phystatus);
+    end
+
+    // Optional VCD equivalent to the demo's +DUMP_WAVEFORM mode.  The dump
+    // contains only scalar contract/LTSSM/PHY observables; raw PIPE words are
+    // already bounded and printed by the existing K13 diagnostic monitor.
+    initial begin : k13_demo_style_waveform
+        if ($test$plusargs("K13_DUMP_WAVEFORM")) begin
+            $dumpfile("build/k13_vcs_training.vcd");
+            $dumpvars(0, trace_rp_ltssm_state);
+            $dumpvars(0, trace_rp_current_speed);
+            $dumpvars(0, trace_rp_negotiated_width);
+            $dumpvars(0, trace_rp_phy_link_status);
+            $dumpvars(0, trace_rp_phy_link_down);
+            $dumpvars(0, trace_rp_user_lnk_up);
+            $dumpvars(0, trace_ep_ltssm_state);
+            $dumpvars(0, trace_ep_link_up);
+            $dumpvars(0, trace_ep_dll_active);
+            $dumpvars(0, trace_ep_phy_rate_cmd);
+            $dumpvars(0, trace_ep_phy_rate);
+            $dumpvars(0, trace_ep_active_rate);
+            $dumpvars(0, trace_ep_negotiated_speed);
+            $dumpvars(0, trace_ep_speed_state);
+            $dumpvars(0, trace_ep_eq_phase);
+            $dumpvars(0, trace_ep_eq_active);
+            $dumpvars(0, trace_ep_eq_done);
+            $dumpvars(0, trace_ep_eq_failed);
+            $dumpvars(0, trace_ep_fallback);
+            $dumpvars(0, trace_ep_speed_timeout);
+            $dumpvars(0, trace_ep_phystatus);
+            $dumpvars(0, trace_ep_txei);
+            $dumpvars(0, trace_ep_txeq_ctrl);
+            $dumpvars(0, trace_ep_rxeq_ctrl);
+            $display("K13_VCS_WAVEFORM_ENABLE file=build/k13_vcs_training.vcd");
+        end
+    end
+`endif
+
     reg [5:0] last_ep_state;
     integer stable_count;
     reg seen_detect;

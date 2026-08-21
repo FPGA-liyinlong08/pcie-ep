@@ -52,10 +52,10 @@ K13_ENABLE=1 K13_VCS_RETRAIN=1 K11B2_MODE=1 ./sim/vcs/run_k11b_serial.sh
 ```
 
 首次 Gen3 尝试在 RXEQ done-only 模型下回退到 Gen1。修正后 Endpoint 在
-`275.419629 ns` 产生 Gen1 `PhyStatus`，并恢复到 Gen1 命令；Endpoint 随后连续发送
+`275419629 ps`（约 `275.420 us`）产生 Gen1 `PhyStatus`，并恢复到 Gen1 命令；Endpoint 随后连续发送
 合法 Gen1 TS1（原始 PIPE 采样为 `9fbc, ff00, 0002, 4a4a...`）。但加密 Xilinx
 Root-Port 在 `cfg_ltssm_state=c`、Gen1 rate 下先保持 `TX Electrical Idle=1`、
-`data=0`，约 `303.287505 ns` 才重新进入 Recovery 并发送 TS。新增两侧原始 PIPE
+`data=0`，约 `303287505 ps`（约 `303.288 us`）才重新进入 Recovery 并发送 TS。新增两侧原始 PIPE
 采样后确认，不能把这个过程简化成“Root-Port 只发出 5 个 TS1”：Root-Port 在
 `state=b` 先出现模式切换残留 `0/1cbc/1c1c`，随后从 `9fbc,ff00,0e,4a4a...`
 开始连续输出至少 9 个完整 Gen1 TS1，之后才在 `state=d` 切到 `45 45`（TS2）。
@@ -106,6 +106,34 @@ TS1 从约 `303323529 ps` 开始；Endpoint 受 PHY/PIPE 延迟影响，首个�
 该复跑排除了“等待时间不足”这一因素，也进一步表明当前分叉是加密 Root-Port/PHY
 PIPE 延迟与 Recovery TS 发射窗口的相位不匹配；本次没有观察到 QPLL、CDR 或 EQ
 失败证据。生产 LTSSM 的 8-TS1 门槛不应为适配该模型而放宽。
+
+## 对官方 demo VCS 的借鉴与当前复现
+
+已复核 `/home/wx/Documents/PCIe/pcie3_ultrascale_0_ex` 的完整 `board + glbl` VCS。
+该 demo 的 Gen1→Gen3 PASS 使用的是 Xilinx Endpoint + Xilinx Root Port + Xilinx PHY/GT
+模型，不能直接证明本工程自定义 Endpoint 已完成切速；但以下三项可直接借鉴：
+
+1. **双端标量时序证据**：demo 同时记录 EP/RP 的 LTSSM、当前速率、协商宽度、
+   `phy_link_status`、`user_lnk_up` 和 PIPE `rate/elec_idle/phy_status`，并以时间戳对齐
+   `Recovery.Speed → EQ Phase 0..3 → Recovery.Idle → L0`。当前工程已在
+   `sim/vcs/k11b_serial_board.sv` 加入同样的 board-scope trace aliases；它还额外保留
+   `phy_rate_cmd/active_rate/negotiated_speed`，可直接检查 Rate Contract 的提交顺序。
+2. **可选波形而非默认大 dump**：新增 `K13_WAVEFORM=1` 后，VCS 生成受控的
+   `sim/vcs/build/k13_vcs_training.vcd`；`K13_TRACE=1` 输出可与 demo 文本日志逐事件比较的
+   `K13_TRACE`。默认值仍为关闭，不影响普通回归。
+3. **Root-Port directed speed-change 参考**：demo 的 `TSK_SPEED_CHANGE` 先写
+   Link Control 2 的 Target Link Speed，再写 Link Control 的 Retrain Link，等待 RP
+   `Recovery`/`Recovery.Speed`/`user_lnk_up`。当前 K13 测试仍保留 Endpoint 配置空间和
+   Root-Port 内部 directed write 两条证据；下一轮可用 demo 的单一路径做 A/B，但不能把
+   Xilinx EP/RP 的成功当作自定义 EP 的成功。
+
+本轮已用 `K13_WAVEFORM=1 K13_TRACE=1` 重跑真实 Root-Port fallback 场景：VCS 编译、
+elaboration、链接和初始 Gen1 枚举/BAR PASS；波形确认 `phy_rate_cmd=Gen3` 先于
+`phy_rate=Gen3`，`active_rate` 直到 Gen3 `PhyStatus` 才提交，随后 RXEQ done-only
+触发 Gen1 fallback。最终分叉仍与此前一致：`K13_VCS_GEN3_RETRAIN_FAIL`，EP 停在
+`Recovery.RcvrLock`，Root-Port 在后续 Detect/Polling 循环；没有新的 EQ/QPLL 失败证据。
+因此 demo 借鉴内容已经落到可比对的观测基础设施和 directed-RP 操作顺序，尚未构成对
+当前 Root-Port fallback TS 窗口分叉的修复。
 
 ## 下一步
 
