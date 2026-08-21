@@ -461,18 +461,23 @@ async def production_gen3_failure_fallback_then_retry(dut):
     await send_ts(dut, 2, 8, link=0, lane=0, rate=0x8E)
     await wait_state(dut, RECOVERY_SPEED)
 
-    # The current production LTSSM's Gen3 Recovery.Idle boundary is the
-    # completed Gate-C target here; Gen3 L0 data-stream/SDS is the subsequent
-    # protocol-freeze gate and is intentionally not claimed by this test.
-    for _ in range(8000):
-        await tick(dut)
-        if (int(dut.eq_done.value) and
-                int(dut.ltssm_state.value) == RECOVERY_IDLE and
-                int(dut.phy_rate.value) == 2):
-            break
+    # The independent partner changes from ordered sets to a zero Data Stream
+    # logical-idle block once Recovery.Idle is reached.  Disable its TS
+    # transmitter first so the raw PIPE harness can supply the idle block.
+    await wait_state(dut, RECOVERY_IDLE, timeout=8000)
+    await writable()
+    dut.gen3_partner_enable.value = 0
+    await tick(dut)
+    await writable()
+    dut.phy_rxdata.value = 0
+    dut.phy_rxdatak.value = 0
+    dut.phy_rxdata_valid.value = 1
+    dut.phy_rxvalid.value = 1
+    dut.phy_rxelecidle.value = 0
+    await wait_state(dut, L0, timeout=8000)
     assert int(dut.phy_rate.value) == 2
     assert int(dut.active_rate.value) == 2
     assert int(dut.negotiated_speed.value) == 2
-    assert int(dut.ltssm_state.value) == RECOVERY_IDLE
+    assert int(dut.ltssm_state.value) == L0
     assert int(dut.eq_done.value) == 1
     assert int(dut.eq_failed.value) == 0

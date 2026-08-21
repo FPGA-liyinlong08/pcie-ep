@@ -18,7 +18,7 @@
 
 - K11B2 顶层 lint、K13 controller lint、K13 integration lint。
 - K13 controller Verilator：4/4 PASS。
-- K13 production LTSSM + behavioral partner Verilator：2/2 PASS。
+- K13 production LTSSM + behavioral partner Verilator：3/3 PASS。
 - 单元波形确认 `requested_rate=Gen3` 可早于 `active_rate=Gen3`，命令/提交顺序不变。
 - 真实 Xilinx Root-Port VCS 的初始 Gen1 枚举、BAR、InitFC/DLL 仍 PASS；首次
   Gen3 速率命令、Gen3 `PhyStatus` 和 RXEQ failure→Gen1 fallback 事件可观察。
@@ -36,9 +36,11 @@ partner_initiated_speed_change_closes_recovery_and_eq        PASS
 production_gen3_failure_fallback_then_retry                  PASS
 ```
 
-第三项的验收边界是第二次 Gen3 `Recovery.Idle`、`phy_rate=Gen3`、`active_rate=Gen3`、
-`negotiated_speed=Gen3` 和 `eq_done=1`。当前 `pcie_ltssm_mac_gen1` 尚未把 Gen3
-Recovery.Idle 的 Data Stream/SDS 转成 L0，因此该测试没有宣称 Gen3 L0；这保留给后续
+第三项现在进一步覆盖第二次 Gen3 `Recovery.Idle -> L0` 的最小语义边界：Partner 在
+Recovery.Idle 后停止 Ordered-Set 发射，向 Gen3 RX 提供合法的零 Data Stream logical-idle
+block；`pcie_gen3_os_rx` 产生 `idle_valid`，LTSSM 连续收齐 8 个 idle 后进入 L0。测试同时
+断言 `phy_rate=Gen3`、`active_rate=Gen3`、`negotiated_speed=Gen3` 和 `eq_done=1`。
+这不是完整 Gen3 SDS、128b/130b payload、TLP/DLLP 或 DLL Active 验收；这些仍保留给后续
 Gen3 协议冻结门。
 
 ## 真实 Root-Port VCS 当前分叉
@@ -89,5 +91,6 @@ fallback 后的 Ordered-Set/状态闭环。实板验证必须等该 Gate C 分�
    Endpoint 解析少收的 TS1 是串行模型窗口相位问题还是由对端状态响应触发。
 2. 用独立 partner FSM 复现 Root-Port 的 Gen3→Gen1 fallback，再次 Gen3 Retrain；
    不修改生产 LTSSM 来放宽 TS1 计数，也不把 EQ workaround 当作速率 PASS。
-3. Root-Port fallback 闭环通过后，再分别打开 `K13_RXEQ_BOOTSTRAP=1`，验证真实
-   RXEQ/EQ Phase 0～3、Gen3 L0 和事务静默。
+3. 将当前已通过的最小 Gen3 logical-idle 边界扩展为真实 SDS/Data Stream 发送与接收，
+   再接入 TLP/DLLP 和 DLL Active；Root-Port fallback 闭环通过后，分别打开
+   `K13_RXEQ_BOOTSTRAP=1`，验证真实 RXEQ/EQ Phase 0～3、Gen3 L0 和事务静默。

@@ -181,6 +181,7 @@ module pcie_ltssm_mac_gen1 #(
     wire [7:0] gen1_os_n_fts, gen1_os_rate_id, gen1_os_training_control;
     wire       gen1_os_link_is_pad, gen1_os_lane_is_pad;
     wire       gen3_os_ts1_valid, gen3_os_ts2_valid, gen3_os_malformed;
+    wire       gen3_os_idle_valid;
     wire [7:0] gen3_os_link_number, gen3_os_lane_number;
     wire [7:0] gen3_os_n_fts, gen3_os_rate_id, gen3_os_training_control;
     wire [7:0] gen3_os_eq_control;
@@ -200,9 +201,11 @@ module pcie_ltssm_mac_gen1 #(
     wire        rx_aligned_valid;
     wire [15:0] rx_aligned_data;
     wire [1:0]  rx_aligned_datak;
-    wire        os_idle_pair_valid = rx_aligned_valid &&
-                                     (rx_aligned_datak == 2'b00) &&
-                                     (rx_aligned_data == 16'h0000);
+    wire        gen1_idle_pair_valid = rx_aligned_valid &&
+                                       (rx_aligned_datak == 2'b00) &&
+                                       (rx_aligned_data == 16'h0000);
+    wire        os_idle_pair_valid = gen3_mode ? gen3_os_idle_valid :
+                                                  gen1_idle_pair_valid;
 
     reg  [1:0] tx_os_mode;
     reg  [7:0] tx_os_link;
@@ -435,6 +438,7 @@ module pcie_ltssm_mac_gen1 #(
         .sync_header(phy_rxsync_header), .in_data(phy_rxdata),
         .ts1_valid(gen3_os_ts1_valid), .ts2_valid(gen3_os_ts2_valid),
         .malformed(gen3_os_malformed),
+        .idle_valid(gen3_os_idle_valid),
         .link_number(gen3_os_link_number), .link_is_pad(gen3_os_link_is_pad),
         .lane_number(gen3_os_lane_number), .lane_is_pad(gen3_os_lane_is_pad),
         .n_fts(gen3_os_n_fts), .rate_id(gen3_os_rate_id),

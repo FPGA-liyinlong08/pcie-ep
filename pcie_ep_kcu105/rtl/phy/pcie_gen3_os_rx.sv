@@ -16,6 +16,10 @@ module pcie_gen3_os_rx (
     output reg         ts1_valid,
     output reg         ts2_valid,
     output reg         malformed,
+    // A valid zero Data Stream block is the minimal Gen3 logical-idle
+    // indication used at Recovery.Idle -> L0.  Ordered-Set parsing remains
+    // independent from this semantic stream boundary.
+    output reg         idle_valid,
     output reg  [7:0]  link_number,
     output reg         link_is_pad,
     output reg  [7:0]  lane_number,
@@ -66,6 +70,7 @@ module pcie_gen3_os_rx (
             ts1_valid <= 1'b0;
             ts2_valid <= 1'b0;
             malformed <= 1'b0;
+            idle_valid <= 1'b0;
             link_number <= K_PAD;
             link_is_pad <= 1'b1;
             lane_number <= K_PAD;
@@ -92,6 +97,13 @@ module pcie_gen3_os_rx (
                     block_kind <= BLOCK_NONE;
                     word_index <= 2'd0;
                 end
+            end else if (!start_block && (sync_header == 2'b00) &&
+                         (in_data == 32'd0) &&
+                         (block_kind == BLOCK_NONE)) begin
+                // Gen3 Data Stream logical idle.  This is deliberately a
+                // semantic boundary signal; payload decoding is added by
+                // the later Gen3 L0 protocol gate.
+                idle_valid <= 1'b1;
             end else if (start_block) begin
                 word_index <= 2'd1;
                 parse_error <= (sync_header != SH_ORDERED_SET);
