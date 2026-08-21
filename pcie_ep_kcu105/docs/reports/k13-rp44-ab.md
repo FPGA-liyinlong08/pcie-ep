@@ -36,8 +36,27 @@ K13_RP44_AB_VERSION=4.4
 DRP 端口宽度、startup 端口宽度），没有出现混用 4.1/4.4 文件时的 `cfg_ext_*`
 未定义错误。
 
-仿真尚未取得结果：本轮在 VCS elaboration 申请许可证时被
-`27000@wx-linux` 服务阻塞，因此不能据此判断 4.4 RP 是否解决 K13 Gen3 Recovery。
+许可证问题已排除。按 `docs/reports/vcs-license-status.md` 在可访问 license
+server 的环境中运行 `lmutil lmstat -c 27000@wx-linux`，结果为 server/daemon
+均 UP，`VCSCompiler_Net` 为 99 issued、0 in use。此前的 `(-15,570
+"Operation not permitted")` 是当前受限执行环境的网络限制，不是 license seat
+耗尽。
+
+完整仿真已完成编译、elaboration、link，并通过初始 Gen1、DLL active、枚举和
+BAR 读写检查；但官方 4.4 RP + 自研 EP 的 Gen3 retrain 仍失败：
+
+```text
+K13_VCS_GEN3_RETRAIN_FAIL wait=20000 ep_state=12 speed_state=0 rate=2 negotiated=2
+  eq_active=0 eq_phase=4 eq_done=1 fallback=0 speed_timeout=0 ts_accept=0
+  ts_reject=0 rp_state=c rp_speed=1 rp_link=1 seen_rp_recovery=1
+  seen_states=1110 seen_rate=1 seen_phystatus=1 seen_eq=11111
+```
+
+关键对比信号显示 RP 在切到 Gen3 后曾有 `rp_qplllock=1`，随后变为 `0`；同时
+RP 仍为 `rp_state=c`、`rp_gt_txidle=1`、`rp_gt_txdata=00000000`，EP 未收到
+有效 Gen3 RX block。因此本轮不能把问题归因于“license”或简单的 4.1/4.4
+RP 源码版本差异；下一步应在同一可访问 license 环境中继续检查 RP Gen3 TX
+reset/QPLL 复位时序以及 EP 侧收到的 PIPE/串行数据。
 
 ## 判定标准
 
