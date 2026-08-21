@@ -84,6 +84,29 @@ Endpoint RX:  303739504 起 datak=01,data=00009fbc；随后连续
 这不是 QPLL、KCU105 线缆、J74、REFCLK 或 PERST# 结论；当前失败点是 VCS Root-Port
 fallback 后的 Ordered-Set/状态闭环。实板验证必须等该 Gate C 分叉解决后再继续。
 
+## 2026-08-21 VCS 复跑补充
+
+使用相同的真实 Root-Port VCS 路径并将 `K13_FALLBACK_WAIT` 扩大到 `100000` 个
+`phy_pclk` 后，分叉稳定复现，最终结果为：
+
+```text
+K13_VCS_GEN3_RETRAIN_FAIL wait=100000
+ep_state=11 speed_state=0 rate=0 negotiated=0 eq_active=0 eq_phase=7
+eq_done=0 fallback=1 speed_timeout=0 ts_accept=0 ts_reject=0
+rp_state=2 rp_speed=1 rp_link=0 seen_rp_recovery=1 seen_states=1110
+seen_rate=1 seen_phystatus=1 seen_eq=00000
+```
+
+本次使用 `-t ps`，以下时间均为仿真时间戳（ps）：Root-Port 首个完整 fallback
+TS1 从约 `303323529 ps` 开始；Endpoint 受 PHY/PIPE 延迟影响，首个完整 TS1 约在
+`303803504 ps` 才被解析；Root-Port 在 `303875505 ps` 从 `state=b` 进入 `state=d`，
+并于约 `304075529 ps` 开始输出 TS2。Endpoint 只完成 TS1 计数 5，随后持续看到 TS2，
+因此停留在 `Recovery.RcvrLock`。
+
+该复跑排除了“等待时间不足”这一因素，也进一步表明当前分叉是加密 Root-Port/PHY
+PIPE 延迟与 Recovery TS 发射窗口的相位不匹配；本次没有观察到 QPLL、CDR 或 EQ
+失败证据。生产 LTSSM 的 8-TS1 门槛不应为适配该模型而放宽。
+
 ## 下一步
 
 1. 对加密 Root-Port fallback 的 PIPE 模式切换做最小化对照：比较初始 Gen1 建链与
