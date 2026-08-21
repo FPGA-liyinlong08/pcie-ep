@@ -25,6 +25,7 @@ k12e_mode="${K12E_VCS:-0}"
 k13_enable="${K13_ENABLE:-0}"
 k13_retrain="${K13_VCS_RETRAIN:-0}"
 k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
+k13_fallback_wait="${K13_FALLBACK_WAIT:-20000}"
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 tb_defines+=(+define+K13_RXEQ_BOOTSTRAP_VALUE=${k13_rxeq_bootstrap})
@@ -199,6 +200,7 @@ if [[ "${b2_mode}" == "1" ]]; then
     if [[ "${k13_retrain}" == "1" ]]; then
         b2_plusargs+=(+K13_RETRAIN)
     fi
+    b2_plusargs+=(+K13_FALLBACK_WAIT=${k13_fallback_wait})
     set +e
     timeout --foreground "${simulation_timeout}" \
         "${run_dir}/k11b_simv" "${b2_plusargs[@]}" -licqueue \

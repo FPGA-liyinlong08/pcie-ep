@@ -35,6 +35,7 @@ module board;
     reg [11:0] b2_delayed_ack_seq;
     reg [3:0]  b2_random_be;
     integer k13_wait_cycles;
+    integer k13_fallback_wait_limit;
     reg k13_seen_rp_recovery;
     reg k13_seen_rcvrlock;
     reg k13_seen_rcvrcfg;
@@ -49,6 +50,10 @@ module board;
     integer k13_gen3_rx_samples;
     integer k13_rp_tx_edges_at_retrain;
     integer k13_ep_tx_edges_at_retrain;
+    integer k13_gen1_l0_stable;
+    integer k13_rp_pipe_samples;
+    integer k13_rp_fallback_pipe_samples;
+    integer k13_ep_fallback_pipe_samples;
     reg [1:0] k13_last_rxeq_ctrl;
     reg       k13_last_rxeq_done;
     reg [2:0] k13_last_rxeq_fsm;
@@ -225,6 +230,9 @@ module board;
         k13_recovery_ts_samples = 0;
         k13_eqts_raw_words = 0;
         k13_gen3_rx_samples = 0;
+        k13_rp_pipe_samples = 0;
+        k13_rp_fallback_pipe_samples = 0;
+        k13_ep_fallback_pipe_samples = 0;
         k13_rp_tx_edges_at_retrain = 0;
         k13_ep_tx_edges_at_retrain = 0;
         k13_last_rxeq_ctrl = 2'b00;
@@ -245,6 +253,54 @@ module board;
 
     always @(posedge EP.DUT.phy_pclk) begin
         if (k13_retrain_monitor_armed && EP.DUT.pipe_rst_n) begin
+            // Capture Root-Port PIPE words before Endpoint parsing.  The
+            // capability Rate ID and directed speed-change indication must
+            // be distinguished from this raw source evidence.
+            if ((RP.cfg_ltssm_state != 6'h10) &&
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid &&
+                (k13_rp_pipe_samples < 128)) begin
+                $display("K13_RP_PIPE_RAW n=%0d time_ps=%0t state=%0h rate=%02b idle=%0d valid=%0d start=%0d data=%08x ep_state=%0d",
+                         k13_rp_pipe_samples, $time, RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data,
+                         EP.DUT.ltssm_state);
+                k13_rp_pipe_samples = k13_rp_pipe_samples + 1;
+            end
+            if (EP.DUT.k13_fallback_sticky &&
+                (EP.DUT.phy_rate == 2'b00) &&
+                (RP.cfg_ltssm_state != 6'h10) &&
+                (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b00) &&
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid &&
+                (k13_rp_fallback_pipe_samples < 128)) begin
+                $display("K13_RP_FALLBACK_PIPE_RAW n=%0d time_ps=%0t state=%0h rate=%02b idle=%0d valid=%0d start=%0d data=%08x ep_state=%0d speed_state=%0d",
+                         k13_rp_fallback_pipe_samples, $time,
+                         RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data,
+                         EP.DUT.ltssm_state, EP.DUT.k13_speed_state);
+                k13_rp_fallback_pipe_samples =
+                    k13_rp_fallback_pipe_samples + 1;
+            end
+            if (EP.DUT.k13_fallback_sticky &&
+                (EP.DUT.phy_rate == 2'b00) &&
+                !EP.DUT.phy_txelecidle &&
+                EP.DUT.phy_txdata_valid &&
+                (k13_ep_fallback_pipe_samples < 128)) begin
+                $display("K13_EP_FALLBACK_PIPE_RAW n=%0d time_ps=%0t ep_state=%0d speed_state=%0d txidle=%0d valid=%0d start=%0d datak=%02b data=%08x rp_state=%0h",
+                         k13_ep_fallback_pipe_samples, $time,
+                         EP.DUT.ltssm_state, EP.DUT.k13_speed_state,
+                         EP.DUT.phy_txelecidle, EP.DUT.phy_txdata_valid,
+                         EP.DUT.phy_txstart_block, EP.DUT.phy_txdatak,
+                         EP.DUT.phy_txdata, RP.cfg_ltssm_state);
+                k13_ep_fallback_pipe_samples =
+                    k13_ep_fallback_pipe_samples + 1;
+            end
             if ((EP.DUT.phy_rxeq_ctrl != k13_last_rxeq_ctrl) ||
                 (EP.DUT.phy_rxeq_done != k13_last_rxeq_done) ||
                 (EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.phy_lane[0].phy_rxeq_i.fsm != k13_last_rxeq_fsm)) begin
@@ -592,7 +648,11 @@ module board;
                         k13_seen_phystatus = 1'b0;
                         k13_seen_eq_phase = 5'd0;
                         k13_gen3_pipe_samples = 0;
+                        k13_rp_pipe_samples = 0;
+                        k13_rp_fallback_pipe_samples = 0;
+                        k13_ep_fallback_pipe_samples = 0;
                         k13_retry_sent = 1'b0;
+                        k13_gen1_l0_stable = 0;
                         k13_rp_tx_edges_at_retrain = rp_tx_edge_count[0];
                         k13_ep_tx_edges_at_retrain = ep_tx_edge_count;
                         k13_retrain_monitor_armed = 1'b1;
@@ -614,13 +674,15 @@ module board;
                         $display("K13_VCS_RETRAIN_TRIGGER target=3 link_control=0020");
 
                         k13_wait_cycles = 0;
+                        k13_fallback_wait_limit = 20000;
+                        void'($value$plusargs("K13_FALLBACK_WAIT=%d", k13_fallback_wait_limit));
                         while (!((EP.DUT.negotiated_speed == 2'b10) &&
                                  (EP.DUT.ltssm_state == 6'd10) &&
                                  EP.DUT.link_up && EP.DUT.dll_active &&
                                  (RP.cfg_current_speed == 2'b11) &&
                                  (RP.cfg_ltssm_state == 6'h10) &&
                                  RP.user_lnk_up) &&
-                               (k13_wait_cycles < 20000)) begin
+                               (k13_wait_cycles < k13_fallback_wait_limit)) begin
                             @(posedge EP.DUT.phy_pclk);
                             k13_wait_cycles = k13_wait_cycles + 1;
                             // The first Gen3 attempt may deliberately take
@@ -628,10 +690,28 @@ module board;
                             // endpoint has committed the safe Gen1 fallback,
                             // model the Root Port's next retrain request so
                             // the regression covers fallback -> re-rate.
-                            if (!k13_retry_sent &&
-                                EP.DUT.k13_fallback_sticky &&
+                            // Do not treat the controller's ST_L0 as a
+                            // completed fallback.  Both LTSSMs and the DLL
+                            // must be back in a stable Gen1 L0 before a new
+                            // directed Gen3 retrain is issued.
+                            if (EP.DUT.k13_fallback_sticky &&
                                 (EP.DUT.phy_rate == 2'b00) &&
-                                (EP.DUT.k13_speed_state == 3'd0)) begin
+                                (EP.DUT.k13_speed_state == 3'd0) &&
+                                (EP.DUT.negotiated_speed == 2'b00) &&
+                                (EP.DUT.ltssm_state == 6'd10) &&
+                                EP.DUT.link_up && EP.DUT.dll_active &&
+                                (RP.cfg_ltssm_state == 6'h10) &&
+                                (RP.cfg_current_speed == 2'b01) &&
+                                RP.user_lnk_up) begin
+                                if (k13_gen1_l0_stable < 64)
+                                    k13_gen1_l0_stable =
+                                        k13_gen1_l0_stable + 1;
+                            end else begin
+                                k13_gen1_l0_stable = 0;
+                            end
+
+                            if (!k13_retry_sent &&
+                                (k13_gen1_l0_stable >= 64)) begin
                                 RP.cfg_usrapp.TSK_WRITE_CFG_DW(
                                     32'h3c, 32'h0000_0003, 4'h1);
                                 RP.tx_usrapp.DEFAULT_TAG =
@@ -649,12 +729,13 @@ module board;
                                 RP.cfg_usrapp.TSK_WRITE_CFG_DW(
                                     32'h34, 32'h0081_0020, 4'hf);
                                 k13_retry_sent = 1'b1;
+                                k13_gen1_l0_stable = 0;
                                 k13_wait_cycles = 0;
-                                $display("K13_VCS_RETRAIN_RETRY target=3 after_gen1_fallback");
+                                $display("K13_VCS_RETRAIN_RETRY target=3 after_gen1_l0_stable cycles=64");
                             end
                         end
 
-                        if (k13_wait_cycles >= 20000) begin
+                        if (k13_wait_cycles >= k13_fallback_wait_limit) begin
                             $display("K13_VCS_GEN3_RETRAIN_FAIL wait=%0d ep_state=%0d speed_state=%0d rate=%0d negotiated=%0d eq_active=%0d eq_phase=%0d eq_done=%0d fallback=%0d speed_timeout=%0d ts_accept=%0d ts_reject=%0d rp_state=%0h rp_speed=%0d rp_link=%0d seen_rp_recovery=%0d seen_states=%0d%0d%0d%0d seen_rate=%0d seen_phystatus=%0d seen_eq=%05b rp_tx_edges=%0d ep_tx_edges=%0d",
                                      k13_wait_cycles, EP.DUT.ltssm_state,
                                      EP.DUT.k13_speed_state, EP.DUT.phy_rate,

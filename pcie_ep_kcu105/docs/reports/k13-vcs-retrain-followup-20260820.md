@@ -8,6 +8,9 @@
   RXEQ bootstrap 门。
 - `65a0bbb`：RXEQ/peer 失败发生在原 Gen3 `Recovery.Speed` 已结束之后时，LTSSM
   重新进入一次 `Recovery.Speed`，完成显式 Gen1 fallback 的 PhyStatus 握手。
+- 工作区诊断改动：VCS 只在 Endpoint 与 Root Port 都稳定 Gen1 L0（含 DLL Active、
+  `user_lnk_up`）后才允许第二次 Retrain；增加双方 fallback 原始 PIPE 采样，并将
+  等待窗口改为 `K13_FALLBACK_WAIT` 可配置（默认 20,000 个 `phy_pclk`）。
 
 ## 已通过
 
@@ -26,19 +29,25 @@
 K13_ENABLE=1 K13_VCS_RETRAIN=1 K11B2_MODE=1 ./sim/vcs/run_k11b_serial.sh
 ```
 
-首次 Gen3 尝试在 RXEQ done-only 模型下回退到 Gen1。修正后 Endpoint 会重新进入
-`Recovery.Speed`，并完成 Gen1 `PhyStatus`；但加密 Xilinx Root-Port 模型在该 fallback
-阶段停留于自身 `Recovery.Speed`，没有向 Endpoint 发送完整的 8 个 Gen1 TS1。测试平台
-随后发起第二次 Gen3 Retrain，Root-Port 只发出 5 个 TS1 后转 TS2，Endpoint 因此停在
-`Recovery.RcvrLock`，最终未进入第二次 `Recovery.Speed/Equalization`。
+首次 Gen3 尝试在 RXEQ done-only 模型下回退到 Gen1。修正后 Endpoint 在
+`275.419629 ns` 产生 Gen1 `PhyStatus`，并恢复到 Gen1 命令；Endpoint 随后连续发送
+合法 Gen1 TS1（原始 PIPE 采样为 `9fbc, ff00, 0002, 4a4a...`）。但加密 Xilinx
+Root-Port 在 `cfg_ltssm_state=c`、Gen1 rate 下先保持 `TX Electrical Idle=1`、
+`data=0`，约 `303.287505 ns` 才重新进入 Recovery 并发送 TS。该次只发出 5 个
+TS1（随后转 TS2），Endpoint 按标准的 8-TS1 门限停在 `Recovery.RcvrLock`；双方从未
+同时到达 Gen1 L0，因此新的 Gen3 Retrain 没有被测试平台发起。
+
+将等待窗口从 20,000 扩展到 100,000 个 `phy_pclk` 仍未观察到双方 Gen1 L0；Root-Port
+随后多次退回 Detect/Polling。这个结果排除了“第二次 Retrain 发得太早”这一测试平台
+问题，也没有证据表明是 EQ 或 QPLL 锁定导致该分叉。
 
 这不是 QPLL、KCU105 线缆、J74、REFCLK 或 PERST# 结论；当前失败点是 VCS Root-Port
 fallback 后的 Ordered-Set/状态闭环。实板验证必须等该 Gate C 分叉解决后再继续。
 
 ## 下一步
 
-1. 在 VCS 中增加 Root-Port fallback 侧的原始 TS/状态观测，确认其停在
-   `Recovery.Speed` 的等待条件（目标速率、PhyStatus 或 TS1 计数）。
+1. 对加密 Root-Port 的 fallback TS1 计数/状态转换继续做最小化观测，确认 5-TS1
+   早转 TS2 是模型的固定行为还是由 Endpoint 响应触发。
 2. 用独立 partner FSM 复现 Root-Port 的 Gen3→Gen1 fallback，再次 Gen3 Retrain；
    不修改生产 LTSSM 来放宽 TS1 计数，也不把 EQ workaround 当作速率 PASS。
 3. Root-Port fallback 闭环通过后，再分别打开 `K13_RXEQ_BOOTSTRAP=1`，验证真实
