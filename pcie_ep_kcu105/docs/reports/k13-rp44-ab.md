@@ -52,11 +52,27 @@ K13_VCS_GEN3_RETRAIN_FAIL wait=20000 ep_state=12 speed_state=0 rate=2 negotiated
   seen_states=1110 seen_rate=1 seen_phystatus=1 seen_eq=11111
 ```
 
-关键对比信号显示 RP 在切到 Gen3 后曾有 `rp_qplllock=1`，随后变为 `0`；同时
-RP 仍为 `rp_state=c`、`rp_gt_txidle=1`、`rp_gt_txdata=00000000`，EP 未收到
-有效 Gen3 RX block。因此本轮不能把问题归因于“license”或简单的 4.1/4.4
-RP 源码版本差异；下一步应在同一可访问 license 环境中继续检查 RP Gen3 TX
-reset/QPLL 复位时序以及 EP 侧收到的 PIPE/串行数据。
+早期日志曾显示 RP 在切到 Gen3 后 `rp_qplllock` 有过 `1 -> 0`，但后续完整
+链路仍能观察到 RP 的 Gen3 RX 数据和 EQ 活动；因此目前没有证据把失败归因于
+QPLL 本身。许可证和简单的 4.1/4.4 RP 源码差异也已排除，下一步转向 EP 侧
+Gen3 ordered-set 解码。
+
+## SDS 解码证据（2026-08-21）
+
+在同一有效 license 环境下对完整 VCS 链路做诊断采样，RP 发出的 SDS 开头为
+`AAAA AAAA AAAA BCBF9DE1`，随后 SDS 的第四个原始 PIPE word 会出现
+`E64670E1`、`6A66A9E1`、`432F68E1`、`D26A6DE1` 等变化值。当前
+`rtl/phy/pcie_gen3_os_rx.sv` 仍把 SDS 末字按原始整字固定比较为
+`32'hBCBF_9DE1`；在 `197768000 ps` 诊断点因此产生：
+
+```text
+K13_OSRX_BAD_SDS word=3 parse_error=0 data=e64670e1 lfsr_ready=1
+```
+
+随后 `lfsr_ready` 被清零，TS1/TS2 被连续拒绝，最终表现为 Gen3 EQ 未完成。
+若干候选的 SDS/LFSR 修改已做过完整仿真但均未通过，均已撤回；本提交不包含
+未经验证的生产 RTL 修复。下一步是先建立聚焦的 SDS/LFSR 单元测试，确认每个
+byte 的 descramble、跳过和 LFSR 状态推进规则，再回到完整 VCS 回归。
 
 ## 判定标准
 
