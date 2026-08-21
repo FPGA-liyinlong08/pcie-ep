@@ -53,6 +53,8 @@ module board;
     integer k13_gen1_l0_stable;
     integer k13_rp_pipe_samples;
     integer k13_rp_fallback_pipe_samples;
+    integer k13_rp_recovery_ts_samples;
+    integer k13_ep_recovery_rx_samples;
     integer k13_ep_fallback_pipe_samples;
     reg [1:0] k13_last_rxeq_ctrl;
     reg       k13_last_rxeq_done;
@@ -232,6 +234,8 @@ module board;
         k13_gen3_rx_samples = 0;
         k13_rp_pipe_samples = 0;
         k13_rp_fallback_pipe_samples = 0;
+        k13_rp_recovery_ts_samples = 0;
+        k13_ep_recovery_rx_samples = 0;
         k13_ep_fallback_pipe_samples = 0;
         k13_rp_tx_edges_at_retrain = 0;
         k13_ep_tx_edges_at_retrain = 0;
@@ -286,6 +290,42 @@ module board;
                          EP.DUT.ltssm_state, EP.DUT.k13_speed_state);
                 k13_rp_fallback_pipe_samples =
                     k13_rp_fallback_pipe_samples + 1;
+            end
+            if (EP.DUT.k13_fallback_sticky &&
+                (RP.cfg_ltssm_state == 6'h0b ||
+                 RP.cfg_ltssm_state == 6'h0d) &&
+                (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b00) &&
+                !RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle &&
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid &&
+                (k13_rp_recovery_ts_samples < 128)) begin
+                $display("K13_RP_RECOVERY_TS_RAW n=%0d time_ps=%0t state=%0h rate=%02b idle=%0d valid=%0d start=%0d data=%08x ep_state=%0d rx_ts=%0d",
+                         k13_rp_recovery_ts_samples, $time,
+                         RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data,
+                         EP.DUT.ltssm_state, EP.DUT.rx_ts_count);
+                k13_rp_recovery_ts_samples =
+                    k13_rp_recovery_ts_samples + 1;
+            end
+            if (EP.DUT.k13_fallback_sticky &&
+                (EP.DUT.ltssm_state == 6'd11 ||
+                 EP.DUT.ltssm_state == 6'd12) &&
+                EP.DUT.phy_rxvalid &&
+                (k13_ep_recovery_rx_samples < 128)) begin
+                $display("K13_EP_RECOVERY_RX_RAW n=%0d time_ps=%0t state=%0d rxvalid=%0d data_valid=%0d start=%0d datak=%02b data=%08x rp_state=%0h rp_rate=%02b rp_idle=%0d rp_valid=%0d",
+                         k13_ep_recovery_rx_samples, $time,
+                         EP.DUT.ltssm_state, EP.DUT.phy_rxvalid,
+                         EP.DUT.phy_rxdata_valid, EP.DUT.phy_rxstart_block,
+                         EP.DUT.phy_rxdatak, EP.DUT.phy_rxdata,
+                         RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid);
+                k13_ep_recovery_rx_samples =
+                    k13_ep_recovery_rx_samples + 1;
             end
             if (EP.DUT.k13_fallback_sticky &&
                 (EP.DUT.phy_rate == 2'b00) &&
@@ -650,6 +690,8 @@ module board;
                         k13_gen3_pipe_samples = 0;
                         k13_rp_pipe_samples = 0;
                         k13_rp_fallback_pipe_samples = 0;
+                        k13_rp_recovery_ts_samples = 0;
+                        k13_ep_recovery_rx_samples = 0;
                         k13_ep_fallback_pipe_samples = 0;
                         k13_retry_sent = 1'b0;
                         k13_gen1_l0_stable = 0;
