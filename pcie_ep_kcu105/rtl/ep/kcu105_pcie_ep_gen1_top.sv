@@ -246,16 +246,17 @@ module kcu105_pcie_ep_gen1_top #(
         end
     endfunction
     assign k13_ts_rate = decode_k13_ts_rate(os_rate_id);
-    // Root Port可在L0主动发送带目标速率能力的TS1。Xilinx Root Port
-    // 模型在配置空间Retrain后发送Rate ID=8'h0e，但不置bit7；因此不能
-    // 把bit7当成唯一的partner retrain资格。Gen1同速TS只会走same-rate
-    // no-op，目标速率变化才会进入Recovery.Speed。
+    // Root Port可在L0主动发送带目标速率的定向TS1。Rate ID[3:0]只是能力
+    // 位图（例如fallback后的0x0e），只有bit7置位才表示本次TS是速率切换
+    // 请求；否则该TS只能参与当前速率的Recovery训练，不能启动新的
+    // Recovery.Speed事务。
     wire k13_partner_retrain_window = link_up ||
                                       (ltssm_state == 6'd11) ||
                                       (ltssm_state == 6'd12) ||
                                       (ltssm_state == 6'd18);
     wire k13_partner_retrain_valid = k13_partner_retrain_window &&
                                      os_ts1_valid &&
+                                     os_rate_id[7] &&
                                      (k13_ts_rate != 2'b11);
 
     pcie_k13_production_ctrl #(
