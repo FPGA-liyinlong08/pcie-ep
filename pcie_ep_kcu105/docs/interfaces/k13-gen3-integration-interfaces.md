@@ -108,3 +108,16 @@ K13未释放`force_recovery`前不得提前返回L0。
 K13开发bit必须明确记录`K13_ENABLE=1`。当前诊断bit虽已以
 `K13_ENABLE=1`实现和上板，但仅验证了Gen1枚举/BAR及失败Retrain现象，
 不属于本接口的Gen3实板验收物。
+
+## 7. VCS诊断控制（非RTL接口）
+
+以下环境变量只控制 `sim/vcs/run_k11b_serial.sh` 的测试平台，默认不影响普通回归：
+
+| 环境变量 | 默认值 | 语义 |
+|---|---|---|
+| `K13_PIPE_COMPARE` | `0` | `1`时重建并比较RP PIPE TX、EP原始GT RX、EP公共PIPE RX三个边界的Ordered Set，报告丢失、拼接、乱序和逐OS延迟 |
+| `K13_RETRAIN_SOURCE` | `dual` | `dual`保持原有双入口；`rp`只使用Root-Port directed retrain；`ep`只使用Endpoint配置空间入口 |
+
+事件trace中的速率字段统一为`pipe_rate_cmd`、`active_rate`和`negotiated_speed`。
+`pipe_rate_cmd`是送往PIPE的命令，`active_rate`只在`PhyStatus`后提交；不得再把同一
+PIPE `phy_rate`信号的两个别名解释为命令与提交两个阶段。

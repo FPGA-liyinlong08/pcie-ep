@@ -28,6 +28,15 @@ k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
 k13_fallback_wait="${K13_FALLBACK_WAIT:-20000}"
 k13_waveform="${K13_WAVEFORM:-0}"
 k13_trace="${K13_TRACE:-0}"
+k13_pipe_compare="${K13_PIPE_COMPARE:-0}"
+k13_retrain_source="${K13_RETRAIN_SOURCE:-dual}"
+case "${k13_retrain_source}" in
+    dual|rp|ep) ;;
+    *)
+        echo "错误：K13_RETRAIN_SOURCE必须为dual、rp或ep" >&2
+        exit 64
+        ;;
+esac
 afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 tb_defines+=(+define+K13_RXEQ_BOOTSTRAP_VALUE=${k13_rxeq_bootstrap})
@@ -209,6 +218,13 @@ if [[ "${b2_mode}" == "1" ]]; then
     if [[ "${k13_trace}" == "1" ]]; then
         b2_plusargs+=(+K13_TRACE)
     fi
+    if [[ "${k13_pipe_compare}" == "1" ]]; then
+        b2_plusargs+=(+K13_PIPE_COMPARE)
+    fi
+    case "${k13_retrain_source}" in
+        rp) b2_plusargs+=(+K13_RETRAIN_SOURCE_RP) ;;
+        ep) b2_plusargs+=(+K13_RETRAIN_SOURCE_EP) ;;
+    esac
     set +e
     timeout --foreground "${simulation_timeout}" \
         "${run_dir}/k11b_simv" "${b2_plusargs[@]}" -licqueue \

@@ -239,6 +239,65 @@ async def drive_fallback_gen1_partner(dut):
     await send_idle(dut, 8)
 
 
+async def enter_failed_gen3_fallback(dut):
+    """Bring the production path to Gen1 Recovery.RcvrLock after RXEQ failure."""
+    global partner_lfsr
+    partner_lfsr = 0xFFFF
+    cocotb.start_soon(Clock(dut.phy_pclk, 8, units="ns").start())
+    cocotb.start_soon(Clock(dut.core_clk, 10, units="ns").start())
+    for name in (
+        "pipe_rst_n", "core_rst_n", "phy_rxdata", "phy_rxdatak",
+        "phy_rxdata_valid", "phy_rxstart_block", "phy_rxsync_header",
+        "phy_rxvalid", "phy_phystatus", "phy_rxelecidle", "phy_rxstatus",
+        "phy_cdr_lost", "phy_txeq_done", "phy_rxeq_adapt_done",
+        "phy_rxeq_done", "retrain_pulse", "gen3_partner_enable",
+    ):
+        getattr(dut, name).value = 0
+    dut.phy_rxelecidle.value = 1
+    dut.target_speed.value = 2
+    await tick(dut, 3)
+    await writable()
+    dut.pipe_rst_n.value = 1
+    dut.core_rst_n.value = 1
+
+    await train_gen1_to_l0(dut)
+    cocotb.start_soon(phy_command_responder_with_one_rxeq_failure(dut))
+    dut.gen3_partner_enable.value = 1
+    dut.retrain_pulse.value = 1
+    await RisingEdge(dut.core_clk)
+    await writable()
+    dut.retrain_pulse.value = 0
+
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+    await send_ts(dut, 1, 8, link=0, lane=0, rate=0x8E)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 8, link=0, lane=0, rate=0x8E)
+    await wait_state(dut, RECOVERY_SPEED)
+
+    for _ in range(20000):
+        await tick(dut)
+        if (int(dut.fallback_sticky.value) and
+                int(dut.phy_rate.value) == 0 and
+                int(dut.active_rate.value) == 0 and
+                int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK):
+            await writable()
+            return
+        await writable()
+    raise AssertionError(
+        "RXEQ failure did not reach Gen1 Recovery.RcvrLock: "
+        f"state={int(dut.ltssm_state.value)} "
+        f"rate={int(dut.phy_rate.value)} "
+        f"active={int(dut.active_rate.value)}"
+    )
+
+
+async def send_spliced_ts1_ts2(dut, link=0, lane=0, rate=0x02):
+    """Replay the VCS boundary: TS1 fields followed by TS2 identifiers."""
+    ts1, ts1_isk = ts_symbols(1, link=link, lane=lane, rate=rate)
+    ts2, ts2_isk = ts_symbols(2, link=link, lane=lane, rate=rate)
+    await drive_symbols(dut, ts1[:6] + ts2[6:], ts1_isk[:6] + ts2_isk[6:])
+
+
 async def capture_gen3_training_prefix(dut, words=8):
     """Capture the first valid Gen3 PIPE words independently of the partner RX."""
     captured = []
@@ -481,3 +540,58 @@ async def production_gen3_failure_fallback_then_retry(dut):
     assert int(dut.ltssm_state.value) == L0
     assert int(dut.eq_done.value) == 1
     assert int(dut.eq_failed.value) == 0
+
+
+@cocotb.test()
+async def fallback_fixed_latency_nine_ts1_returns_to_gen1_l0(dut):
+    """A uniform receive delay must not discard any fallback Ordered Set."""
+    await enter_failed_gen3_fallback(dut)
+
+    # Model the long but lossless vendor-PHY wake-up interval independently
+    # from the ordered-set stream.  Once delivery begins every word keeps the
+    # same latency and all nine TS1s remain visible to the production parser.
+    dut.phy_rxvalid.value = 0
+    dut.phy_rxdata_valid.value = 0
+    dut.phy_rxelecidle.value = 0
+    await tick(dut, 52)
+    await writable()
+    await send_ts(dut, 1, 9, link=0, lane=0, rate=0x02)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 8, link=0, lane=0, rate=0x02)
+    await wait_state(dut, RECOVERY_IDLE)
+    await send_idle(dut, 8)
+    await wait_state(dut, L0)
+
+    assert int(dut.phy_rate.value) == 0
+    assert int(dut.active_rate.value) == 0
+    assert int(dut.negotiated_speed.value) == 0
+    assert int(dut.link_up.value) == 1
+
+
+@cocotb.test()
+async def fallback_vcs_splice_keeps_eight_ts1_threshold(dut):
+    """Five TS1s plus the observed TS1/TS2 splice must not close RcvrLock."""
+    await enter_failed_gen3_fallback(dut)
+
+    await send_ts(dut, 1, 5, link=0, lane=0, rate=0x02)
+    await tick(dut)
+    await writable()
+    assert int(dut.rx_ts_count.value) == 5
+    await send_spliced_ts1_ts2(dut, link=0, lane=0, rate=0x02)
+    await send_ts(dut, 2, 7, link=0, lane=0, rate=0x02)
+    await tick(dut, 4)
+
+    assert int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK
+    assert int(dut.rx_ts_count.value) == 5
+    assert int(dut.os_malformed.value) == 0
+
+
+@cocotb.test()
+async def fallback_eight_complete_ts1_enters_rcvrcfg(dut):
+    """The production boundary remains exactly eight complete fallback TS1s."""
+    await enter_failed_gen3_fallback(dut)
+
+    await send_ts(dut, 1, 8, link=0, lane=0, rate=0x02)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    assert int(dut.ltssm_state.value) == RECOVERY_RCVRCFG
+    assert int(dut.rx_ts_count.value) == 0

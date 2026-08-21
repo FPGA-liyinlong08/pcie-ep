@@ -11,14 +11,15 @@
 - `f2ebd9d`：partner retrain 只接受 `Rate ID[7]=1` 的定向 TS1；fallback 后的
   `0x0e` 能力广告不再被误当成新的 Gen3 请求。Rate ID[3:0] 仍只用于解码能力。
 - 工作区诊断改动：VCS 只在 Endpoint 与 Root Port 都稳定 Gen1 L0（含 DLL Active、
-  `user_lnk_up`）后才允许第二次 Retrain；增加双方 fallback 原始 PIPE 采样，并将
-  等待窗口改为 `K13_FALLBACK_WAIT` 可配置（默认 20,000 个 `phy_pclk`）。
+  `user_lnk_up`）后才允许第二次 Retrain；增加三边界 Ordered-Set 比较器、统一事件快照
+  以及 `K13_RETRAIN_SOURCE=dual|rp|ep` A/B 入口。等待窗口仍由
+  `K13_FALLBACK_WAIT` 配置（默认 20,000 个 `phy_pclk`）。
 
 ## 已通过
 
 - K11B2 顶层 lint、K13 controller lint、K13 integration lint。
 - K13 controller Verilator：4/4 PASS。
-- K13 production LTSSM + behavioral partner Verilator：3/3 PASS。
+- K13 production LTSSM + behavioral partner Verilator：6/6 PASS。
 - 单元波形确认 `requested_rate=Gen3` 可早于 `active_rate=Gen3`，命令/提交顺序不变。
 - 真实 Xilinx Root-Port VCS 的初始 Gen1 枚举、BAR、InitFC/DLL 仍 PASS；首次
   Gen3 速率命令、Gen3 `PhyStatus` 和 RXEQ failure→Gen1 fallback 事件可观察。
@@ -28,13 +29,28 @@
 在 `sim/verilator/k13_integration` 增加了独立的脚本化 Partner 状态流程：第一次
 Gen3 只返回 RXEQ `done`（不返回 `AdaptDone`），等待 DUT 完成 Gen1 fallback 并由
 Partner 发送 Gen1 TS1/TS2、Idle；确认回到 Gen1 L0 后再次发起 Gen3 Retrain，第二次
-提供完整 RXEQ completion。全量三项 K13 integration 回归通过：
+提供完整 RXEQ completion。原有三项 K13 integration 回归继续通过：
 
 ```text
 production_ltssm_gen1_to_gen3_eq_closed_loop                 PASS
 partner_initiated_speed_change_closes_recovery_and_eq        PASS
 production_gen3_failure_fallback_then_retry                  PASS
 ```
+
+本轮又增加三项 fallback Partner Gate C 边界用例，当前 K13 integration 全量为
+6/6 PASS：
+
+```text
+fallback_fixed_latency_nine_ts1_returns_to_gen1_l0           PASS
+fallback_vcs_splice_keeps_eight_ts1_threshold                PASS
+fallback_eight_complete_ts1_enters_rcvrcfg                   PASS
+```
+
+第一项使用固定延迟、无丢失的 `9 TS1 -> 8 TS2 -> Idle`，要求恢复 Gen1 L0；第二项
+逐字复现 VCS 输入端看到的 `5 个完整 TS1 + 第 6 个 TS1/TS2 拼接`，要求保持在
+`Recovery.RcvrLock`；第三项在至少 8 个完整 TS1 后切换 TS2，要求进入
+`Recovery.RcvrCfg`。这些结果证明生产 LTSSM 的 8-TS1 确认规则正确，未修改门限，
+也未把 RXEQ workaround 作为 PASS。
 
 第三项现在进一步覆盖第二次 Gen3 `Recovery.Idle -> L0` 的最小语义边界：Partner 在
 Recovery.Idle 后停止 Ordered-Set 发射，向 Gen3 RX 提供合法的零 Data Stream logical-idle
@@ -99,9 +115,11 @@ seen_rate=1 seen_phystatus=1 seen_eq=00000
 
 本次使用 `-t ps`，以下时间均为仿真时间戳（ps）：Root-Port 首个完整 fallback
 TS1 从约 `303323529 ps` 开始；Endpoint 受 PHY/PIPE 延迟影响，首个完整 TS1 约在
-`303803504 ps` 才被解析；Root-Port 在 `303875505 ps` 从 `state=b` 进入 `state=d`，
-并于约 `304075529 ps` 开始输出 TS2。Endpoint 只完成 TS1 计数 5，随后持续看到 TS2，
-因此停留在 `Recovery.RcvrLock`。
+`303803504 ps` 才被解析。Root-Port 在 `303875505 ps` 从 `state=b` 进入 `state=d`；
+首个 TS2 Ordered Set 的 COM 从 `303899504 ps` 开始，TS2 identifier `45 45` 出现在
+`303923504 ps`。Endpoint 第 6 个候选 Ordered Set 的 COM 在 `304059529 ps` 到达，
+但其 identifier 在 `304083529 ps` 已被后续 TS2 替换。Endpoint 因而只完成 TS1
+计数 5，随后持续看到 TS2，并停留在 `Recovery.RcvrLock`。
 
 该复跑排除了“等待时间不足”这一因素，也进一步表明当前分叉是加密 Root-Port/PHY
 PIPE 延迟与 Recovery TS 发射窗口的相位不匹配；本次没有观察到 QPLL、CDR 或 EQ
@@ -117,31 +135,60 @@ PIPE 延迟与 Recovery TS 发射窗口的相位不匹配；本次没有观察�
    `phy_link_status`、`user_lnk_up` 和 PIPE `rate/elec_idle/phy_status`，并以时间戳对齐
    `Recovery.Speed → EQ Phase 0..3 → Recovery.Idle → L0`。当前工程已在
    `sim/vcs/k11b_serial_board.sv` 加入同样的 board-scope trace aliases；它还额外保留
-   `phy_rate_cmd/active_rate/negotiated_speed`，可直接检查 Rate Contract 的提交顺序。
+   `pipe_rate_cmd/active_rate/negotiated_speed`，可直接检查 Rate Contract 的提交顺序。
 2. **可选波形而非默认大 dump**：新增 `K13_WAVEFORM=1` 后，VCS 生成受控的
    `sim/vcs/build/k13_vcs_training.vcd`；`K13_TRACE=1` 输出可与 demo 文本日志逐事件比较的
    `K13_TRACE`。默认值仍为关闭，不影响普通回归。
 3. **Root-Port directed speed-change 参考**：demo 的 `TSK_SPEED_CHANGE` 先写
    Link Control 2 的 Target Link Speed，再写 Link Control 的 Retrain Link，等待 RP
    `Recovery`/`Recovery.Speed`/`user_lnk_up`。当前 K13 测试仍保留 Endpoint 配置空间和
-   Root-Port 内部 directed write 两条证据；下一轮可用 demo 的单一路径做 A/B，但不能把
-   Xilinx EP/RP 的成功当作自定义 EP 的成功。
+   Root-Port 内部 directed write 两条入口；新增 `K13_RETRAIN_SOURCE=dual|rp|ep` 可按
+   demo 风格选择 `rp` 单一路径做 A/B，但不能把 Xilinx EP/RP 的成功当作自定义 EP 的成功。
 
 本轮已用 `K13_WAVEFORM=1 K13_TRACE=1` 重跑真实 Root-Port fallback 场景：VCS 编译、
-elaboration、链接和初始 Gen1 枚举/BAR PASS；波形确认 `phy_rate_cmd=Gen3` 先于
-`phy_rate=Gen3`，`active_rate` 直到 Gen3 `PhyStatus` 才提交，随后 RXEQ done-only
+elaboration、链接和初始 Gen1 枚举/BAR PASS。PIPE `phy_rate` 就是 Rate Contract 的
+命令输出，trace 统一命名为 `pipe_rate_cmd`；它与原 `phy_rate_cmd` 同拍变化，并不是
+两个提交阶段。只有 `active_rate` 在 Gen3 `PhyStatus` 后提交。随后 RXEQ done-only
 触发 Gen1 fallback。最终分叉仍与此前一致：`K13_VCS_GEN3_RETRAIN_FAIL`，EP 停在
 `Recovery.RcvrLock`，Root-Port 在后续 Detect/Polling 循环；没有新的 EQ/QPLL 失败证据。
 因此 demo 借鉴内容已经落到可比对的观测基础设施和 directed-RP 操作顺序，尚未构成对
 当前 Root-Port fallback TS 窗口分叉的修复。
 
+## 三边界定位与 Retrain A/B（2026-08-21）
+
+`K13_PIPE_COMPARE=1` 现在在同一套比较器中重建并对齐三处 Ordered Set：
+
+1. Root-Port 并行 PIPE TX；
+2. Endpoint GT 原始 RX；
+3. Endpoint 公共 PIPE RX。
+
+比较器为初始 Gen1 建链和 fallback 分别建立 epoch，逐个输出序号、类型、起止时间、
+匹配源序号、跳过数量和跨边界延迟。`dual` 路径在 TS1→TS2 边界给出的关键结果为：
+
+```text
+RP PIPE TX:  TS2 seq=9  start=303899504  end=303955504
+EP raw GT:   TS2 seq=5  start=304059529  end=304115529
+RP_TO_GT:    src_seq=9 dst_seq=5 skipped=4 delay=160025 ps
+GT_TO_PIPE:  src_seq=5 dst_seq=5 skipped=0 delay=0 ps
+```
+
+此前 TS1 的 `RP_TO_GT` 延迟稳定在约 `415975~416025 ps`；切换边界瞬间缩短到约
+`160025 ps`，刚好越过 4 个完整 TS。GT 原始 RX 与公共 PIPE RX 的序号、类型和时间完全
+一致。故丢失/拼接发生在 Endpoint GT 原始 RX 之前，当前应归类为 Xilinx 串行 GT/PHY
+仿真模型在 Root-Port `state b->d` 时刷新或重排流水线的限制，而不是本工程 PHY wrapper、
+公共 PIPE pipeline 或 Ordered-Set parser 丢数。生产 RTL 保持不变，独立 Partner Gate C
+作为 fallback 闭环门禁。
+
+官方 demo 风格的 `K13_RETRAIN_SOURCE=rp` 单路径 A/B 同样通过初始 Gen1 DLL Active、
+枚举和 BAR 检查，随后在相同边界报告 `skipped=4`：切换时延从约 416 ns 缩短到约
+160 ns，最终仍为 `K13_VCS_GEN3_RETRAIN_FAIL`。因此该分叉不由 Endpoint 与 Root-Port
+双重触发 Retrain 引起；默认值继续保持兼容的 `dual`。
+
 ## 下一步
 
-1. 对加密 Root-Port fallback 的 PIPE 模式切换做最小化对照：比较初始 Gen1 建链与
-   fallback 的首个 `COM` 对齐、RX 延迟和 Root-Port `state=b→d` 触发条件，确认
-   Endpoint 解析少收的 TS1 是串行模型窗口相位问题还是由对端状态响应触发。
-2. 用独立 partner FSM 复现 Root-Port 的 Gen3→Gen1 fallback，再次 Gen3 Retrain；
-   不修改生产 LTSSM 来放宽 TS1 计数，也不把 EQ workaround 当作速率 PASS。
-3. 将当前已通过的最小 Gen3 logical-idle 边界扩展为真实 SDS/Data Stream 发送与接收，
-   再接入 TLP/DLLP 和 DLL Active；Root-Port fallback 闭环通过后，分别打开
-   `K13_RXEQ_BOOTSTRAP=1`，验证真实 RXEQ/EQ Phase 0～3、Gen3 L0 和事务静默。
+1. 保留三边界比较器作为串行模型升级后的回归诊断，并用独立 Partner Gate C 作为当前
+   fallback 闭环门禁；不针对已定位到 GT 原始 RX 之前的模型丢失修改生产 RTL。
+2. 在更新的 Xilinx 仿真模型或实板 ILA 环境重新验证真实 RP fallback；验收必须同时看到
+   双方 Gen1 L0、Endpoint DLL Active 和 RP `user_lnk_up`，不能以 workaround 代替。
+3. 只有真实 RP fallback 闭环后，才继续第二次 Gen3 Retrain，扩展真实 SDS/Data Stream、
+   DLL Active、EQ Phase 0～3和事务恢复；在此之前不声明完整 K13 PASS。

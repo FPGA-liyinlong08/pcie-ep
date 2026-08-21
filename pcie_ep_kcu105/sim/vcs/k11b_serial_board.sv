@@ -21,6 +21,10 @@ module board;
     reg  k13_retrain_active;
     reg  k13_retrain_monitor_armed;
     reg  k13_retry_sent;
+    reg  k13_pipe_compare_enabled;
+    reg  k13_initial_gen1_l0_seen;
+    reg  k13_do_rp_retrain;
+    reg  k13_do_ep_retrain;
 
     integer b2_iter;
     integer b2_byte;
@@ -83,8 +87,9 @@ module board;
     wire [5:0] trace_ep_ltssm_state = EP.DUT.ltssm_state;
     wire       trace_ep_link_up = EP.DUT.link_up;
     wire       trace_ep_dll_active = EP.DUT.dll_active;
-    wire [1:0] trace_ep_phy_rate = EP.DUT.phy_rate;
-    wire [1:0] trace_ep_phy_rate_cmd = EP.DUT.k13_phy_rate_cmd;
+    // phy_rate is the selected command presented at the public PIPE boundary.
+    // active_rate is the committed Rate Contract value after PhyStatus.
+    wire [1:0] trace_ep_pipe_rate_cmd = EP.DUT.phy_rate;
     wire [1:0] trace_ep_active_rate = EP.DUT.k13_active_rate;
     wire [1:0] trace_ep_negotiated_speed = EP.DUT.negotiated_speed;
     wire [2:0] trace_ep_speed_state = EP.DUT.k13_speed_state;
@@ -102,21 +107,32 @@ module board;
     // The demo's text trace is intentionally opt-in: normal regressions keep
     // their existing log volume, while a failing retrain can be compared
     // event-for-event with the demo's EP/RP trace.
-    always @(trace_rp_ltssm_state or trace_rp_current_speed or
-             trace_rp_user_lnk_up or trace_ep_ltssm_state or
-             trace_ep_phy_rate_cmd or trace_ep_phy_rate or
-             trace_ep_active_rate or trace_ep_speed_state or
-             trace_ep_eq_phase or trace_ep_eq_active or trace_ep_eq_done or
-             trace_ep_fallback or trace_ep_phystatus) begin
+    wire [44:0] trace_event_snapshot = {
+        trace_rp_ltssm_state, trace_rp_current_speed,
+        trace_rp_negotiated_width, trace_rp_phy_link_status,
+        trace_rp_phy_link_down, trace_rp_user_lnk_up,
+        trace_ep_ltssm_state, trace_ep_link_up, trace_ep_dll_active,
+        trace_ep_pipe_rate_cmd, trace_ep_active_rate,
+        trace_ep_negotiated_speed, trace_ep_speed_state, trace_ep_eq_phase,
+        trace_ep_eq_active, trace_ep_eq_done, trace_ep_eq_failed,
+        trace_ep_fallback, trace_ep_speed_timeout, trace_ep_phystatus,
+        trace_ep_txei, trace_ep_txeq_ctrl, trace_ep_rxeq_ctrl
+    };
+
+    always @(trace_event_snapshot) begin
         if (sys_rst_n && $test$plusargs("K13_TRACE"))
-            $display("K13_TRACE time_ps=%0t rp_state=%0h rp_speed=%0d rp_width=%0d rp_link=%0d ep_state=%0d cmd=%0d phy_rate=%0d active=%0d negotiated=%0d speed_state=%0d eq_active=%0d eq_phase=%0d eq_done=%0d fallback=%0d phystatus=%0d",
+            $display("K13_TRACE time_ps=%0t rp_state=%0h rp_speed=%0d rp_width=%0d rp_phy_link=%0d rp_link_down=%0d rp_user_link=%0d ep_state=%0d ep_link=%0d ep_dll=%0d pipe_rate_cmd=%0d active_rate=%0d negotiated=%0d speed_state=%0d eq_active=%0d eq_phase=%0d eq_done=%0d eq_failed=%0d fallback=%0d speed_timeout=%0d phystatus=%0d txei=%0d txeq=%02b rxeq=%02b",
                      $time, trace_rp_ltssm_state, trace_rp_current_speed,
-                     trace_rp_negotiated_width, trace_rp_user_lnk_up,
-                     trace_ep_ltssm_state, trace_ep_phy_rate_cmd,
-                     trace_ep_phy_rate, trace_ep_active_rate,
+                     trace_rp_negotiated_width, trace_rp_phy_link_status,
+                     trace_rp_phy_link_down, trace_rp_user_lnk_up,
+                     trace_ep_ltssm_state, trace_ep_link_up,
+                     trace_ep_dll_active, trace_ep_pipe_rate_cmd,
+                     trace_ep_active_rate,
                      trace_ep_negotiated_speed, trace_ep_speed_state,
                      trace_ep_eq_active, trace_ep_eq_phase, trace_ep_eq_done,
-                     trace_ep_fallback, trace_ep_phystatus);
+                     trace_ep_eq_failed, trace_ep_fallback,
+                     trace_ep_speed_timeout, trace_ep_phystatus,
+                     trace_ep_txei, trace_ep_txeq_ctrl, trace_ep_rxeq_ctrl);
     end
 
     // Optional VCD equivalent to the demo's +DUMP_WAVEFORM mode.  The dump
@@ -134,8 +150,7 @@ module board;
             $dumpvars(0, trace_ep_ltssm_state);
             $dumpvars(0, trace_ep_link_up);
             $dumpvars(0, trace_ep_dll_active);
-            $dumpvars(0, trace_ep_phy_rate_cmd);
-            $dumpvars(0, trace_ep_phy_rate);
+            $dumpvars(0, trace_ep_pipe_rate_cmd);
             $dumpvars(0, trace_ep_active_rate);
             $dumpvars(0, trace_ep_negotiated_speed);
             $dumpvars(0, trace_ep_speed_state);
@@ -178,10 +193,25 @@ module board;
         k13_retrain_active = $test$plusargs("K13_RETRAIN");
         k13_retrain_monitor_armed = 1'b0;
         k13_retry_sent = 1'b0;
+        k13_pipe_compare_enabled = $test$plusargs("K13_PIPE_COMPARE");
+        k13_initial_gen1_l0_seen = 1'b0;
+        if ($test$plusargs("K13_RETRAIN_SOURCE_RP")) begin
+            k13_do_rp_retrain = 1'b1;
+            k13_do_ep_retrain = 1'b0;
+        end else if ($test$plusargs("K13_RETRAIN_SOURCE_EP")) begin
+            k13_do_rp_retrain = 1'b0;
+            k13_do_ep_retrain = 1'b1;
+        end else begin
+            k13_do_rp_retrain = 1'b1;
+            k13_do_ep_retrain = 1'b1;
+        end
         repeat (500) @(posedge refclk_p);
         sys_rst_n = 1'b1;
         $display("K11B_RESET_RELEASE time_ps=%0t disconnect=%0d", $time,
                  disconnect_lane0);
+        if (k13_retrain_active)
+            $display("K13_VCS_RETRAIN_SOURCE rp=%0d ep=%0d",
+                     k13_do_rp_retrain, k13_do_ep_retrain);
     end
 
     // 正常模式仅连接 Lane 0。断线 Stub 把双方 RX 固定为差分静默值。
@@ -221,6 +251,149 @@ module board;
         .sys_clk_n   (refclk_n),
         .sys_rst_n   (sys_rst_n)
     );
+
+`ifdef K13_DUT
+    wire k13_pipe_compare_active = k13_pipe_compare_enabled &&
+        ((!k13_initial_gen1_l0_seen || EP.DUT.k13_fallback_sticky) &&
+         (EP.DUT.phy_rate == 2'b00) &&
+         (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b00));
+    wire k13_compare_epoch = EP.DUT.k13_fallback_sticky;
+
+    wire rp_os_event_valid, gt_os_event_valid, pipe_os_event_valid;
+    wire [1:0] rp_os_event_kind, gt_os_event_kind, pipe_os_event_kind;
+    wire [11:0] rp_os_event_seq, gt_os_event_seq, pipe_os_event_seq;
+    wire [63:0] rp_os_start_ps, rp_os_end_ps;
+    wire [63:0] gt_os_start_ps, gt_os_end_ps;
+    wire [63:0] pipe_os_start_ps, pipe_os_end_ps;
+
+    k13_gen1_os_boundary_monitor #(.BOUNDARY_ID(0)) RP_PIPE_OS_MON (
+        .clk(EP.DUT.phy_pclk), .rst_n(EP.DUT.pipe_rst_n),
+        .enable(k13_pipe_compare_active), .epoch(k13_compare_epoch),
+        .sample_valid(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid &&
+                      !RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle),
+        .sample_data(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data[15:0]),
+        .sample_datak(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_char_is_k),
+        .ltssm_state(RP.cfg_ltssm_state),
+        .event_valid(rp_os_event_valid), .event_kind(rp_os_event_kind),
+        .event_seq(rp_os_event_seq), .event_start_ps(rp_os_start_ps),
+        .event_end_ps(rp_os_end_ps)
+    );
+
+    k13_gen1_os_boundary_monitor #(.BOUNDARY_ID(1)) EP_GT_OS_MON (
+        .clk(EP.DUT.phy_pclk), .rst_n(EP.DUT.pipe_rst_n),
+        .enable(k13_pipe_compare_active), .epoch(k13_compare_epoch),
+        .sample_valid(EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.rxvalid_out[0]),
+        .sample_data(EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.rxdata_out[15:0]),
+        .sample_datak(EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.rxctrl0_out[1:0]),
+        .ltssm_state(EP.DUT.ltssm_state),
+        .event_valid(gt_os_event_valid), .event_kind(gt_os_event_kind),
+        .event_seq(gt_os_event_seq), .event_start_ps(gt_os_start_ps),
+        .event_end_ps(gt_os_end_ps)
+    );
+
+    k13_gen1_os_boundary_monitor #(.BOUNDARY_ID(2)) EP_PIPE_OS_MON (
+        .clk(EP.DUT.phy_pclk), .rst_n(EP.DUT.pipe_rst_n),
+        .enable(k13_pipe_compare_active), .epoch(k13_compare_epoch),
+        .sample_valid(EP.DUT.phy_rxvalid),
+        .sample_data(EP.DUT.phy_rxdata[15:0]),
+        .sample_datak(EP.DUT.phy_rxdatak),
+        .ltssm_state(EP.DUT.ltssm_state),
+        .event_valid(pipe_os_event_valid), .event_kind(pipe_os_event_kind),
+        .event_seq(pipe_os_event_seq), .event_start_ps(pipe_os_start_ps),
+        .event_end_ps(pipe_os_end_ps)
+    );
+
+    reg [1:0] rp_compare_kind [0:4095];
+    reg [1:0] gt_compare_kind [0:4095];
+    reg [63:0] rp_compare_start [0:4095];
+    reg [63:0] rp_compare_end [0:4095];
+    reg [63:0] gt_compare_start [0:4095];
+    reg [63:0] gt_compare_end [0:4095];
+    integer rp_compare_count;
+    integer gt_compare_count;
+    integer pipe_compare_count;
+    integer rp_compare_cursor;
+    integer gt_compare_cursor;
+    integer compare_index;
+    integer compare_match;
+
+    always @(posedge EP.DUT.phy_pclk) begin
+        if (!EP.DUT.pipe_rst_n || !k13_pipe_compare_active) begin
+            rp_compare_count = 0;
+            gt_compare_count = 0;
+            pipe_compare_count = 0;
+            rp_compare_cursor = 0;
+            gt_compare_cursor = 0;
+        end else begin
+            if (rp_os_event_valid && (rp_os_event_seq < 4096)) begin
+                rp_compare_kind[rp_os_event_seq] = rp_os_event_kind;
+                rp_compare_start[rp_os_event_seq] = rp_os_start_ps;
+                rp_compare_end[rp_os_event_seq] = rp_os_end_ps;
+                rp_compare_count = rp_os_event_seq + 1;
+            end
+            if (gt_os_event_valid && (gt_os_event_seq < 4096)) begin
+                gt_compare_kind[gt_os_event_seq] = gt_os_event_kind;
+                gt_compare_start[gt_os_event_seq] = gt_os_start_ps;
+                gt_compare_end[gt_os_event_seq] = gt_os_end_ps;
+                gt_compare_count = gt_os_event_seq + 1;
+                compare_match = -1;
+                for (compare_index = rp_compare_cursor;
+                     compare_index < rp_compare_count;
+                     compare_index = compare_index + 1)
+                    if ((compare_match < 0) &&
+                        (rp_compare_kind[compare_index] == gt_os_event_kind))
+                        compare_match = compare_index;
+                if (gt_os_event_seq < 128) begin
+                    if (compare_match >= 0)
+                        $display("K13_PIPE_COMPARE epoch=%0d boundary=RP_TO_GT dst_seq=%0d kind=%0d src_seq=%0d skipped=%0d start_delay_ps=%0d end_delay_ps=%0d",
+                                 k13_compare_epoch, gt_os_event_seq,
+                                 gt_os_event_kind, compare_match,
+                                 compare_match - rp_compare_cursor,
+                                 gt_os_start_ps - rp_compare_start[compare_match],
+                                 gt_os_end_ps - rp_compare_end[compare_match]);
+                    else
+                        $display("K13_PIPE_COMPARE_UNMATCHED epoch=%0d boundary=RP_TO_GT dst_seq=%0d kind=%0d available_src=%0d",
+                                 k13_compare_epoch, gt_os_event_seq,
+                                 gt_os_event_kind, rp_compare_count);
+                end
+                if (compare_match >= 0)
+                    rp_compare_cursor = compare_match + 1;
+            end
+            if (pipe_os_event_valid && (pipe_os_event_seq < 4096)) begin
+                pipe_compare_count = pipe_os_event_seq + 1;
+                compare_match = -1;
+                for (compare_index = gt_compare_cursor;
+                     compare_index < gt_compare_count;
+                     compare_index = compare_index + 1)
+                    if ((compare_match < 0) &&
+                        (gt_compare_kind[compare_index] == pipe_os_event_kind))
+                        compare_match = compare_index;
+                if (pipe_os_event_seq < 128) begin
+                    if (compare_match >= 0)
+                        $display("K13_PIPE_COMPARE epoch=%0d boundary=GT_TO_PIPE dst_seq=%0d kind=%0d src_seq=%0d skipped=%0d start_delay_ps=%0d end_delay_ps=%0d",
+                                 k13_compare_epoch, pipe_os_event_seq,
+                                 pipe_os_event_kind, compare_match,
+                                 compare_match - gt_compare_cursor,
+                                 pipe_os_start_ps - gt_compare_start[compare_match],
+                                 pipe_os_end_ps - gt_compare_end[compare_match]);
+                    else
+                        $display("K13_PIPE_COMPARE_UNMATCHED epoch=%0d boundary=GT_TO_PIPE dst_seq=%0d kind=%0d available_src=%0d",
+                                 k13_compare_epoch, pipe_os_event_seq,
+                                 pipe_os_event_kind, gt_compare_count);
+                end
+                if (compare_match >= 0)
+                    gt_compare_cursor = compare_match + 1;
+            end
+        end
+    end
+
+    always @(posedge EP.DUT.phy_pclk or negedge sys_rst_n) begin
+        if (!sys_rst_n)
+            k13_initial_gen1_l0_seen <= 1'b0;
+        else if (EP.DUT.link_up && EP.DUT.dll_active && RP.user_lnk_up)
+            k13_initial_gen1_l0_seen <= 1'b1;
+    end
+`endif
 
 `ifdef K12E_VCS
     k12e_phy_monitor K12E_PHY_MONITOR (
@@ -782,22 +955,29 @@ module board;
                         k13_rp_tx_edges_at_retrain = rp_tx_edge_count[0];
                         k13_ep_tx_edges_at_retrain = ep_tx_edge_count;
                         k13_retrain_monitor_armed = 1'b1;
-                        // Program the Root Port target as well as the endpoint.
-                        // A Type-0 write only changes the endpoint; it cannot make
-                        // the Root Port PHY leave Gen1 by itself.
-                        RP.cfg_usrapp.TSK_WRITE_CFG_DW(
-                            32'h3c, 32'h0000_0003, 4'h1);
-                        RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
-                        RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
-                            RP.tx_usrapp.DEFAULT_TAG, 12'h070, 32'h0000_0003, 4'h1);
-                        RP.tx_usrapp.TSK_TX_CLK_EAT(100);
-                        RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
-                        RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
-                            RP.tx_usrapp.DEFAULT_TAG, 12'h050, 32'h0000_0020, 4'h1);
-                        RP.tx_usrapp.TSK_TX_CLK_EAT(100);
-                        RP.cfg_usrapp.TSK_WRITE_CFG_DW(
-                            32'h34, 32'h0081_0020, 4'hf);
-                        $display("K13_VCS_RETRAIN_TRIGGER target=3 link_control=0020");
+                        // dual preserves the historical regression.  rp mirrors
+                        // the official demo ordering and lets the endpoint learn
+                        // the target from the directed TS1 speed-change request.
+                        if (k13_do_rp_retrain)
+                            RP.cfg_usrapp.TSK_WRITE_CFG_DW(
+                                32'h3c, 32'h0000_0003, 4'h1);
+                        if (k13_do_ep_retrain) begin
+                            RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                            RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                                RP.tx_usrapp.DEFAULT_TAG, 12'h070,
+                                32'h0000_0003, 4'h1);
+                            RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                            RP.tx_usrapp.DEFAULT_TAG = RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                            RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                                RP.tx_usrapp.DEFAULT_TAG, 12'h050,
+                                32'h0000_0020, 4'h1);
+                            RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                        end
+                        if (k13_do_rp_retrain)
+                            RP.cfg_usrapp.TSK_WRITE_CFG_DW(
+                                32'h34, 32'h0081_0020, 4'hf);
+                        $display("K13_VCS_RETRAIN_TRIGGER target=3 link_control=0020 rp=%0d ep=%0d",
+                                 k13_do_rp_retrain, k13_do_ep_retrain);
 
                         k13_wait_cycles = 0;
                         k13_fallback_wait_limit = 20000;
@@ -838,26 +1018,32 @@ module board;
 
                             if (!k13_retry_sent &&
                                 (k13_gen1_l0_stable >= 64)) begin
-                                RP.cfg_usrapp.TSK_WRITE_CFG_DW(
-                                    32'h3c, 32'h0000_0003, 4'h1);
-                                RP.tx_usrapp.DEFAULT_TAG =
-                                    RP.tx_usrapp.DEFAULT_TAG + 1'b1;
-                                RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
-                                    RP.tx_usrapp.DEFAULT_TAG, 12'h070,
-                                    32'h0000_0003, 4'h1);
-                                RP.tx_usrapp.TSK_TX_CLK_EAT(100);
-                                RP.tx_usrapp.DEFAULT_TAG =
-                                    RP.tx_usrapp.DEFAULT_TAG + 1'b1;
-                                RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
-                                    RP.tx_usrapp.DEFAULT_TAG, 12'h050,
-                                    32'h0000_0020, 4'h1);
-                                RP.tx_usrapp.TSK_TX_CLK_EAT(100);
-                                RP.cfg_usrapp.TSK_WRITE_CFG_DW(
-                                    32'h34, 32'h0081_0020, 4'hf);
+                                if (k13_do_rp_retrain)
+                                    RP.cfg_usrapp.TSK_WRITE_CFG_DW(
+                                        32'h3c, 32'h0000_0003, 4'h1);
+                                if (k13_do_ep_retrain) begin
+                                    RP.tx_usrapp.DEFAULT_TAG =
+                                        RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                                        RP.tx_usrapp.DEFAULT_TAG, 12'h070,
+                                        32'h0000_0003, 4'h1);
+                                    RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                                    RP.tx_usrapp.DEFAULT_TAG =
+                                        RP.tx_usrapp.DEFAULT_TAG + 1'b1;
+                                    RP.tx_usrapp.TSK_TX_TYPE0_CONFIGURATION_WRITE(
+                                        RP.tx_usrapp.DEFAULT_TAG, 12'h050,
+                                        32'h0000_0020, 4'h1);
+                                    RP.tx_usrapp.TSK_TX_CLK_EAT(100);
+                                end
+                                if (k13_do_rp_retrain)
+                                    RP.cfg_usrapp.TSK_WRITE_CFG_DW(
+                                        32'h34, 32'h0081_0020, 4'hf);
                                 k13_retry_sent = 1'b1;
                                 k13_gen1_l0_stable = 0;
                                 k13_wait_cycles = 0;
-                                $display("K13_VCS_RETRAIN_RETRY target=3 after_gen1_l0_stable cycles=64");
+                                $display("K13_VCS_RETRAIN_RETRY target=3 after_gen1_l0_stable cycles=64 rp=%0d ep=%0d",
+                                         k13_do_rp_retrain,
+                                         k13_do_ep_retrain);
                             end
                         end
 
@@ -1198,6 +1384,148 @@ module k11b_endpoint_compat #(
 
     wire _unused_compat = &{1'b0, user_clk, m_axi_wvalid, m_axi_wready,
                             m_axi_wdata, m_axi_wstrb, usr_irq_req, usr_irq_ack};
+endmodule
+
+// Simulation-only Gen1 Ordered-Set reconstruction at a selected PIPE/GT
+// boundary.  It deliberately does not share the production parser so that a
+// model-side word splice can be distinguished from a DUT parser defect.
+module k13_gen1_os_boundary_monitor #(
+    parameter integer BOUNDARY_ID = 0,
+    parameter integer LOG_LIMIT = 128
+) (
+    input  wire        clk,
+    input  wire        rst_n,
+    input  wire        enable,
+    input  wire        epoch,
+    input  wire        sample_valid,
+    input  wire [15:0] sample_data,
+    input  wire [1:0]  sample_datak,
+    input  wire [5:0]  ltssm_state,
+    output reg         event_valid,
+    output reg  [1:0]  event_kind,
+    output reg  [11:0] event_seq,
+    output reg  [63:0] event_start_ps,
+    output reg  [63:0] event_end_ps
+);
+    localparam [7:0] K_COM = 8'hbc;
+    localparam [7:0] D_TS1 = 8'h4a;
+    localparam [7:0] D_TS2 = 8'h45;
+
+    reg active;
+    reg [2:0] word_index;
+    reg [1:0] identifier_kind;
+    reg parse_error;
+    reg [11:0] sequence_count;
+    reg [63:0] start_time;
+    reg [5:0] start_state;
+
+    wire [7:0] symbol0 = sample_data[7:0];
+    wire [7:0] symbol1 = sample_data[15:8];
+    wire ident_ts1 = (sample_datak == 2'b00) &&
+                     (symbol0 == D_TS1) && (symbol1 == D_TS1);
+    wire ident_ts2 = (sample_datak == 2'b00) &&
+                     (symbol0 == D_TS2) && (symbol1 == D_TS2);
+
+    task automatic emit_event(input [1:0] kind);
+        begin
+            if (sequence_count != 12'hfff) begin
+                event_valid <= 1'b1;
+                event_kind <= kind;
+                event_seq <= sequence_count;
+                event_start_ps <= start_time;
+                event_end_ps <= $time;
+                if (sequence_count < LOG_LIMIT)
+                    $display("K13_PIPE_OS epoch=%0d boundary=%0d seq=%0d kind=%0d start_ps=%0d end_ps=%0t start_state=%0h end_state=%0h",
+                             epoch, BOUNDARY_ID, sequence_count, kind,
+                             start_time, $time, start_state, ltssm_state);
+                sequence_count <= sequence_count + 1'b1;
+            end
+        end
+    endtask
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            active <= 1'b0;
+            word_index <= 3'd0;
+            identifier_kind <= 2'd0;
+            parse_error <= 1'b0;
+            sequence_count <= 12'd0;
+            start_time <= 64'd0;
+            start_state <= 6'd0;
+            event_valid <= 1'b0;
+            event_kind <= 2'd0;
+            event_seq <= 12'd0;
+            event_start_ps <= 64'd0;
+            event_end_ps <= 64'd0;
+        end else begin
+            event_valid <= 1'b0;
+            if (!enable) begin
+                active <= 1'b0;
+                word_index <= 3'd0;
+                identifier_kind <= 2'd0;
+                parse_error <= 1'b0;
+                sequence_count <= 12'd0;
+            end else if (!sample_valid) begin
+                if (active) begin
+                    emit_event(2'd3);
+                    active <= 1'b0;
+                    word_index <= 3'd0;
+                end
+            end else if (!active) begin
+                if (sample_datak[0] && (symbol0 == K_COM)) begin
+                    active <= 1'b1;
+                    word_index <= 3'd1;
+                    identifier_kind <= 2'd0;
+                    parse_error <= 1'b0;
+                    start_time <= $time;
+                    start_state <= ltssm_state;
+                end
+            end else begin
+                // A fresh COM while a residual/mode-switch word is being
+                // assembled is a stronger boundary than the stale word index.
+                // Resynchronize here so the first complete TS is numbered 0.
+                if (sample_datak[0] && (symbol0 == K_COM)) begin
+                    active <= 1'b1;
+                    word_index <= 3'd1;
+                    identifier_kind <= 2'd0;
+                    parse_error <= 1'b0;
+                    start_time <= $time;
+                    start_state <= ltssm_state;
+                end else case (word_index)
+                    3'd1, 3'd2: word_index <= word_index + 1'b1;
+                    3'd3: begin
+                        if (ident_ts1)
+                            identifier_kind <= 2'd1;
+                        else if (ident_ts2)
+                            identifier_kind <= 2'd2;
+                        else begin
+                            identifier_kind <= 2'd0;
+                            parse_error <= 1'b1;
+                        end
+                        word_index <= 3'd4;
+                    end
+                    3'd4, 3'd5, 3'd6: begin
+                        if (((identifier_kind == 2'd1) && !ident_ts1) ||
+                            ((identifier_kind == 2'd2) && !ident_ts2) ||
+                            (identifier_kind == 2'd0))
+                            parse_error <= 1'b1;
+                        word_index <= word_index + 1'b1;
+                    end
+                    default: begin
+                        if (parse_error ||
+                            ((identifier_kind == 2'd1) && !ident_ts1) ||
+                            ((identifier_kind == 2'd2) && !ident_ts2) ||
+                            (identifier_kind == 2'd0))
+                            emit_event(2'd3);
+                        else
+                            emit_event(identifier_kind);
+                        active <= 1'b0;
+                        word_index <= 3'd0;
+                    end
+                endcase
+            end
+        end
+    end
 endmodule
 
 `default_nettype wire
