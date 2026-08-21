@@ -191,3 +191,21 @@ EP 侧同一窗口已经完成 `RXEQ done+adapt_done`、EQ phase 0→4，并持�
 demo 逐字段核验 EP Gen3 `TXSYNC_HEADER/TXDATA/TXDATAK/TXDATA_VALID` 到
 RP GT 的输入与 `RXCTRL0[5:2]` 解码，确认 RP PCS 为何不产生 `RXDATA_VALID`；
 在此之前不再修改 QPLL、RXEQ 门限或 fallback 逻辑。
+
+### RP GT 原始 RX 与 TXDATAK A/B（同一轮 VCS）
+
+在 Root Port `rp_gt_channel` 原始端口增加取证后，EP 开始发送 Gen3 TS 的同一事件为：
+
+```text
+rp_gt_data=00000000 rp_gt_ctrl=0000 rp_gt_valid=0
+rp_gt_start=0 rp_gt_header=00
+```
+
+这说明当前不是 RP 上层 PIPE 适配把有效字丢掉，而是 GT 原始 RX 端就没有形成
+有效 Gen3 解码字。随后做了可回退的 A/B：临时把 EP Gen3 `TXDATAK` 从规范的
+`2'b00` 恢复为旧的 `tx_scrambled_datak`，在同一时间点的 RP 原始 RX 仍为
+`valid=0/start=0/header=00`，最终状态也仍为 `K13_VCS_GEN3_RETRAIN_FAIL`。
+
+因此 `TXDATAK` 不是当前唯一分叉，A/B 已恢复为规范实现。下一项应继续核对
+EP→RP 串行链路的 Gen3 `TXSYNC_HEADER`、速率命令和 GT 端口映射，尤其是 RP
+`GT_RATE/PCIERATEGEN3` 与 EP 发送窗口是否真正同时生效。

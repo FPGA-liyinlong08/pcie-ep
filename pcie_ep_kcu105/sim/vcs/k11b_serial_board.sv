@@ -541,7 +541,7 @@ module board;
              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_valid[0] or
              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]) begin
         if (k13_retrain_monitor_armed)
-            $display("K13_RP_RX_EVENT time_ps=%0t rp_state=%0h ep_state=%0d ep_txvalid=%0d ep_txidle=%0d rp_rxvalid=%0d rp_rxdata_valid=%0d rp_rxidle=%0d rp_cdr=%0d rp_rxresetdone=%0d rp_rateidle=%0d rp_rate_start=%0d",
+            $display("K13_RP_RX_EVENT time_ps=%0t rp_state=%0h ep_state=%0d ep_txvalid=%0d ep_txidle=%0d rp_rxvalid=%0d rp_rxdata_valid=%0d rp_rxidle=%0d rp_cdr=%0d rp_rxresetdone=%0d rp_rateidle=%0d rp_rate_start=%0d rp_gt_data=%08x rp_gt_ctrl=%04x rp_gt_valid=%0d rp_gt_start=%0d rp_gt_header=%02b",
                      $time, RP.cfg_ltssm_state, EP.DUT.ltssm_state,
                      EP.DUT.phy_txdata_valid, EP.DUT.phy_txelecidle,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_valid[0],
@@ -550,7 +550,12 @@ module board;
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxcdrlock[0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxresetdone[0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcierateidle[0],
-                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcieuserratestart[0]);
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcieuserratestart[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXDATA,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXDATAK,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXDATA_VALID,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXSTART_BLOCK,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXSYNC_HEADER);
     end
 
     always @(posedge EP.DUT.phy_pclk) begin
