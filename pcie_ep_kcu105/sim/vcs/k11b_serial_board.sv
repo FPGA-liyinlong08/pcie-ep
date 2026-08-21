@@ -60,6 +60,7 @@ module board;
     integer k13_rp_recovery_ts_samples;
     integer k13_ep_recovery_rx_samples;
     integer k13_ep_recovery_tx_samples;
+    integer k13_ep_gen3_tx_samples;
     integer k13_rp_recovery_rx_samples;
     integer k13_ep_fallback_pipe_samples;
     integer k13_ep_rx_contract_samples;
@@ -504,6 +505,7 @@ module board;
         k13_rp_recovery_ts_samples = 0;
         k13_ep_recovery_rx_samples = 0;
         k13_ep_recovery_tx_samples = 0;
+        k13_ep_gen3_tx_samples = 0;
         k13_rp_recovery_rx_samples = 0;
         k13_ep_fallback_pipe_samples = 0;
         k13_ep_rx_contract_samples = 0;
@@ -541,9 +543,16 @@ module board;
              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_valid[0] or
              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]) begin
         if (k13_retrain_monitor_armed)
-            $display("K13_RP_RX_EVENT time_ps=%0t rp_state=%0h ep_state=%0d ep_txvalid=%0d ep_txidle=%0d rp_rxvalid=%0d rp_rxdata_valid=%0d rp_rxidle=%0d rp_cdr=%0d rp_rxresetdone=%0d rp_rateidle=%0d rp_rate_start=%0d rp_gt_data=%08x rp_gt_ctrl=%04x rp_gt_valid=%0d rp_gt_start=%0d rp_gt_header=%02b",
+            $display("K13_RP_RX_EVENT time_ps=%0t rp_state=%0h ep_state=%0d ep_rate=%02b ep_txvalid=%0d ep_txidle=%0d ep_txstart=%0d ep_txheader=%02b ep_txdatak=%02b ep_txdata=%08x rp_gt_rate=%02b rp_rategen3=%0d rp_gen3rdy=%0d rp_rxstatus=%03b rp_rxvalid=%0d rp_rxdata_valid=%0d rp_rxidle=%0d rp_cdr=%0d rp_rxresetdone=%0d rp_rateidle=%0d rp_rate_start=%0d rp_gt_data=%08x rp_gt_ctrl=%04x rp_gt_valid=%0d rp_gt_start=%0d rp_gt_header=%02b",
                      $time, RP.cfg_ltssm_state, EP.DUT.ltssm_state,
-                     EP.DUT.phy_txdata_valid, EP.DUT.phy_txelecidle,
+                     EP.DUT.phy_rate, EP.DUT.phy_txdata_valid,
+                     EP.DUT.phy_txelecidle, EP.DUT.phy_txstart_block,
+                     EP.DUT.phy_txsync_header, EP.DUT.phy_txdatak,
+                     EP.DUT.phy_txdata,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierategen3[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcieusergen3rdy[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_valid[0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0],
@@ -750,6 +759,18 @@ module board;
                          EP.DUT.u_ltssm_mac.tx_os_mode,
                          EP.DUT.u_ltssm_mac.gen3_mode);
                 k13_ep_recovery_tx_samples <= k13_ep_recovery_tx_samples + 1;
+            end
+            if ((EP.DUT.phy_rate == 2'b10) && EP.DUT.phy_txdata_valid &&
+                (k13_ep_gen3_tx_samples < 64)) begin
+                $display("K13_EP_GEN3_TX_RAW n=%0d time_ps=%0t state=%0d rate=%02b idle=%0d valid=%0d start=%0d header=%02b datak=%02b data=%08x mode=%02b gen3_mode=%0d",
+                         k13_ep_gen3_tx_samples, $time,
+                         EP.DUT.ltssm_state, EP.DUT.phy_rate,
+                         EP.DUT.phy_txelecidle, EP.DUT.phy_txdata_valid,
+                         EP.DUT.phy_txstart_block, EP.DUT.phy_txsync_header,
+                         EP.DUT.phy_txdatak, EP.DUT.phy_txdata,
+                         EP.DUT.u_ltssm_mac.tx_os_mode,
+                         EP.DUT.u_ltssm_mac.gen3_mode);
+                k13_ep_gen3_tx_samples <= k13_ep_gen3_tx_samples + 1;
             end
             // Capture RP's incoming Gen3 stream during the normal retrain
             // epoch as well as fallback.  The previous fallback-only gate

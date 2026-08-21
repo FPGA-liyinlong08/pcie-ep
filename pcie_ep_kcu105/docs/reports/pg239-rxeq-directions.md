@@ -209,3 +209,19 @@ rp_gt_start=0 rp_gt_header=00
 因此 `TXDATAK` 不是当前唯一分叉，A/B 已恢复为规范实现。下一项应继续核对
 EP→RP 串行链路的 Gen3 `TXSYNC_HEADER`、速率命令和 GT 端口映射，尤其是 RP
 `GT_RATE/PCIERATEGEN3` 与 EP 发送窗口是否真正同时生效。
+
+### 速率 ready 与 RXSTATUS 复测
+
+同一 RP RX 事件进一步得到：
+
+```text
+ep_rate=10 ep_txvalid=1 ep_txidle=0 ep_txdatak=00
+rp_gt_rate=10 rp_rategen3=1 rp_gen3rdy=1
+rp_rxstatus=000 rp_rxvalid=0 rp_rxdata_valid=0 rp_rxidle=0
+```
+
+EP 发端首个序列也已抓到完整的 4 个 EIEOS block，随后从 `start_block=1` 的 TS1
+开始；没有发现 EIEOS 缺字或 TXDATAK 错误。由此当前分叉进一步收敛为：RP GT
+已经处于 Gen3 ready、串行输入已非电气空闲，但 128b/130b block lock 没有建立，
+且没有产生 `RXSTATUS=100` 解码错误。下一步应核对 GT channel 的 block-lock/接收
+时钟与官方 demo 配置，而不是继续修改 LTSSM/EQ 控制器。
