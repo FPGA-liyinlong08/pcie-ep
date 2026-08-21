@@ -729,8 +729,8 @@ module board;
                 (k13_gen3_pipe_samples < 256) &&
                 (EP.DUT.phy_rxdata_valid || EP.DUT.phy_rxstart_block ||
                  EP.DUT.phy_txdata_valid || EP.DUT.phy_txstart_block)) begin
-                $display("K13_GEN3_PIPE_SAMPLE n=%0d rp_rate=%02b rp_txidle=%0d rp_txvalid=%0d rp_txstart=%0d rp_txheader=%02b rp_txdata=%08x rxvalid=%0d rx_data_valid=%0d rx_start=%0d rx_header=%02b rx_data=%08x tx_valid=%0d tx_start=%0d tx_header=%02b tx_data=%08x",
-                         k13_gen3_pipe_samples,
+                $display("K13_GEN3_PIPE_SAMPLE n=%0d time_ps=%0t rp_rate=%02b rp_txidle=%0d rp_txvalid=%0d rp_txstart=%0d rp_txheader=%02b rp_txdata=%08x rxvalid=%0d rx_data_valid=%0d rx_start=%0d rx_header=%02b rx_data=%08x tx_valid=%0d tx_start=%0d tx_header=%02b tx_data=%08x",
+                         k13_gen3_pipe_samples, $time,
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle,
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
@@ -795,8 +795,8 @@ module board;
                 (k13_gen3_rx_samples < 256) &&
                 (!RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle ||
                  EP.DUT.phy_rxdata_valid || EP.DUT.phy_rxstart_block)) begin
-                $display("K13_GEN3_RX_SAMPLE n=%0d rp_state=%0h rp_idle=%0d rp_valid=%0d rp_start=%0d rp_header=%02b rp_data=%08x ep_rxvalid=%0d ep_data_valid=%0d ep_start=%0d ep_header=%02b ep_data=%08x cdr=%0d rxreset=%0d rategen3=%0d gen3rdy=%0d rateidle=%0d rxctrl0=%04x rawdata=%08x",
-                         k13_gen3_rx_samples, RP.cfg_ltssm_state,
+                $display("K13_GEN3_RX_SAMPLE n=%0d time_ps=%0t rp_state=%0h rp_idle=%0d rp_valid=%0d rp_start=%0d rp_header=%02b rp_data=%08x ep_rxvalid=%0d ep_data_valid=%0d ep_start=%0d ep_header=%02b ep_data=%08x cdr=%0d rxreset=%0d rategen3=%0d gen3rdy=%0d rateidle=%0d rxctrl0=%04x rawdata=%08x",
+                         k13_gen3_rx_samples, $time, RP.cfg_ltssm_state,
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle,
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
                          RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block,

@@ -74,6 +74,23 @@ K13_OSRX_BAD_SDS word=3 parse_error=0 data=e64670e1 lfsr_ready=1
 未经验证的生产 RTL 修复。下一步是先建立聚焦的 SDS/LFSR 单元测试，确认每个
 byte 的 descramble、跳过和 LFSR 状态推进规则，再回到完整 VCS 回归。
 
+## 时间轴复测（2026-08-21）
+
+为避免把独立取样计数器的 `n` 值误当成同一 block，完整 VCS 诊断已给
+`K13_GEN3_PIPE_SAMPLE` 和 `K13_GEN3_RX_SAMPLE` 增加 `time_ps`。本次运行仍为
+Gen3 retrain fail，但在 Endpoint 持续发送时，Root Port 接收端的关键快照为：
+
+```text
+200793534 ps  EP txvalid=1 txelecidle=0 txdata=7fd09dcd
+              RP rategen3=1 gen3rdy=1 rxcdrlock=1 rxresetdone=1
+              RP rxvalid=0 rxdata_valid=0 rxstatus=000 rxidle=0
+```
+
+此时 RP 已处于 Gen3-ready 且 CDR locked，仍没有产生 `pipe_rx_data_valid`，也没有
+`K13_RP_RECOVERY_RX_RAW` 样本；因此当前第一分叉应继续定位 EP→RP 的串行/GT 接收
+通路（TX 电气输出、RX 极性/通道连接、GT RX 解码与 block-valid），不能仅凭 SDS
+解析失败样本修改 `pcie_gen3_os_rx`。
+
 ## 判定标准
 
 许可证恢复后，对比以下两组日志：
