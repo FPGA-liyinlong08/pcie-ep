@@ -453,6 +453,8 @@ module board;
 `ifdef K13_DUT
     initial begin : k13_gen3_cold_phy_diagnostic
         integer cold_wait;
+        integer cold_tx_start_seen;
+        integer cold_rx_valid_seen;
         if ($test$plusargs("K13_GEN3_COLD_PHY")) begin
             force EP.DUT.phy_rate = 2'b10;
             force EP.DUT.k13_active_rate = 2'b10;
@@ -462,11 +464,17 @@ module board;
             force ep_rxn = ep_txn;
             wait (EP.DUT.pipe_rst_n === 1'b1);
             cold_wait = 0;
+            cold_tx_start_seen = 0;
+            cold_rx_valid_seen = 0;
             while (!EP.DUT.phy_rxdata_valid && (cold_wait < 25000)) begin
                 @(posedge EP.DUT.phy_pclk);
+                if (EP.DUT.phy_txstart_block)
+                    cold_tx_start_seen = cold_tx_start_seen + 1;
+                if (EP.DUT.phy_rxdata_valid || EP.DUT.phy_rxstart_block)
+                    cold_rx_valid_seen = cold_rx_valid_seen + 1;
                 cold_wait = cold_wait + 1;
             end
-            $display("K13_GEN3_COLD_PHY_RESULT wait=%0d rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x tx_edges=%0d txp=%0d txn=%0d txvalid=%0d txstart=%0d txidle=%0d txrate=%02b active_rate=%02b gen3_mode=%0d tx_os_enable=%0d tx_os_mode=%0d gen3_start=%0d gt_cdr=%0d gt_rxresetdone=%0d gt_rategen3=%0d gt_gen3rdy=%0d gt_rateidle=%0d rxelecidle=%0d rxctrl0=%04x rawdata=%08x",
+            $display("K13_GEN3_COLD_PHY_RESULT wait=%0d rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x tx_edges=%0d txp=%0d txn=%0d txvalid=%0d txstart=%0d txidle=%0d txrate=%02b active_rate=%02b gen3_mode=%0d tx_os_enable=%0d tx_os_mode=%0d gen3_start=%0d tx_start_seen=%0d rx_valid_seen=%0d gt_cdr=%0d gt_rxresetdone=%0d gt_rategen3=%0d gt_gen3rdy=%0d gt_rateidle=%0d rxelecidle=%0d rxctrl0=%04x rawdata=%08x",
                      cold_wait, EP.DUT.phy_rxvalid,
                      EP.DUT.phy_rxdata_valid, EP.DUT.phy_rxstart_block,
                      EP.DUT.phy_rxsync_header, EP.DUT.phy_rxdata,
@@ -478,6 +486,7 @@ module board;
                      EP.DUT.u_ltssm_mac.tx_os_enable,
                      EP.DUT.u_ltssm_mac.tx_os_mode,
                      EP.DUT.u_ltssm_mac.gen3_os_tx_start_block,
+                     cold_tx_start_seen, cold_rx_valid_seen,
                      EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxcdrlock,
                      EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxresetdone,
                      EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcierategen3,

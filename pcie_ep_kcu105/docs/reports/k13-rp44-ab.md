@@ -105,11 +105,12 @@ K13_GEN3_COLD_PHY_RESULT wait=25000 rxvalid=0 data_valid=0 start=0 header=00
 ```
 
 该诊断已确认 GT 报告 CDR locked、RX reset-done 和 Gen3 ready；修正 active rate 后
-`gen3_mode=1`，但采样结束时 `gen3_start=0`、`rxctrl0=0000`，尚未抓到一个完整的
-Gen3 block。因此它排除了“仅仅是 QPLL 未锁定/RX reset 未完成”，但还不能单独证明
-PCS 已收到合法串行 block。下一步应在冷启动诊断中统计 `start_block` 的出现并核对
-TX block/header 与 GT 仿真模型要求，再决定是否继续查 EP↔RP 连线，而不是回到 QPLL
-假设。
+`gen3_mode=1`，窗口内实际观察到 `tx_start_seen=6250`，但
+`rx_valid_seen=0`、`rxctrl0=0000`。因此 EP 已持续送出 Gen3 block-start，GT 也已
+报告 CDR locked、RX reset-done 和 Gen3 ready，却没有形成 RX block-valid；这把
+问题进一步收敛到串行回送/GT PCS 接收模型（包括 P/N 连接、极性和模型对 128b/130b
+输入的接受条件），而不是 QPLL 锁定或 RX reset。下一步应做 P/N 极性 A/B，并在
+GT 原始 `rxctrl0/rxdata` 端继续取样。
 
 ## 判定标准
 
