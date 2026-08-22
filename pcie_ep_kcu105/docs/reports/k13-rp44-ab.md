@@ -91,6 +91,26 @@ Gen3 retrain fail，但在 Endpoint 持续发送时，Root Port 接收端的关�
 通路（TX 电气输出、RX 极性/通道连接、GT RX 解码与 block-valid），不能仅凭 SDS
 解析失败样本修改 `pcie_gen3_os_rx`。
 
+## EP 本地 Gen3 冷启动 A/B（2026-08-22）
+
+为进一步区分跨器件连接与 EP 自身 GT/PCS，增加了仅诊断用的
+`K13_GEN3_COLD_PHY=1`：固定 EP PIPE 速率为 Gen3、固定 LTSSM 到 Recovery.RcvrLock，
+并将 EP TXP/TXN 回送到 EP RXP/RXN。结果为：
+
+```text
+K13_GEN3_COLD_PHY_RESULT wait=25000 rxvalid=0 data_valid=0 start=0 header=00
+  tx_edges=1619 txvalid=1 txstart=0 txidle=0 txrate=10
+  gt_cdr=1 gt_rxresetdone=1 gt_rategen3=1 gt_gen3rdy=1 gt_rateidle=1
+  rxelecidle=0 rxctrl0=0000 rawdata=00000000
+```
+
+该诊断已确认 GT 报告 CDR locked、RX reset-done 和 Gen3 ready；修正 active rate 后
+`gen3_mode=1`，但采样结束时 `gen3_start=0`、`rxctrl0=0000`，尚未抓到一个完整的
+Gen3 block。因此它排除了“仅仅是 QPLL 未锁定/RX reset 未完成”，但还不能单独证明
+PCS 已收到合法串行 block。下一步应在冷启动诊断中统计 `start_block` 的出现并核对
+TX block/header 与 GT 仿真模型要求，再决定是否继续查 EP↔RP 连线，而不是回到 QPLL
+假设。
+
 ## 判定标准
 
 许可证恢复后，对比以下两组日志：

@@ -455,6 +455,8 @@ module board;
         integer cold_wait;
         if ($test$plusargs("K13_GEN3_COLD_PHY")) begin
             force EP.DUT.phy_rate = 2'b10;
+            force EP.DUT.k13_active_rate = 2'b10;
+            force EP.DUT.u_ltssm_mac.active_phy_rate = 2'b10;
             force EP.DUT.u_ltssm_mac.ltssm_state = 6'd11;
             force ep_rxp = ep_txp;
             force ep_rxn = ep_txn;
@@ -464,11 +466,26 @@ module board;
                 @(posedge EP.DUT.phy_pclk);
                 cold_wait = cold_wait + 1;
             end
-            $display("K13_GEN3_COLD_PHY_RESULT wait=%0d rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x tx_edges=%0d",
+            $display("K13_GEN3_COLD_PHY_RESULT wait=%0d rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x tx_edges=%0d txp=%0d txn=%0d txvalid=%0d txstart=%0d txidle=%0d txrate=%02b active_rate=%02b gen3_mode=%0d tx_os_enable=%0d tx_os_mode=%0d gen3_start=%0d gt_cdr=%0d gt_rxresetdone=%0d gt_rategen3=%0d gt_gen3rdy=%0d gt_rateidle=%0d rxelecidle=%0d rxctrl0=%04x rawdata=%08x",
                      cold_wait, EP.DUT.phy_rxvalid,
                      EP.DUT.phy_rxdata_valid, EP.DUT.phy_rxstart_block,
                      EP.DUT.phy_rxsync_header, EP.DUT.phy_rxdata,
-                     ep_tx_edge_count);
+                     ep_tx_edge_count, ep_txp, EP.DUT.pcie_txn,
+                     EP.DUT.phy_txdata_valid, EP.DUT.phy_txstart_block,
+                     EP.DUT.phy_txelecidle, EP.DUT.phy_rate,
+                     EP.DUT.u_ltssm_mac.active_phy_rate,
+                     EP.DUT.u_ltssm_mac.gen3_mode,
+                     EP.DUT.u_ltssm_mac.tx_os_enable,
+                     EP.DUT.u_ltssm_mac.tx_os_mode,
+                     EP.DUT.u_ltssm_mac.gen3_os_tx_start_block,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxcdrlock,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxresetdone,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcierategen3,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcieusergen3rdy,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcierateidle,
+                     EP.DUT.phy_rxelecidle,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.rxctrl0_out,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.rxdata_out[31:0]);
             $finish;
         end
     end
