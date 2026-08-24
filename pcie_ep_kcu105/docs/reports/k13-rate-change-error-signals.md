@@ -89,8 +89,9 @@ capture = fpga/kcu105/build_k13_gen3_ila_cdr_hold_low_gt_primitive_qpll_prereq/c
 变为 2；sample 512～517 发生 QPLL reset，`QPLL1LOCK` 由 1 变 0，直到
 sample 4095（reset 释放后约 14.3 us）仍为 0，且 `PHYSTATUS`、
 `PCIERATEGEN3`、`PCIEUSERGEN3RDY`、`PCIEUSERRATESTART/DONE` 均未完成。
-这次 A/B 直接排除了“Recovery.Speed 期间 CDR hold=1”作为当前 K13 QPLL
-失锁的充分根因。
+这次 A/B 证明“Recovery.Speed 期间 CDR hold=1”不是导致 QPLL 在前 14.3 us
+内恢复失败的唯一因素；但 K02 已知约 77.5 us 才重锁，仍需事件记录器确认
+K13 是否更晚恢复，不能仅凭 4096 点窗口断言永久失锁。
 
 同时检查生成 IP 发现 `qpll1lockdetclk_in` 固定为 `1'H0`。根据 UG576，
 `QPLL1LOCKDETCLK` 是 `*_REFCLKLOST/*_FBCLKLOST` 诊断输出所需的稳定检测
