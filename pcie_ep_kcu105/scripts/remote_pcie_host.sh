@@ -9,13 +9,14 @@ remote_host="${PCIE_REMOTE_HOST:-192.168.11.126}"
 remote_user="${PCIE_REMOTE_USER:-wx}"
 remote_port="${PCIE_REMOTE_PORT:-22}"
 remote_bdf="${PCIE_REMOTE_BDF:-01:00.0}"
+remote_rp_bdf="${PCIE_REMOTE_RP_BDF:-00:01.0}"
 ssh_connect_timeout="${PCIE_SSH_CONNECT_TIMEOUT:-5}"
 reboot_timeout="${PCIE_SSH_REBOOT_TIMEOUT:-180}"
 poll_interval="${PCIE_SSH_POLL_INTERVAL:-2}"
 
 usage() {
     cat <<'EOF'
-用法：remote_pcie_host.sh [选项] <check|reboot|wait|lspci|cycle>
+用法：remote_pcie_host.sh [选项] <check|reboot|wait|lspci|cycle|retrain-gen3>
 
 动作：
   check   检查 SSH、主机名和 PCIe 设备
@@ -23,12 +24,14 @@ usage() {
   wait    等待远端 SSH 恢复
   lspci   读取 PCIe BDF 的详细状态
   cycle   reboot 后等待 SSH 恢复并读取 lspci
+  retrain-gen3  在 Root Port 设置 8 GT/s Target Link Speed 并发起 Retrain Link
 
 选项：
   --host HOST       远端 IP/主机名
   --user USER       SSH 用户
   --port PORT       SSH 端口，默认 22
   --bdf BDF         PCIe 设备 BDF，默认 01:00.0
+  --rp-bdf BDF      Endpoint 的上游 Root Port BDF，默认 00:01.0
   --timeout SEC     SSH 恢复等待时间，默认 180
   -h, --help        显示帮助
 
@@ -42,9 +45,10 @@ while [[ $# -gt 0 ]]; do
         --user) remote_user="$2"; shift 2 ;;
         --port) remote_port="$2"; shift 2 ;;
         --bdf) remote_bdf="$2"; shift 2 ;;
+        --rp-bdf) remote_rp_bdf="$2"; shift 2 ;;
         --timeout) reboot_timeout="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
-        check|reboot|wait|lspci|cycle) action="$1"; shift; break ;;
+        check|reboot|wait|lspci|cycle|retrain-gen3) action="$1"; shift; break ;;
         *) echo "错误：未知参数 $1" >&2; usage >&2; exit 2 ;;
     esac
 done
@@ -55,6 +59,10 @@ if [[ -z "${action:-}" || $# -ne 0 ]]; then
 fi
 if [[ ! "$remote_bdf" =~ ^[0-9a-fA-F:.]+$ ]]; then
     echo "错误：非法 PCIe BDF：$remote_bdf" >&2
+    exit 2
+fi
+if [[ ! "$remote_rp_bdf" =~ ^[0-9a-fA-F:.]+$ ]]; then
+    echo "错误：非法 Root Port BDF：$remote_rp_bdf" >&2
     exit 2
 fi
 
@@ -70,7 +78,21 @@ check_ssh() {
 }
 
 read_lspci() {
-    ssh_run "if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then sudo -n lspci -s '$remote_bdf' -vvv; else lspci -s '$remote_bdf' -vvv; fi"
+    ssh_run "sudo -n lspci -s '$remote_bdf' -vvv 2>/dev/null || lspci -s '$remote_bdf' -vvv"
+}
+
+retrain_gen3() {
+    ssh_run "set -e; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w=0003:000f; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w=0020:0020; \
+        for n in 1 2 3 4 5 6 7 8 9 10; do \
+            speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
+            width=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_width 2>/dev/null || echo unavailable); \
+            printf 'REMOTE_RETRAIN_POLL=%s speed=%s width=%s\\n' \"\$n\" \"\$speed\" \"\$width\"; \
+            sleep 0.2; \
+        done; \
+        sudo -n lspci -s '$remote_rp_bdf' -vv | sed -n '/LnkCtl2:/,/LnkSta2:/p'; \
+        sudo -n lspci -s '$remote_bdf' -vv | sed -n '/LnkCtl2:/,/LnkSta2:/p'"
 }
 
 wait_for_ssh() {
@@ -137,5 +159,8 @@ case "$action" in
         reboot_remote
         wait_for_ssh 1
         read_lspci
+        ;;
+    retrain-gen3)
+        retrain_gen3
         ;;
 esac

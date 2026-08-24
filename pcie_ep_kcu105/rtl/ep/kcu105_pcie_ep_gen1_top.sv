@@ -15,7 +15,11 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer K13_SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer K13_EQ_TIMEOUT_CYCLES    = 1_000_000,
     parameter integer K13_RXEQ_BOOTSTRAP       = 1,
-    parameter integer K13_RXEQ_TWO_PASS        = 0
+    parameter integer K13_RXEQ_TWO_PASS        = 0,
+    // Optional board bring-up path: after the initial Gen1 L0 is stable,
+    // initiate one Gen3 Recovery transaction without requiring privileged
+    // Root-Port config writes.  Zero keeps directed simulation behavior.
+    parameter integer K13_AUTO_RETRAIN_CYCLES  = 0
 ) (
     input  wire        pcie_refclk_p,
     input  wire        pcie_refclk_n,
@@ -94,6 +98,9 @@ module kcu105_pcie_ep_gen1_top #(
     wire k13_traffic_quiesce, k13_recovery_active, k13_recovery_speed_done;
     wire [1:0] k13_negotiated_speed;
     wire [2:0] k13_speed_state, k13_eq_phase;
+    wire [7:0] k13_tx_eq_control;
+    wire [23:0] k13_tx_eq_data;
+    wire k13_protocol_eq_complete;
     wire k13_eq_active, k13_eq_done, k13_eq_failed;
     wire k13_ts_accept, k13_ts_reject, k13_cdr_loss_sticky;
     wire k13_fallback_sticky, k13_illegal_ts_sticky, k13_speed_timeout_sticky;
@@ -255,10 +262,37 @@ module kcu105_pcie_ep_gen1_top #(
                                       (ltssm_state == 6'd11) ||
                                       (ltssm_state == 6'd12) ||
                                       (ltssm_state == 6'd18);
-    wire k13_partner_retrain_valid = k13_partner_retrain_window &&
-                                     os_ts1_valid &&
-                                     os_rate_id[7] &&
-                                     (k13_ts_rate != 2'b11);
+    localparam [31:0] K13_AUTO_RETRAIN_LAST =
+        (K13_AUTO_RETRAIN_CYCLES < 1) ? 32'd0 :
+                                        K13_AUTO_RETRAIN_CYCLES - 1;
+    reg [31:0] k13_auto_retrain_count;
+    reg        k13_auto_retrain_issued;
+    wire       k13_auto_retrain_pulse =
+        (K13_AUTO_RETRAIN_CYCLES != 0) && link_up &&
+        !k13_auto_retrain_issued &&
+        (k13_auto_retrain_count >= K13_AUTO_RETRAIN_LAST);
+
+    always @(posedge phy_pclk or negedge pipe_rst_n) begin
+        if (!pipe_rst_n) begin
+            k13_auto_retrain_count  <= 32'd0;
+            k13_auto_retrain_issued <= 1'b0;
+        end else if (!link_up) begin
+            if (!k13_auto_retrain_issued)
+                k13_auto_retrain_count <= 32'd0;
+        end else if (!k13_auto_retrain_issued) begin
+            if (k13_auto_retrain_pulse)
+                k13_auto_retrain_issued <= 1'b1;
+            else if (K13_AUTO_RETRAIN_CYCLES != 0)
+                k13_auto_retrain_count <= k13_auto_retrain_count + 1'b1;
+        end
+    end
+
+    wire k13_partner_retrain_valid = k13_auto_retrain_pulse ||
+                                     (k13_partner_retrain_window &&
+                                      os_ts1_valid && os_rate_id[7] &&
+                                      (k13_ts_rate != 2'b11));
+    wire [1:0] k13_partner_target_speed = k13_auto_retrain_pulse ?
+                                           2'b10 : k13_ts_rate;
 
     pcie_k13_production_ctrl #(
         .K13_ENABLE(K13_ENABLE),
@@ -274,7 +308,7 @@ module kcu105_pcie_ep_gen1_top #(
         .retrain_pulse(core_retrain_link_pulse),
         .target_speed(core_target_link_speed),
         .partner_retrain_valid(k13_partner_retrain_valid),
-        .partner_target_speed(k13_ts_rate),
+        .partner_target_speed(k13_partner_target_speed),
         .phy_phystatus(phy_phystatus), .phy_cdr_lost(k13_phy_cdr_lost),
         .phy_txeq_done(phy_txeq_done),
         .phy_rxeq_adapt_done(phy_rxeq_adapt_done),
@@ -283,6 +317,10 @@ module kcu105_pcie_ep_gen1_top #(
         .ts_is_ts1(os_ts1_valid), .ts_is_ts2(os_ts2_valid),
         .ts_lane(os_lane_number[2:0]), .ts_link(os_link_number),
         .ts_rate(k13_ts_rate), .ts_eq_request(k13_ts_eq_request),
+        .ts_eq_control(os_eq_control), .ts_eq_data(os_eq_data),
+        .tx_eq_ts_complete(os_tx_complete &&
+                           ((ltssm_state == 6'd11) ||
+                            (ltssm_state == 6'd12))),
         .expected_lane(3'd0), .expected_link(link_number),
         // Rate contract 是 raw phy_rate 唯一 owner
         .phy_rate_cmd(k13_phy_rate_cmd),
@@ -297,6 +335,8 @@ module kcu105_pcie_ep_gen1_top #(
         .negotiated_speed(k13_negotiated_speed), .speed_state(k13_speed_state),
         .eq_active(k13_eq_active), .eq_done(k13_eq_done), .eq_failed(k13_eq_failed),
         .eq_phase(k13_eq_phase), .ts_accept(k13_ts_accept), .ts_reject(k13_ts_reject),
+        .tx_eq_control(k13_tx_eq_control), .tx_eq_data(k13_tx_eq_data),
+        .protocol_eq_complete(k13_protocol_eq_complete),
         .cdr_loss_sticky(k13_cdr_loss_sticky),
         .speed_timeout_sticky(k13_speed_timeout_sticky),
         .fallback_sticky(k13_fallback_sticky),
@@ -356,6 +396,9 @@ module kcu105_pcie_ep_gen1_top #(
         assign k13_negotiated_speed = 2'b00;
         assign k13_speed_state = 3'd0;
         assign k13_eq_phase = 3'd7;
+        assign k13_tx_eq_control = 8'h01;
+        assign k13_tx_eq_data = 24'h8a0c28;
+        assign k13_protocol_eq_complete = 1'b0;
         assign k13_eq_active = 1'b0;
         assign k13_eq_done = 1'b0;
         assign k13_eq_failed = 1'b0;
@@ -426,6 +469,9 @@ module kcu105_pcie_ep_gen1_top #(
         .recovery_target_rate((K13_ENABLE != 0) ? k13_requested_rate : 2'b00),
         .recovery_fallback_active((K13_ENABLE != 0) &&
                                   (k13_speed_state >= 3'd5)),
+        .gen3_tx_eq_control(k13_tx_eq_control),
+        .gen3_tx_eq_data(k13_tx_eq_data),
+        .gen3_protocol_eq_complete(k13_protocol_eq_complete),
         .phy_txdata(phy_txdata),
         .phy_txdatak(phy_txdatak), .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block), .phy_txsync_header(phy_txsync_header),

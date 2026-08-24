@@ -97,6 +97,9 @@ module k13_ltssm_partner_top #(
     wire [3:0] k13_txeq_preset, k13_rxeq_txpreset;
     wire [5:0] k13_txeq_coeff;
     wire [1:0] k13_negotiated_speed;
+    wire [7:0] k13_tx_eq_control;
+    wire [23:0] k13_tx_eq_data;
+    wire k13_protocol_eq_complete;
     wire cdr_loss_sticky, speed_timeout_sticky, illegal_ts_sticky;
     wire k13_recovery_speed_done;
     wire [3:0] k13_rate_contract_state;
@@ -135,6 +138,7 @@ module k13_ltssm_partner_top #(
         .mode(partner_mode_q), .link_number(link_number), .link_is_pad(1'b0),
         .lane_number(8'd0), .lane_is_pad(1'b0), .n_fts(8'hff),
         .rate_id(8'h0e), .training_control(8'h00),
+        .eq_control(8'h01), .eq_data(24'h8a0c28),
         .out_data(partner_data), .out_valid(partner_valid),
         .start_block(partner_start), .sync_header(partner_header),
         .os_complete(), .word_index_debug()
@@ -163,6 +167,7 @@ module k13_ltssm_partner_top #(
 
     pcie_k13_production_ctrl #(
         .K13_ENABLE(1), .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
+        .K13_PROTOCOL_EQ_ENABLE(0),
         .SPEED_TIMEOUT_CYCLES(4096),
         .EQ_TIMEOUT_CYCLES(64)
     ) u_k13_ctrl (
@@ -183,6 +188,8 @@ module k13_ltssm_partner_top #(
         .ts_rate(decode_ts_rate(os_rate_id)),
         .ts_eq_request((os_ts1_valid || os_ts2_valid) &&
                        ((os_eq_control != 8'd0) || (os_eq_data != 24'd0))),
+        .ts_eq_control(os_eq_control), .ts_eq_data(os_eq_data),
+        .tx_eq_ts_complete(1'b0),
         .expected_lane(3'd0), .expected_link(link_number),
         .reinitialize_gen1(as_mac_in_detect),
         .phy_rate_cmd(k13_rate), .active_rate(k13_active_rate),
@@ -201,6 +208,8 @@ module k13_ltssm_partner_top #(
         .negotiated_speed(k13_negotiated_speed), .speed_state(speed_state),
         .eq_active(eq_active), .eq_done(eq_done), .eq_failed(eq_failed),
         .eq_phase(eq_phase), .ts_accept(ts_accept), .ts_reject(ts_reject),
+        .tx_eq_control(k13_tx_eq_control), .tx_eq_data(k13_tx_eq_data),
+        .protocol_eq_complete(k13_protocol_eq_complete),
         .cdr_loss_sticky(cdr_loss_sticky),
         .speed_timeout_sticky(speed_timeout_sticky),
         .fallback_sticky(fallback_sticky),
@@ -240,6 +249,9 @@ module k13_ltssm_partner_top #(
         .active_phy_rate(k13_active_rate),
         .recovery_target_rate(k13_requested_rate),
         .recovery_fallback_active(speed_state >= 3'd5),
+        .gen3_tx_eq_control(k13_tx_eq_control),
+        .gen3_tx_eq_data(k13_tx_eq_data),
+        .gen3_protocol_eq_complete(k13_protocol_eq_complete),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),
         .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block),

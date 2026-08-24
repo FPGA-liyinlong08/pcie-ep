@@ -10,6 +10,7 @@ DEMO_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 BUILD_DIR=${BUILD_DIR:-$SCRIPT_DIR/build}
 TESTNAME=${TESTNAME:-pio_writeReadBack_test0}
 WAVEFORM=${WAVEFORM:-0}
+TRACE_LTSSM=${TRACE_LTSSM:-0}
 
 VCS_ROOT=${VCS_ROOT:-/home/synopsys/vcs-mx/O-2018.09-SP2}
 VIVADO_ROOT=${VIVADO_ROOT:-/home/Xilinx/Vivado/2021.2}
@@ -65,6 +66,8 @@ mapfile -d '' TB_FILES < <(find "$IMPORT_DIR" -maxdepth 1 -type f -name '*.v' -p
 
 echo "[VCS] compiling XPM and PCIe/testbench sources"
 vlogan -full64 -sverilog +v2k +define+XILINX_SIM +incdir+"$IMPORT_DIR" -work xil_defaultlib \
+  "$DEMO_DIR/../pcie_ep_kcu105/rtl/phy/pcie_gen3_scrambler32.sv" \
+  "$DEMO_DIR/../pcie_ep_kcu105/rtl/phy/pcie_gen3_os_rx.sv" \
   "$XPM_CDC" "${GT_FILES[@]}" "${IP_SIM_FILES[@]}" "$IP_TOP_SIM" \
   "${IP_SOURCE_FILES[@]}" "${TB_FILES[@]}" "$GLBL" 2>&1 | tee vlogan.log
 
@@ -78,6 +81,8 @@ echo "[VCS] running TESTNAME=$TESTNAME"
 SIM_ARGS=(+TESTNAME="$TESTNAME")
 if [[ "$WAVEFORM" == "1" ]]; then
   SIM_ARGS+=(+DUMP_WAVEFORM +TRACE_LTSSM)
+elif [[ "$TRACE_LTSSM" == "1" ]]; then
+  SIM_ARGS+=(+TRACE_LTSSM)
 fi
 ./board_simv -licqueue -l simulate.log "${SIM_ARGS[@]}"
 

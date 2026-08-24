@@ -6,6 +6,8 @@ set k13_enable  [expr {[info exists ::env(K13_ENABLE)] &&
                        $::env(K13_ENABLE) eq "1"}]
 set k13_rxeq_bootstrap [expr {![info exists ::env(K13_RXEQ_BOOTSTRAP)] ||
                               $::env(K13_RXEQ_BOOTSTRAP) ne "0"}]
+set k13_rxeq_two_pass [expr {[info exists ::env(K13_RXEQ_TWO_PASS)] &&
+                             $::env(K13_RXEQ_TWO_PASS) eq "1"}]
 set k13_gt_rate_done_tie_high [expr {[info exists ::env(K13_GT_RATE_DONE_TIE_HIGH)] &&
                                      $::env(K13_GT_RATE_DONE_TIE_HIGH) eq "1"}]
 set k13_gt_rate_done_start_pulse [expr {[info exists ::env(K13_GT_RATE_DONE_START_PULSE)] &&
@@ -119,6 +121,7 @@ if {$k13_enable} {
   if {$k13_cdr_hold_recovery} { set build_variant "${build_variant}_cdr_hold" }
   if {$k13_gt_rate_qpll_reset_forward} { set build_variant "${build_variant}_gt_qpllreset" }
   if {$k13_gt_primitive_debug} { set build_variant "${build_variant}_gt_primitive" }
+  if {$k13_gt_qpll_prereq_debug} { set build_variant "${build_variant}_qpll_prereq" }
 }
 set build_dir   [file join $script_dir $build_variant impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
@@ -399,7 +402,11 @@ if {$k13_gt_rate_direct_source} {
     {wire [PHY_LANE-1:0]         pcieusergen3rdy_out     ;} \
     {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pcieusergen3rdy_out     ;} \
     {wire [PHY_LANE-1:0]         pcieuserratestart_out   ;} \
-    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pcieuserratestart_out   ;}] {
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pcieuserratestart_out   ;} \
+    {wire [PHY_LANE-1:0]         pcieuserphystatusrst_out;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0]         pcieuserphystatusrst_out;} \
+    {wire [PHY_LANE-1:0] pcieuserratedone_in    ;} \
+    {(* KEEP = "TRUE", DONT_TOUCH = "TRUE" *) wire [PHY_LANE-1:0] pcieuserratedone_in    ;}] {
     if {[string first $gt_decl $gt_debug_text] < 0} {
       error "GT rate-done diagnostic declaration not found: $gt_decl"
     }
@@ -478,11 +485,13 @@ if {$ila_debug} {
       -generic G9_WAIT_REMOTE_DETECT=1 \
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
       -generic K13_ENABLE=$k13_enable \
-      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
   } else {
     synth_design -top $top_name -part $part_name \
       -generic K11B2_ILA_DEBUG=1 -generic K13_ENABLE=$k13_enable \
-      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
   }
   write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
 } else {
@@ -492,11 +501,13 @@ if {$ila_debug} {
       -generic G9_WAIT_REMOTE_DETECT=1 \
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
       -generic K13_ENABLE=$k13_enable \
-      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
   } else {
     synth_design -top $top_name -part $part_name \
       -generic K13_ENABLE=$k13_enable \
-      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap
+      -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
   }
 }
 }
@@ -630,7 +641,7 @@ if {$ila_debug} {
   add_ila_probe u_ila_pipe 5 \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_phy_rxidle_conflict]
   # probe6 位序（由低到高对应列表顺序）：
-  # 同步后的PERST#、PERST#上升沿脉冲、PIPE_RST_N、PHY TX_VALID、PHY TX_ELECIDLE、
+  # 同步后的PERST#、PERST#上升沿脉冲、PIPE_RST_N、PHY_PHYSTATUS_RST、PHY TX_VALID、PHY TX_ELECIDLE、
   # GT TXRESETDONE、GT POWERGOOD、QPLL1LOCK、PCIe TX sync done、
   # GT 侧 TXELECIDLE 输入、PHY状态复位撤销事件，以及 GT Gen3 rate-change
   # 控制面的 RATEGEN3、QPLL reset/PD、RATEIDLE、USERGEN3RDY、
@@ -644,6 +655,7 @@ if {$ila_debug} {
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_n_pipe] \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_perst_rise_pipe] \
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/pipe_rst_n$}] \
+    [phy_boundary_net {^u_endpoint/u_phy_wrapper/phy_phystatus_rst$}] \
     [phy_boundary_net_first [list \
       {^u_endpoint/phy_txdata_valid$} \
       {^u_endpoint/u_phy_wrapper/phy_txdata_valid$}]] \
@@ -736,7 +748,8 @@ if {$ila_debug} {
   if {$k13_gt_primitive_debug} {
     # K13 probe20：直接从实际 GTHE3_COMMON/GTHE3_CHANNEL primitive 取样。
     # 低到高依次为 QPLL1PD、QPLL1RESET、QPLL1LOCKEN、
-    # TX/RX PLLCLKSEL、TX/RX RATE，以及诊断版USERRATEDONE。
+    # TX/RX PLLCLKSEL、TX/RX RATE、QPLL1参考/反馈时钟丢失、
+    # GT PCIEUSERRATEDONE 输入和 PHY reset completion。
     set gt_primitive_probe_nets [list \
       [phy_primitive_pin_nets GTHE3_COMMON QPLL1PD 1] \
       [phy_primitive_pin_nets GTHE3_COMMON QPLL1RESET 1] \
@@ -744,14 +757,15 @@ if {$ila_debug} {
       [phy_primitive_pin_nets GTHE3_CHANNEL TXPLLCLKSEL 2] \
       [phy_primitive_pin_nets GTHE3_CHANNEL RXPLLCLKSEL 2] \
       [phy_primitive_pin_nets GTHE3_CHANNEL TXRATE 3] \
-      [phy_primitive_pin_nets GTHE3_CHANNEL RXRATE 3]]
+      [phy_primitive_pin_nets GTHE3_CHANNEL RXRATE 3] \
+      [phy_primitive_pin_nets GTHE3_COMMON QPLL1REFCLKLOST 1] \
+      [phy_primitive_pin_nets GTHE3_COMMON QPLL1FBCLKLOST 1] \
+      [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieuserratedone_in\[0\]$}] \
+      [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieuserphystatusrst_out\[0\]$}]]
     if {$k13_gt_qpll_prereq_debug} {
-      # QPLL1 lock prerequisite evidence: low-to-high order is
-      # QPLL1REFCLKSEL[2:0], QPLL1REFCLKLOST, QPLL1FBCLKLOST.
+      # Optional QPLL1 reference selection for interpreting the loss bits.
       set gt_primitive_probe_nets [concat $gt_primitive_probe_nets \
-        [phy_primitive_pin_nets GTHE3_COMMON QPLL1REFCLKSEL 3] \
-        [phy_primitive_pin_nets GTHE3_COMMON QPLL1REFCLKLOST 1] \
-        [phy_primitive_pin_nets GTHE3_COMMON QPLL1FBCLKLOST 1]]
+        [phy_primitive_pin_nets GTHE3_COMMON QPLL1REFCLKSEL 3]]
     }
     if {$k13_gt_rate_done_start_pulse || $k13_gt_rate_done_reset_release_pulse} {
       set gt_primitive_probe_nets [concat $gt_primitive_probe_nets \
@@ -913,6 +927,7 @@ puts $summary_file "ILA_PIPE_ONLY=$ila_pipe_only"
 puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
 puts $summary_file "K13_ENABLE=$k13_enable"
 puts $summary_file "K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap"
+puts $summary_file "K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass"
 puts $summary_file "K13_GT_RATE_DONE_TIE_HIGH=$k13_gt_rate_done_tie_high"
 puts $summary_file "K13_GT_RATE_DONE_START_PULSE=$k13_gt_rate_done_start_pulse"
 puts $summary_file "K13_GT_RATE_DONE_RESET_RELEASE_PULSE=$k13_gt_rate_done_reset_release_pulse"

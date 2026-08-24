@@ -80,6 +80,9 @@ make remote-lspci
 
 # reboot -> 等待 SSH 恢复 -> 读取 lspci
 make remote-cycle
+
+# 在 Root Port 设置 Target Link Speed=8 GT/s 并发起定向重训练
+make remote-retrain-gen3
 ```
 
 也可以覆盖目标和等待时间：
@@ -103,3 +106,8 @@ make remote-lspci
 
 `192.168.11.126` 是远程 Linux Root Port 主机，不是 JTAG `hw_server` 地址；两者
 可以位于不同机器上。
+
+定向速率切换必须写 Downstream Port/Root Port 的 Link Control 2 和 Link Control，
+不能只写 Endpoint。当前拓扑默认 Root Port 为 `00:01.0`，可通过
+`PCIE_REMOTE_RP_BDF` 或 `--rp-bdf` 覆盖。`remote-retrain-gen3` 需要远端用户对
+`/usr/bin/setpci` 和 `/usr/bin/lspci` 具有受限的 `sudo -n` 权限。

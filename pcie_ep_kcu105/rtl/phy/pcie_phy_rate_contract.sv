@@ -6,7 +6,13 @@
 // it never infers completion from the command value itself.
 module pcie_phy_rate_contract #(
     parameter integer RATE_TIMEOUT_CYCLES     = 1_000_000,
-    parameter integer GEN1_RELEASE_GAP_CYCLES = 2500
+    parameter integer GEN1_RELEASE_GAP_CYCLES = 2500,
+    // The generated PCIe PHY does not expose GT_PCIEUSERGEN3RDY on its
+    // public PIPE interface.  In the UltraScale model PhyStatus precedes
+    // that internal ready indication by several PCLKs.  Keep TxElecIdle
+    // asserted long enough that the first EIEOS/SDS is not consumed while
+    // the Gen3 transmitter is still starting.
+    parameter integer GEN3_TX_SETTLE_CYCLES   = 32
 ) (
     input  wire       clk,
     input  wire       rst_n,
@@ -49,12 +55,15 @@ module pcie_phy_rate_contract #(
     localparam [3:0] RC_COMMIT_RDY2    = 4'hB;
     localparam [3:0] RC_FALLBACK_WAIT  = 4'hC;
     localparam [3:0] RC_NOOP_DONE      = 4'hD;
+    localparam [3:0] RC_GEN3_TX_SETTLE = 4'h6;
     localparam [3:0] RC_ERROR          = 4'hF;
 
     localparam integer TIMEOUT_LIMIT =
         (RATE_TIMEOUT_CYCLES < 1) ? 1 : RATE_TIMEOUT_CYCLES;
     localparam integer GAP_LIMIT =
         (GEN1_RELEASE_GAP_CYCLES < 1) ? 1 : GEN1_RELEASE_GAP_CYCLES;
+    localparam integer GEN3_SETTLE_LIMIT =
+        (GEN3_TX_SETTLE_CYCLES < 1) ? 1 : GEN3_TX_SETTLE_CYCLES;
 
     reg [3:0]  state_r;
     reg [1:0]  active_rate_r;
@@ -85,7 +94,7 @@ module pcie_phy_rate_contract #(
     always @* begin
         case (state_r)
             RC_APPLY_RDY1, RC_WAIT_PHYSTATUS, RC_COMMIT_RDY2,
-            RC_FALLBACK_WAIT, RC_ERROR:
+            RC_GEN3_TX_SETTLE, RC_FALLBACK_WAIT, RC_ERROR:
                 phy_rate_cmd = target_rate_r;
             default:
                 phy_rate_cmd = active_rate_r;
@@ -97,6 +106,7 @@ module pcie_phy_rate_contract #(
                            (state_r == RC_RDY0_GAP) ||
                            (state_r == RC_APPLY_RDY1) ||
                            (state_r == RC_WAIT_PHYSTATUS) ||
+                           (state_r == RC_GEN3_TX_SETTLE) ||
                            (state_r == RC_COMMIT_RDY2) ||
                            (state_r == RC_FALLBACK_WAIT) ||
                            (state_r == RC_ERROR);
@@ -226,7 +236,9 @@ module pcie_phy_rate_contract #(
                 RC_WAIT_PHYSTATUS: begin
                     if (phystatus_rising) begin
                         phystatus_pulse_r <= 1'b1;
-                        state_r <= RC_COMMIT_RDY2;
+                        gap_count_r <= 32'd0;
+                        state_r <= (target_rate_r == 2'b10) ?
+                                   RC_GEN3_TX_SETTLE : RC_COMMIT_RDY2;
                     end else if (timeout_expired) begin
                         timeout_sticky_r    <= 1'b1;
                         rate_failed_pulse_r <= 1'b1;
@@ -235,6 +247,19 @@ module pcie_phy_rate_contract #(
                         state_r <= RC_ERROR;
                     end else begin
                         timeout_count_r <= timeout_count_r + 1'b1;
+                    end
+                end
+
+                RC_GEN3_TX_SETTLE: begin
+                    // PhyStatus acknowledges the PIPE Rate operation, but
+                    // the generated GT wrapper raises PCIEUSERGEN3RDY later.
+                    // active_rate remains at the old value here, which keeps
+                    // the Gen3 ordered-set generator reset while TXEI is high.
+                    if (gap_count_r >= (GEN3_SETTLE_LIMIT - 1)) begin
+                        gap_count_r <= 32'd0;
+                        state_r <= RC_COMMIT_RDY2;
+                    end else begin
+                        gap_count_r <= gap_count_r + 1'b1;
                     end
                 end
 

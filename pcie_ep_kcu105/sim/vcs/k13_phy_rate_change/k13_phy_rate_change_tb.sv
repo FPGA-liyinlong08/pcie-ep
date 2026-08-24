@@ -109,6 +109,7 @@ module k13_phy_rate_change_tb;
 
     pcie_k13_production_ctrl #(
         .K13_ENABLE(1), .K13_RXEQ_BOOTSTRAP(0),
+        .K13_PROTOCOL_EQ_ENABLE(0),
         .SPEED_TIMEOUT_CYCLES(500000), .EQ_TIMEOUT_CYCLES(500000)
     ) ctrl (
         .core_clk(phy_coreclk), .core_rst_n(ctrl_phy_rst_n),
@@ -124,6 +125,8 @@ module k13_phy_rate_change_tb;
         .ts_valid(ts_valid), .ts_complete(ts_complete), .ts_is_ts1(ts_is_ts1),
         .ts_is_ts2(ts_is_ts2), .ts_lane(ts_lane), .ts_link(ts_link),
         .ts_rate(ts_rate), .ts_eq_request(ts_eq_request),
+        .ts_eq_control(8'd0), .ts_eq_data(24'd0),
+        .tx_eq_ts_complete(1'b0),
         .expected_lane(3'd0), .expected_link(8'd0),
         .phy_rate_cmd(ctrl_rate), .active_rate(),
         .phy_txelecidle(ctrl_txelecidle),

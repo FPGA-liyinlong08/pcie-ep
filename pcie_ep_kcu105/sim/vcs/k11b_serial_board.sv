@@ -85,6 +85,11 @@ module board;
     // trace.  Keeping these aliases at board scope makes the VCD portable
     // across VCS versions and avoids dumping the full encrypted RP/GT model.
     wire [5:0] trace_rp_ltssm_state = RP.cfg_ltssm_state;
+    // The demo top leaves pl_eq_phase unconnected, but the core output remains
+    // available hierarchically.  Trace it so the endpoint's transmitted EQ
+    // tuple can be correlated with the Root Port's real protocol phase.
+    wire [1:0] trace_rp_eq_phase =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pl_eq_phase;
     wire [1:0] trace_rp_current_speed = RP.cfg_current_speed;
     wire [3:0] trace_rp_negotiated_width = RP.cfg_negotiated_width;
     wire       trace_rp_phy_link_status = RP.cfg_phy_link_status;
@@ -114,12 +119,110 @@ module board;
     wire [17:0] trace_ep_rxeq_new_txcoeff = EP.DUT.phy_rxeq_new_txcoeff;
     wire       trace_ep_rxeq_done = EP.DUT.phy_rxeq_done;
     wire       trace_ep_rxeq_adapt_done = EP.DUT.phy_rxeq_adapt_done;
+    wire       trace_ep_tx_ts1;
+    wire       trace_ep_tx_ts2;
+    wire       trace_ep_tx_malformed;
+    wire [7:0] trace_ep_tx_link;
+    wire [7:0] trace_ep_tx_lane;
+    wire [7:0] trace_ep_tx_rate;
+    wire [7:0] trace_ep_tx_control;
+    wire [7:0] trace_ep_tx_eq_control;
+    wire [23:0] trace_ep_tx_eq_data;
+    wire       trace_rp_rx_ts1;
+    wire       trace_rp_rx_ts2;
+    wire       trace_rp_rx_malformed;
+    wire [7:0] trace_rp_rx_link;
+    wire [7:0] trace_rp_rx_lane;
+    wire [7:0] trace_rp_rx_rate;
+    wire [7:0] trace_rp_rx_control;
+    wire [7:0] trace_rp_rx_eq_control;
+    wire [23:0] trace_rp_rx_eq_data;
+
+    // Decode the actual Endpoint PIPE transmit stream.  This checks the
+    // serialized/scrambled Ordered Set rather than trusting controller intent.
+    pcie_gen3_os_rx trace_ep_tx_os_rx (
+        .clk(EP.DUT.phy_pclk), .rst_n(EP.DUT.pipe_rst_n),
+        .enable(EP.DUT.k13_active_rate == 2'b10),
+        .in_valid(EP.DUT.phy_txdata_valid),
+        .start_block(EP.DUT.phy_txstart_block),
+        .sync_header(EP.DUT.phy_txsync_header), .in_data(EP.DUT.phy_txdata),
+        .ts1_valid(trace_ep_tx_ts1), .ts2_valid(trace_ep_tx_ts2),
+        .malformed(trace_ep_tx_malformed), .idle_valid(),
+        .link_number(trace_ep_tx_link), .link_is_pad(),
+        .lane_number(trace_ep_tx_lane), .lane_is_pad(), .n_fts(),
+        .rate_id(trace_ep_tx_rate), .training_control(trace_ep_tx_control),
+        .eq_control(trace_ep_tx_eq_control), .eq_data(trace_ep_tx_eq_data)
+    );
+
+    pcie_gen3_os_rx trace_rp_rx_os_rx (
+        .clk(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk),
+        .rst_n(sys_rst_n), .enable(1'b1),
+        .in_valid(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]),
+        .start_block(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0]),
+        .sync_header(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0]),
+        .in_data(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]),
+        .ts1_valid(trace_rp_rx_ts1), .ts2_valid(trace_rp_rx_ts2),
+        .malformed(trace_rp_rx_malformed), .idle_valid(),
+        .link_number(trace_rp_rx_link), .link_is_pad(),
+        .lane_number(trace_rp_rx_lane), .lane_is_pad(), .n_fts(),
+        .rate_id(trace_rp_rx_rate), .training_control(trace_rp_rx_control),
+        .eq_control(trace_rp_rx_eq_control), .eq_data(trace_rp_rx_eq_data)
+    );
+
+    always @(posedge EP.DUT.phy_pclk) begin
+        if ($test$plusargs("K13_TRACE") &&
+            (trace_ep_tx_ts1 || trace_ep_tx_ts2))
+            $display("K13_EP_TX_TS time_ps=%0t ts1=%0d ts2=%0d rp_state=%0h rp_phase=%0d ep_state=%0d link=%02x lane=%02x rate=%02x ctrl=%02x eq_ctrl=%02x eq_data=%06x ready=%0d peer_exit=%0d",
+                     $time, trace_ep_tx_ts1, trace_ep_tx_ts2,
+                     RP.cfg_ltssm_state, trace_rp_eq_phase,
+                     EP.DUT.ltssm_state, trace_ep_tx_link,
+                     trace_ep_tx_lane, trace_ep_tx_rate,
+                     trace_ep_tx_control, trace_ep_tx_eq_control,
+                     trace_ep_tx_eq_data,
+                     EP.DUT.g_k13_enabled_top.u_k13_production_ctrl.phase1_response_ready,
+                     EP.DUT.g_k13_enabled_top.u_k13_production_ctrl.peer_eq_exit_seen);
+    end
+
+    integer trace_ep_gt_status_count = 0;
+    always @(posedge EP.DUT.phy_pclk) begin
+        if ($test$plusargs("K13_TRACE") && EP.DUT.phy_txstart_block &&
+            (EP.DUT.phy_rate == 2'b10) &&
+            (trace_ep_gt_status_count < 32)) begin
+            $display("K13_EP_GT_STATUS time_ps=%0t n=%0d rate_gen3=%0d user_gen3_rdy=%0d txresetdone=%0d txuserrdy=%0d gttxreset=%0d txelecidle=%0d syncstart=%0d pcs_syncdone=%0d txphalign=%0d txsyncdone=%0d gt_data=%08x gt_ctrl=%04x",
+                     $time, trace_ep_gt_status_count,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIERATEGEN3,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIEUSERGEN3RDY,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_TXRESETDONE,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txuserrdy_in,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.gttxreset_in,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txelecidle_in,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIERSTTXSYNCSTART,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIESYNCTXSYNCDONE,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_TXPHALIGNDONE,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txsyncdone_out,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txdata_in[31:0],
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txctrl0_in[15:0]);
+            trace_ep_gt_status_count <= trace_ep_gt_status_count + 1;
+        end
+    end
+
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K13_TRACE") &&
+            (trace_rp_rx_ts1 || trace_rp_rx_ts2))
+            $display("K13_RP_RX_TS time_ps=%0t ts1=%0d ts2=%0d rp_state=%0h rp_phase=%0d ep_state=%0d link=%02x lane=%02x rate=%02x ctrl=%02x eq_ctrl=%02x eq_data=%06x",
+                     $time, trace_rp_rx_ts1, trace_rp_rx_ts2,
+                     RP.cfg_ltssm_state, trace_rp_eq_phase,
+                     EP.DUT.ltssm_state, trace_rp_rx_link,
+                     trace_rp_rx_lane, trace_rp_rx_rate,
+                     trace_rp_rx_control, trace_rp_rx_eq_control,
+                     trace_rp_rx_eq_data);
+    end
 
     // The demo's text trace is intentionally opt-in: normal regressions keep
     // their existing log volume, while a failing retrain can be compared
     // event-for-event with the demo's EP/RP trace.
-    wire [44:0] trace_event_snapshot = {
-        trace_rp_ltssm_state, trace_rp_current_speed,
+    wire [46:0] trace_event_snapshot = {
+        trace_rp_ltssm_state, trace_rp_eq_phase, trace_rp_current_speed,
         trace_rp_negotiated_width, trace_rp_phy_link_status,
         trace_rp_phy_link_down, trace_rp_user_lnk_up,
         trace_ep_ltssm_state, trace_ep_link_up, trace_ep_dll_active,
@@ -132,8 +235,9 @@ module board;
 
     always @(trace_event_snapshot) begin
         if (sys_rst_n && $test$plusargs("K13_TRACE"))
-            $display("K13_TRACE time_ps=%0t rp_state=%0h rp_speed=%0d rp_width=%0d rp_phy_link=%0d rp_link_down=%0d rp_user_link=%0d ep_state=%0d ep_link=%0d ep_dll=%0d pipe_rate_cmd=%0d active_rate=%0d negotiated=%0d speed_state=%0d eq_active=%0d eq_phase=%0d eq_done=%0d eq_failed=%0d fallback=%0d speed_timeout=%0d phystatus=%0d txei=%0d txeq=%02b rxeq=%02b",
-                     $time, trace_rp_ltssm_state, trace_rp_current_speed,
+            $display("K13_TRACE time_ps=%0t rp_state=%0h rp_eq_phase=%0d rp_speed=%0d rp_width=%0d rp_phy_link=%0d rp_link_down=%0d rp_user_link=%0d ep_state=%0d ep_link=%0d ep_dll=%0d pipe_rate_cmd=%0d active_rate=%0d negotiated=%0d speed_state=%0d eq_active=%0d eq_phase=%0d eq_done=%0d eq_failed=%0d fallback=%0d speed_timeout=%0d phystatus=%0d txei=%0d txeq=%02b rxeq=%02b",
+                     $time, trace_rp_ltssm_state, trace_rp_eq_phase,
+                     trace_rp_current_speed,
                      trace_rp_negotiated_width, trace_rp_phy_link_status,
                      trace_rp_phy_link_down, trace_rp_user_lnk_up,
                      trace_ep_ltssm_state, trace_ep_link_up,

@@ -14,6 +14,7 @@
 //-----------------------------------------------------------------------------
 module k13_production_ctrl_test_top #(
     parameter integer K13_RXEQ_BOOTSTRAP = 1,
+    parameter integer K13_RXEQ_TWO_PASS = 0,
     parameter integer GEN1_RELEASE_GAP_CYCLES = 4,
     parameter integer TS_HOLD_CYCLES = 16
 ) (
@@ -69,6 +70,9 @@ module k13_production_ctrl_test_top #(
 
     pcie_k13_production_ctrl #(.K13_ENABLE(1),
                                .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
+                               .K13_RXEQ_TWO_PASS(K13_RXEQ_TWO_PASS),
+                               .K13_PROTOCOL_EQ_ENABLE(0),
+                               .GEN3_TX_SETTLE_CYCLES(1),
                                // EQ phases are deliberately serialized after
                                // the rate operation; leave the semantic
                                // Recovery.Speed wait window long enough for
@@ -88,7 +92,9 @@ module k13_production_ctrl_test_top #(
         .ts_valid(ts_valid_r), .ts_complete(ts_complete_r),
         .ts_is_ts1(ts_is_ts1_r), .ts_is_ts2(ts_is_ts2_r),
         .ts_lane(3'd0), .ts_link(8'd0), .ts_rate(ts_rate_r),
-        .ts_eq_request(1'b0), .expected_lane(3'd0), .expected_link(8'd0),
+        .ts_eq_request(1'b0), .ts_eq_control(8'd0), .ts_eq_data(24'd0),
+        .tx_eq_ts_complete(1'b0),
+        .expected_lane(3'd0), .expected_link(8'd0),
         // === 新 contract 接口 ===
         .phy_rate_cmd(ctrl_phy_rate_cmd),
         .active_rate(ctrl_active_rate),

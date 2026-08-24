@@ -42,7 +42,7 @@
 	k12de-vcs-serial k12de \
 	k13-ctrl-lint k13-ctrl-sim k13-integration-lint k13-integration-sim k13 \
 	ku040-hw-probe ku040-hw-program \
-	remote-check remote-reboot remote-wait remote-lspci remote-cycle \
+	remote-check remote-reboot remote-wait remote-lspci remote-cycle remote-retrain-gen3 \
 	xdma-x1-demo xdma-x1-hw-program clean
 
 PYTHON ?= python3
@@ -160,6 +160,7 @@ k02-lint:
 		rtl/phy/phy_ctrl_pat_gen.v \
 		rtl/phy/phy_ctrl_pat_gen_lane.v \
 		rtl/phy/phy_bringup_seq.sv \
+		rtl/phy/k02_phy_event_recorder.sv \
 		rtl/phy/kcu105_pcie_phy_bringup_top.sv
 
 k02-verilator:
@@ -639,6 +640,9 @@ remote-lspci:
 
 remote-cycle:
 	./scripts/remote_pcie_host.sh cycle
+
+remote-retrain-gen3:
+	./scripts/remote_pcie_host.sh retrain-gen3
 
 k04-checker-selftest:
 	@$(MAKE) -C sim/verilator/k04 NEGATIVE_STUB=1 \

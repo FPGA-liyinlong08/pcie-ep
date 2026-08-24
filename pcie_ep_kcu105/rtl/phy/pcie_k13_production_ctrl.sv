@@ -18,9 +18,13 @@ module pcie_k13_production_ctrl #(
     // RXEQ feedback compatibility: 0 keeps strict done+adapt_done behavior;
     // 1 clears and re-issues a done-only RXEQ request once.
     parameter integer K13_RXEQ_TWO_PASS = 0,
+    // Set to zero only in legacy directed PHY/control harnesses that do not
+    // model role-correct Gen3 Equalization TS fields.
+    parameter integer K13_PROTOCOL_EQ_ENABLE = 1,
     // 250 MHz PIPE下分别为4 ms；行为仿真继续通过参数覆盖缩短。
     parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer EQ_TIMEOUT_CYCLES    = 1_000_000,
+    parameter integer GEN3_TX_SETTLE_CYCLES = 32,
     // Gen1 release gap (Golden stimulus 是 10us @ 250 MHz = 2500 cycles)
     // 仿真默认缩短
     parameter integer GEN1_RELEASE_GAP_CYCLES = 2500
@@ -49,6 +53,9 @@ module pcie_k13_production_ctrl #(
     input wire [7:0] ts_link,
     input wire [1:0] ts_rate,
     input wire       ts_eq_request,
+    input wire [7:0] ts_eq_control,
+    input wire [23:0] ts_eq_data,
+    input wire       tx_eq_ts_complete,
     input wire [2:0] expected_lane,
     input wire [7:0] expected_link,
 
@@ -67,6 +74,9 @@ module pcie_k13_production_ctrl #(
     output wire       recovery_speed_done,
     output wire [1:0] negotiated_speed,
     output wire [2:0] speed_state,
+    output wire [7:0] tx_eq_control,
+    output wire [23:0] tx_eq_data,
+    output wire       protocol_eq_complete,
 
     // EQ / TS / 故障 sticky
     output wire       eq_active,
@@ -125,6 +135,22 @@ module pcie_k13_production_ctrl #(
     reg [1:0]  active_target;
     wire       eq_done_w, eq_failed_w;
     reg        post_rate_ts_seen;
+    reg [3:0]  peer_phase1_ts_count;
+    reg [3:0]  phase1_initial_tx_count;
+    reg        phase1_response_ready;
+    reg        peer_eq_exit_seen;
+    wire peer_phase1_ts = ts_valid && ts_complete && ts_is_ts1 &&
+                          (ts_rate == 2'b10) &&
+                          (ts_eq_control == 8'h01) &&
+                          (ts_eq_data == 24'h8a0c28);
+    wire peer_post_eq_ts = ts_valid && ts_complete &&
+                           (ts_rate == 2'b10) &&
+                           (ts_lane == expected_lane) &&
+                           (ts_link == expected_link) &&
+                           (ts_is_ts2 || (ts_is_ts1 && !peer_phase1_ts));
+    wire protocol_eq_complete_w = (K13_PROTOCOL_EQ_ENABLE == 0) ? eq_done_w :
+                                  (eq_done_w && phase1_response_ready &&
+                                   peer_eq_exit_seen);
     // A TS accepted before RXEQ/EQ completion must remain pending; a one-cycle
     // acceptance pulse must not close Recovery while the physical operation is
     // still in progress.
@@ -135,7 +161,8 @@ module pcie_k13_production_ctrl #(
                                          (post_rate_ts_seen &&
                                           (speed_state_w == 3'd4) &&
                                           !contract_rate_done &&
-                                          ((active_target != 2'b10) || eq_done_w)) ||
+                                          ((active_target != 2'b10) ||
+                                           protocol_eq_complete_w)) ||
                                          // A successful Gen1 fallback has no
                                          // EQ transaction to wait for.  Let
                                          // Recovery.FallbackIdle commit the
@@ -156,6 +183,7 @@ module pcie_k13_production_ctrl #(
     reg post_rate_rxeq_active;
     reg post_rate_rxeq_ready;
     reg post_rate_rxeq_failed;
+    reg post_rate_rxeq_retry_used;
     reg [31:0] post_rate_rxeq_timeout_count;
     // Some generated PHY/OS receiver paths present the completed TS pulse
     // in the same clock boundary in which the guard's registered accept
@@ -264,7 +292,8 @@ module pcie_k13_production_ctrl #(
         // ------------------------------------------------------------------
         pcie_phy_rate_contract #(
             .RATE_TIMEOUT_CYCLES(SPEED_TIMEOUT_CYCLES),
-            .GEN1_RELEASE_GAP_CYCLES(GEN1_RELEASE_GAP_CYCLES)
+            .GEN1_RELEASE_GAP_CYCLES(GEN1_RELEASE_GAP_CYCLES),
+            .GEN3_TX_SETTLE_CYCLES(GEN3_TX_SETTLE_CYCLES)
         ) u_rate_contract (
             .clk(phy_clk), .rst_n(phy_rst_n),
             .link_ready(link_up),
@@ -320,6 +349,7 @@ module pcie_k13_production_ctrl #(
                 post_rate_rxeq_active <= 1'b0;
                 post_rate_rxeq_ready <= 1'b0;
                 post_rate_rxeq_failed <= 1'b0;
+                post_rate_rxeq_retry_used <= 1'b0;
                 post_rate_rxeq_timeout_count <= 32'd0;
             end else begin
                 if ((speed_state_w == 3'd0) ||
@@ -327,6 +357,7 @@ module pcie_k13_production_ctrl #(
                     post_rate_rxeq_active <= 1'b0;
                     post_rate_rxeq_ready <= 1'b0;
                     post_rate_rxeq_failed <= 1'b0;
+                    post_rate_rxeq_retry_used <= 1'b0;
                     post_rate_rxeq_timeout_count <= 32'd0;
                 end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
                              (speed_state_w == 3'd4) &&
@@ -342,13 +373,20 @@ module pcie_k13_production_ctrl #(
                     post_rate_rxeq_timeout_count <= 32'd0;
                 end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
                              post_rate_rxeq_active && phy_rxeq_done) begin
-                    // PG239's done indication without adaptation is a
-                    // failed bootstrap, not a successful RXEQ phase.  Stop
-                    // driving the command and let the speed controller take
-                    // its normal CDR-loss/fallback path.
-                    post_rate_rxeq_active <= 1'b0;
-                    post_rate_rxeq_failed <= 1'b1;
-                    post_rate_rxeq_timeout_count <= 32'd0;
+                    // PG239's done indication without adaptation is not a
+                    // successful bootstrap.  In diagnostic compatibility
+                    // mode, create a real CTRL=00 gap and issue one fresh
+                    // request; strict mode takes the normal fallback path.
+                    if ((K13_RXEQ_TWO_PASS != 0) &&
+                        !post_rate_rxeq_retry_used) begin
+                        post_rate_rxeq_active <= 1'b0;
+                        post_rate_rxeq_retry_used <= 1'b1;
+                        post_rate_rxeq_timeout_count <= 32'd0;
+                    end else begin
+                        post_rate_rxeq_active <= 1'b0;
+                        post_rate_rxeq_failed <= 1'b1;
+                        post_rate_rxeq_timeout_count <= 32'd0;
+                    end
                 end else if ((K13_RXEQ_BOOTSTRAP != 0) &&
                              post_rate_rxeq_active &&
                              rxeq_bootstrap_timeout_expired) begin
@@ -379,6 +417,42 @@ module pcie_k13_production_ctrl #(
             else if ((speed_state_w >= 3'd3) &&
                      (ts_accept_w || post_rate_ts_qualified))
                 post_rate_ts_seen <= 1'b1;
+        end
+
+        // Upstream-port Gen3 Equalization protocol response.  The Xilinx
+        // golden link sends 20/802800 while Phase 1 is not ready, then
+        // 21/000c28 after local equalization is complete.  The downstream
+        // port stops transmitting its Phase-1 request after accepting the
+        // response.  Protocol readiness is intentionally independent of the
+        // slower local PHY equalization transaction: the official upstream
+        // port changes 20 -> 21 after eight Phase-1 requests, while PHY work
+        // continues.  Final commit still requires both local EQ completion
+        // and a subsequent non-Phase-1 TS from the downstream port.
+        always @(posedge phy_clk or negedge phy_rst_n) begin
+            if (!phy_rst_n) begin
+                peer_phase1_ts_count <= 4'd0;
+                phase1_initial_tx_count <= 4'd0;
+                phase1_response_ready <= 1'b0;
+                peer_eq_exit_seen <= 1'b0;
+            end else if (reinitialize_gen1 ||
+                         (active_target != 2'b10) ||
+                         (contract_active_rate != 2'b10)) begin
+                peer_phase1_ts_count <= 4'd0;
+                phase1_initial_tx_count <= 4'd0;
+                phase1_response_ready <= 1'b0;
+                peer_eq_exit_seen <= 1'b0;
+            end else begin
+                if (peer_phase1_ts && (peer_phase1_ts_count != 4'hf))
+                    peer_phase1_ts_count <= peer_phase1_ts_count + 1'b1;
+                if ((peer_phase1_ts_count != 4'd0) &&
+                    !phase1_response_ready && tx_eq_ts_complete &&
+                    (phase1_initial_tx_count != 4'hf))
+                    phase1_initial_tx_count <= phase1_initial_tx_count + 1'b1;
+                if (phase1_initial_tx_count >= 4'd7)
+                    phase1_response_ready <= 1'b1;
+                if (phase1_response_ready && peer_post_eq_ts)
+                    peer_eq_exit_seen <= 1'b1;
+            end
         end
 
         always @(posedge phy_clk or negedge phy_rst_n) begin
@@ -529,6 +603,17 @@ module pcie_k13_production_ctrl #(
                                  (speed_state_w == 3'd7);
     assign negotiated_speed = post_rate_rxeq_failed ? 2'b00 : speed_negotiated;
     assign speed_state = speed_state_w;
+    assign tx_eq_control = ((K13_ENABLE != 0) &&
+                            (K13_PROTOCOL_EQ_ENABLE != 0)) ?
+                           (protocol_eq_complete_w ? 8'h00 :
+                            (phase1_response_ready ? 8'h21 : 8'h20)) : 8'h01;
+    assign tx_eq_data = ((K13_ENABLE != 0) &&
+                         (K13_PROTOCOL_EQ_ENABLE != 0)) ?
+                        (protocol_eq_complete_w ? 24'h454545 :
+                         (phase1_response_ready ? 24'h000c28 : 24'h802800)) :
+                        24'h8a0c28;
+    assign protocol_eq_complete = (K13_ENABLE != 0) &&
+                                  protocol_eq_complete_w;
     assign ts_accept = ts_accept_w;
     assign ts_reject = ts_reject_w;
     assign cdr_loss_sticky = speed_cdr_loss;

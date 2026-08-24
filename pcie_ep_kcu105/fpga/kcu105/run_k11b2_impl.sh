@@ -6,6 +6,7 @@ project_dir="$(cd "${script_dir}/../.." && pwd)"
 ila_debug="${K11B2_ILA_DEBUG:-0}"
 k13_enable="${K13_ENABLE:-0}"
 k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
+k13_rxeq_two_pass="${K13_RXEQ_TWO_PASS:-0}"
 k13_gt_rate_done_tie_high="${K13_GT_RATE_DONE_TIE_HIGH:-0}"
 k13_gt_rate_done_start_pulse="${K13_GT_RATE_DONE_START_PULSE:-0}"
 k13_gt_rate_done_reset_release_pulse="${K13_GT_RATE_DONE_RESET_RELEASE_PULSE:-0}"
@@ -81,6 +82,9 @@ if [[ "${k13_enable}" == "1" ]]; then
   fi
   if [[ "${k13_gt_primitive_debug}" == "1" ]]; then
     build_variant+="_gt_primitive"
+  fi
+  if [[ "${k13_gt_qpll_prereq_debug}" == "1" ]]; then
+    build_variant+="_qpll_prereq"
   fi
 fi
 build_dir="${script_dir}/${build_variant}/impl"

@@ -298,7 +298,7 @@ async def send_spliced_ts1_ts2(dut, link=0, lane=0, rate=0x02):
     await drive_symbols(dut, ts1[:6] + ts2[6:], ts1_isk[:6] + ts2_isk[6:])
 
 
-async def capture_gen3_training_prefix(dut, words=8):
+async def capture_gen3_training_prefix(dut, words=12):
     """Capture the first valid Gen3 PIPE words independently of the partner RX."""
     captured = []
     while len(captured) < words:

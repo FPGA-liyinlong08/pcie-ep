@@ -33,6 +33,9 @@ module pcie_ltssm_mac_gen1 #(
     input  wire [1:0]  active_phy_rate,
     input  wire [1:0]  recovery_target_rate,
     input  wire        recovery_fallback_active,
+    input  wire [7:0]  gen3_tx_eq_control,
+    input  wire [23:0] gen3_tx_eq_data,
+    input  wire        gen3_protocol_eq_complete,
 
     output wire [31:0] phy_txdata,
     output wire [1:0]  phy_txdatak,
@@ -190,7 +193,9 @@ module pcie_ltssm_mac_gen1 #(
     // RcvrCfg traffic (used by the directed harness) remains unchanged.
     reg        gen3_eq_ts1_response_hold;
     wire       gen3_eq_ts1_response = gen3_mode &&
-                                      gen3_eq_ts1_response_hold;
+                                      (gen3_eq_ts1_response_hold ||
+                                       ((gen3_tx_eq_control != 8'h00) &&
+                                        !gen3_protocol_eq_complete));
     wire       gen1_os_ts1_valid, gen1_os_ts2_valid, gen1_os_malformed;
     wire [7:0] gen1_os_link_number, gen1_os_lane_number;
     wire [7:0] gen1_os_n_fts, gen1_os_rate_id, gen1_os_training_control;
@@ -504,6 +509,7 @@ module pcie_ltssm_mac_gen1 #(
         .lane_number(tx_os_lane), .lane_is_pad(tx_os_lane_pad),
         .n_fts(8'hff), .rate_id(tx_os_rate_id),
         .training_control(tx_os_training_control),
+        .eq_control(gen3_tx_eq_control), .eq_data(gen3_tx_eq_data),
         .out_data(gen3_os_tx_data), .out_valid(gen3_os_tx_valid),
         .start_block(gen3_os_tx_start_block),
         .sync_header(gen3_os_tx_sync_header),
@@ -694,13 +700,15 @@ module pcie_ltssm_mac_gen1 #(
             // truncated and the next TS2 can start in the middle of the
             // Ordered Set (observed as two mode-1 words followed by mode-2).
             // Keep the response hold while the active PHY rate is Gen3 and
-            // the LTSSM remains in RcvrCfg; clear it only on TS2/malformed or
-            // when leaving that state.
-            if (!gen3_mode ||
+            // the LTSSM remains in RcvrCfg.  A parser malformed pulse can be
+            // caused by EIEOS/re-synchronization and must not inject a TS2
+            // into a run of Phase-1 response TS1 Ordered Sets.  Release only
+            // on a valid TS2, explicit protocol completion, or state exit.
+            if (!gen3_mode || gen3_protocol_eq_complete ||
                 ((active_phy_rate != 2'b10) && !speed_retrain_active) ||
                 (ltssm_state != RECOVERY_RCVRCFG))
                 gen3_eq_ts1_response_hold <= 1'b0;
-            else if (os_ts2_valid || os_malformed)
+            else if (os_ts2_valid)
                 gen3_eq_ts1_response_hold <= 1'b0;
             else if (os_ts1_valid &&
                      ((os_eq_control != 8'd0) || (os_eq_data != 24'd0)))

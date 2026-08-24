@@ -156,6 +156,138 @@ module board;
  wire [2:0] ep_phy_rxeq_fsm = EP.pcie3_ultrascale_0_i.inst.phy_rxeq_fsm[2:0];
  reg trace_ltssm;
 
+ // Bounded golden PIPE capture for Gen3 Recovery.Equalization.  The hard-IP
+ // demo is the protocol reference used by the soft endpoint integration.
+ integer ep_gen3_pipe_words;
+ integer rp_gen3_pipe_words;
+ integer ep_gen3_gt_starts;
+ reg [1:0] ep_last_eq_phase;
+ reg [1:0] rp_last_eq_phase;
+ wire golden_ep_ts1, golden_ep_ts2, golden_ep_malformed;
+ wire [7:0] golden_ep_link, golden_ep_lane, golden_ep_nfts;
+ wire [7:0] golden_ep_rate, golden_ep_control, golden_ep_eq_control;
+ wire [23:0] golden_ep_eq_data;
+ wire golden_ep_link_pad, golden_ep_lane_pad, golden_ep_idle;
+ wire golden_rp_ts1, golden_rp_ts2, golden_rp_malformed;
+ wire [7:0] golden_rp_link, golden_rp_lane, golden_rp_nfts;
+ wire [7:0] golden_rp_rate, golden_rp_control, golden_rp_eq_control;
+ wire [23:0] golden_rp_eq_data;
+ wire golden_rp_link_pad, golden_rp_lane_pad, golden_rp_idle;
+ wire [1:0] ep_pl_eq_phase = EP.pcie3_ultrascale_0_i.inst.pl_eq_phase;
+ wire [1:0] rp_pl_eq_phase =
+   RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pl_eq_phase;
+
+ initial begin
+   ep_gen3_pipe_words = 0;
+   rp_gen3_pipe_words = 0;
+   ep_gen3_gt_starts = 0;
+   ep_last_eq_phase = 2'b11;
+   rp_last_eq_phase = 2'b11;
+ end
+
+ // Compare the hard-IP Endpoint's exact lane-0 GT contract against the soft
+ // Endpoint PHY.  Keep the capture bounded to the first startup blocks.
+ always @(posedge EP.pcie3_ultrascale_0_i.inst.pipe_clk) begin
+   if (trace_ltssm &&
+       EP.pcie3_ultrascale_0_i.inst.pipe_tx0_start_block &&
+       (ep_gen3_gt_starts < 24)) begin
+     $display("[%t] GOLDEN_EP_GT n=%0d rate_gen3=%0d txresetdone=%0d data=%08x ctrl=%04x",
+              $realtime, ep_gen3_gt_starts,
+              EP.pcie3_ultrascale_0_i.inst.gt_pcierategen3_o[0],
+              EP.pcie3_ultrascale_0_i.inst.gt_txresetdone[0],
+              EP.pcie3_ultrascale_0_i.inst.pipe_tx0_data,
+              {10'd0, EP.pcie3_ultrascale_0_i.inst.pipe_tx0_syncheader,
+               EP.pcie3_ultrascale_0_i.inst.pipe_tx0_start_block,
+               EP.pcie3_ultrascale_0_i.inst.pipe_tx0_data_valid, 2'd0});
+     ep_gen3_gt_starts = ep_gen3_gt_starts + 1;
+   end
+ end
+
+ pcie_gen3_os_rx golden_ep_os_rx (
+   .clk(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk),
+   .rst_n(sys_rst_n), .enable(1'b1),
+   .in_valid(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]),
+   .start_block(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0]),
+   .sync_header(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0]),
+   .in_data(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]),
+   .ts1_valid(golden_ep_ts1), .ts2_valid(golden_ep_ts2),
+   .malformed(golden_ep_malformed), .idle_valid(golden_ep_idle),
+   .link_number(golden_ep_link), .link_is_pad(golden_ep_link_pad),
+   .lane_number(golden_ep_lane), .lane_is_pad(golden_ep_lane_pad),
+   .n_fts(golden_ep_nfts), .rate_id(golden_ep_rate),
+   .training_control(golden_ep_control),
+   .eq_control(golden_ep_eq_control), .eq_data(golden_ep_eq_data)
+ );
+
+ pcie_gen3_os_rx golden_rp_os_rx (
+   .clk(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk),
+   .rst_n(sys_rst_n), .enable(1'b1),
+   .in_valid(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid),
+   .start_block(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block),
+   .sync_header(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_syncheader),
+   .in_data(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data),
+   .ts1_valid(golden_rp_ts1), .ts2_valid(golden_rp_ts2),
+   .malformed(golden_rp_malformed), .idle_valid(golden_rp_idle),
+   .link_number(golden_rp_link), .link_is_pad(golden_rp_link_pad),
+   .lane_number(golden_rp_lane), .lane_is_pad(golden_rp_lane_pad),
+   .n_fts(golden_rp_nfts), .rate_id(golden_rp_rate),
+   .training_control(golden_rp_control),
+   .eq_control(golden_rp_eq_control), .eq_data(golden_rp_eq_data)
+ );
+
+ always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+   if (trace_ltssm && (golden_ep_ts1 || golden_ep_ts2))
+     $display("[%t] GOLDEN_EP_TS ts1=%0d ts2=%0d phase=%0d link=%02x lane=%02x rate=%02x ctrl=%02x eq_ctrl=%02x eq_data=%06x",
+              $realtime, golden_ep_ts1, golden_ep_ts2, ep_pl_eq_phase,
+              golden_ep_link, golden_ep_lane, golden_ep_rate,
+              golden_ep_control, golden_ep_eq_control, golden_ep_eq_data);
+   if (trace_ltssm && (golden_rp_ts1 || golden_rp_ts2))
+     $display("[%t] GOLDEN_RP_TS ts1=%0d ts2=%0d phase=%0d link=%02x lane=%02x rate=%02x ctrl=%02x eq_ctrl=%02x eq_data=%06x",
+              $realtime, golden_rp_ts1, golden_rp_ts2, rp_pl_eq_phase,
+              golden_rp_link, golden_rp_lane, golden_rp_rate,
+              golden_rp_control, golden_rp_eq_control, golden_rp_eq_data);
+ end
+
+ // Observe the official EP stream at the Root Port PIPE receive boundary;
+ // this avoids depending on generated-EP internal pipeline instance names.
+ always @(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data) begin
+   if (ep_pl_eq_phase != ep_last_eq_phase) begin
+     ep_last_eq_phase = ep_pl_eq_phase;
+     ep_gen3_pipe_words = 0;
+   end
+   if (trace_ltssm &&
+       (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b10) &&
+       RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0] &&
+       (ep_gen3_pipe_words < 64)) begin
+     $display("[%t] GOLDEN_EP_PIPE n=%0d ltssm=%02h eq_phase=%0d start=%0d header=%02b data=%08x",
+              $realtime, ep_gen3_pipe_words, cfg_ltssm_state,
+              ep_pl_eq_phase,
+              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+     ep_gen3_pipe_words = ep_gen3_pipe_words + 1;
+   end
+ end
+
+ always @(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data) begin
+   if (rp_pl_eq_phase != rp_last_eq_phase) begin
+     rp_last_eq_phase = rp_pl_eq_phase;
+     rp_gen3_pipe_words = 0;
+   end
+   if (trace_ltssm &&
+       (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b10) &&
+       RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid &&
+       (rp_gen3_pipe_words < 64)) begin
+     $display("[%t] GOLDEN_RP_PIPE n=%0d ltssm=%02h eq_phase=%0d start=%0d header=%02b data=%08x",
+              $realtime, rp_gen3_pipe_words, rp_cfg_ltssm_state,
+              rp_pl_eq_phase,
+              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block,
+              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_syncheader,
+              RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data);
+     rp_gen3_pipe_words = rp_gen3_pipe_words + 1;
+   end
+ end
+
  // Optional targeted waveform dump for PCIe Gen3 link training.
  // Enable with +DUMP_WAVEFORM. The output is written in the current run directory.
  initial begin

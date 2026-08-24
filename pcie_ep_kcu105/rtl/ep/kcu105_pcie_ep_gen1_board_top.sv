@@ -12,7 +12,10 @@ module kcu105_pcie_ep_gen1_board_top #(
     parameter integer K13_SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer K13_EQ_TIMEOUT_CYCLES = 1_000_000,
     parameter integer K13_RXEQ_BOOTSTRAP = 1,
-    parameter integer K13_RXEQ_TWO_PASS = 0
+    parameter integer K13_RXEQ_TWO_PASS = 0,
+    // K13 hardware images autonomously leave the deliberately conservative
+    // initial Gen1 link after 1 ms at the 250 MHz PIPE clock.
+    parameter integer K13_AUTO_RETRAIN_CYCLES = 250_000
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -45,7 +48,8 @@ module kcu105_pcie_ep_gen1_board_top #(
         .K13_SPEED_TIMEOUT_CYCLES(K13_SPEED_TIMEOUT_CYCLES),
         .K13_EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES),
         .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
-        .K13_RXEQ_TWO_PASS(K13_RXEQ_TWO_PASS)
+        .K13_RXEQ_TWO_PASS(K13_RXEQ_TWO_PASS),
+        .K13_AUTO_RETRAIN_CYCLES(K13_AUTO_RETRAIN_CYCLES)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),
         .pcie_refclk_n(pcie_refclk_n),
