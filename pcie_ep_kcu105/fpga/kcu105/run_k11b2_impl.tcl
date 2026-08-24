@@ -624,7 +624,9 @@ if {$ila_debug} {
     set pin [lindex $pins 0]
     set old_nets [get_nets -quiet -of_objects $pin]
     set_property DONT_TOUCH FALSE [get_nets -quiet -of_objects $pin]
-    set_property DONT_TOUCH FALSE [get_nets -quiet $source_net]
+    # The GT diagnostic source nets are deliberately marked DONT_TOUCH by the
+    # generated-source patch.  Fan out from them without trying to clear that
+    # property; Vivado rejects clearing it even though the source is read-only.
     if {[llength $old_nets] == 1} {
       disconnect_net -net [lindex $old_nets 0] -pinlist [list $pin]
     }
@@ -638,10 +640,6 @@ if {$ila_debug} {
        [phy_primitive_pin_nets GTHE3_COMMON QPLL1LOCK 1]
      k13_connect_recorder_input {.*k13_qpll_event_recorder/qpll1reset$} \
        [phy_primitive_pin_nets GTHE3_COMMON QPLL1RESET 1]
-     k13_connect_recorder_input {.*k13_qpll_event_recorder/pcierategen3$} \
-       [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierategen3_out\[0\]$}]
-     k13_connect_recorder_input {.*k13_qpll_event_recorder/pcieusergen3rdy$} \
-       [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieusergen3rdy_out\[0\]$}]
     puts "K13_QPLL_EVENT_RECORDER_CONNECT_PASS"
   }
 
@@ -813,7 +811,7 @@ if {$ila_debug} {
   }
   if {$k13_enable} {
     add_ila_probe u_ila_pipe 21 \
-      [debug_bus_nets {.*dbg_k13_qpll_event_record.*\[[0-9]+\]$} 208]
+      [debug_bus_nets {.*dbg_k13_qpll_event_record.*\[[0-9]+\]$} 176]
   }
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila

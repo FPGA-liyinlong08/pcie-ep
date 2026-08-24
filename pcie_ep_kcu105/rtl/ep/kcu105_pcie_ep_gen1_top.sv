@@ -113,9 +113,7 @@ module kcu105_pcie_ep_gen1_top #(
     // nets in non-diagnostic builds.
     (* mark_debug = "true", keep = "true" *) wire k13_qpll1lock_tap = 1'b0;
     (* mark_debug = "true", keep = "true" *) wire k13_qpll1reset_tap = 1'b0;
-    (* mark_debug = "true", keep = "true" *) wire k13_pcierategen3_tap = 1'b0;
-    (* mark_debug = "true", keep = "true" *) wire k13_pcieusergen3rdy_tap = 1'b0;
-    (* mark_debug = "true", keep = "true" *) wire [207:0] dbg_k13_qpll_event_record;
+    (* mark_debug = "true", keep = "true" *) wire [175:0] dbg_k13_qpll_event_record;
     wire ltssm_recovery_speed_ready;
     // 协议层使用的"活动速率"——K13 时来自 contract active_rate，K11 时自环
     wire [1:0] active_phy_rate_int = (K13_ENABLE != 0) ? k13_active_rate
@@ -366,8 +364,6 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_rate     (k13_phy_rate_cmd),
         .phy_phystatus(phy_phystatus),
         .cdr_hold     (as_cdr_hold_req),
-        .pcierategen3 (k13_pcierategen3_tap),
-        .pcieusergen3rdy(k13_pcieusergen3rdy_tap),
         .record_bus   (dbg_k13_qpll_event_record)
     );
 
@@ -394,7 +390,7 @@ module kcu105_pcie_ep_gen1_top #(
                               ? k13_negotiated_speed : ltssm_negotiated_speed;
     end else begin : g_k13_disabled_top
         // K11 release旁路：关闭K13时不实例化控制器，也不保留mux逻辑。
-        assign dbg_k13_qpll_event_record = 208'd0;
+        assign dbg_k13_qpll_event_record = 176'd0;
         assign phy_rate = ltssm_phy_rate;
         assign phy_txelecidle = ltssm_phy_txelecidle;
         assign phy_txeq_ctrl = ltssm_phy_txeq_ctrl;
