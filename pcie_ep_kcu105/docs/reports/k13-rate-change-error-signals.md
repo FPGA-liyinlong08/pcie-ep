@@ -25,7 +25,9 @@ PG239 的 PIPE 接口没有定义一个与 `phy_rate` 对应的独立“rate err
 ## 解释顺序
 
 1. `PHY_RATE` 从 0 变为 2 后，先看 `TXRATE/RXRATE` 是否实际变为 2，以及 `PCIERATEIDLE` 是否退出 idle。
-2. 若 `QPLL1REFCLKLOST` 或 `QPLL1FBCLKLOST` 置 1，优先修复参考时钟/反馈时钟选择、输入时钟质量或 QPLL 前置条件。
+2. 只有在 `QPLL1LOCKDETCLK` 已接入稳定、独立的检测时钟时，才能使用
+   `QPLL1REFCLKLOST/QPLL1FBCLKLOST` 判断参考/反馈时钟；若检测时钟未连接，
+   这两个输出没有定义，不能作为切速错误结论。
 3. 若两个 loss 位均为 0，但 `QPLL1LOCK` 由 1 变 0 且在 `QPLL1RESET` 释放后不恢复，这是 QPLL 重锁/反馈路径失败；它足以解释后续没有 `PHYSTATUS`。
 4. 若 `QPLL1LOCK=1`、rate 已切到 2，但 `PCIERATEGEN3` 或 `PCIEUSERGEN3RDY` 仍为 0，问题在 GT rate sequencer 或 user-rate handshake。
 5. 若 GT lock、rate、`PCIEUSERGEN3RDY` 均正常而 PIPE `PHYSTATUS=0`，再检查 PHY completion/status 传播和 reset release；此时 `phy_phystatus_rst`/`pcieuserphystatusrst_out` 应已完成而不能保持异常。
@@ -59,7 +61,12 @@ Root Port = 00:01.0, Endpoint = 01:00.0
 | 3317 | `QPLL1RESET: 0→1`，`QPLL1LOCK: 1→0` |
 | 3322 | `QPLL1RESET: 1→0`，`QPLL1LOCK` 没有恢复；直到 sample 4095 仍为 0 |
 
-整个窗口 `QPLL1PD=0`、`QPLL1LOCKEN=1`、`TXPLLCLKSEL=RXPLLCLKSEL=2`、`QPLL1REFCLKSEL=001`，而 `QPLL1REFCLKLOST=1`、`QPLL1FBCLKLOST=1` 保持高。由于两个 loss 位在 Gen1 基线也为高，不能把它们单独判成“切速瞬间新发生的丢时钟”；但它们证明 GT lock detector 从未给出有效的 ref/feedback clock 条件。`phy_phystatus_rst=0` 和 GT `pcieuserphystatusrst_out=0` 表明 reset completion 已结束，故不是“仍在 PHY reset 中”。
+整个窗口 `QPLL1PD=0`、`QPLL1LOCKEN=1`、`TXPLLCLKSEL=RXPLLCLKSEL=2`、`QPLL1REFCLKSEL=001`，而两个 `LOST` 位保持高。进一步检查生成的
+`pcie_phy_x1_gen3_gt.v` 可见 `qpll1lockdetclk_in` 被固定为 `1'H0`；依据
+UG576，这使 `QPLL1REFCLKLOST/QPLL1FBCLKLOST` 失去诊断意义，不能据此
+断定板上 REFCLK/FBCLK 真丢失。`phy_phystatus_rst=0` 和 GT
+`pcieuserphystatusrst_out=0` 表明 reset completion 已结束，故不是“仍在
+PHY reset 中”。有效硬件证据仍是 `QPLL1LOCK` 在 QPLL1RESET 释放后不恢复。
 
 本轮比“只看到 PHYSTATUS=0”更具体：**rate 请求和 GT TX/RX rate 已经到 2，但 QPLL1 在随后 reset 脉冲后失锁不恢复，且 GEN3RDY/PCIERATEGEN3/USERRATESTART/DONE 都没有完成。** `PCIEUSERRATEDONE=0` 是可疑输入，但历史上把它固定为 1 的 A/B 仍然得到相同结果，因此目前不能把 DONE 单点作为修复。
 
@@ -68,6 +75,27 @@ Root Port = 00:01.0, Endpoint = 01:00.0
 当前 VCS 联合仿真（`sim/vcs/build/k11b2_simulate.log`）在 rate=2 后能看到 `PHYSTATUS=1`、`active_rate=2`、EQ active 并最终 `eq_done=1`；失败发生在 Root Port 的 TS/serial/block-lock 边界，最终 `negotiated=0`。实板则在 GT QPLL/GEN3 ready 阶段已经停住，连 PHY completion 都没有。因此 VCS 的 PHY/PIPE behavioral model 没有建模真实 GT QPLL lock detector、`REFCLKLOST/FBCLKLOST`、QPLL reset/relock 和 user-rate handshake，不能用来否定实板的 QPLL 根因。
 
 下一步应继续保留 VCS 做 PIPE contract 回归，同时以实板 GT primitive 波形为主线：先解决 `QPLL1LOCK` 在 `QPLL1RESET` 释放后的恢复及 `PCIERATEGEN3/PCIEUSERGEN3RDY` 握手，再进入 RXEQ/TS2。当前不应再优先修改 RXEQ，因为实板在 RXEQ 之前已经失败。
+
+## 低 CDR-hold A/B 复测（2026-08-24 15:20）
+
+为排除 CDR hold 和 ILA 触发位置的影响，使用
+`K13_CDR_HOLD_FORCE_LOW=1`，并以 `PCIERATEQPLLRESET` 直接触发 ILA：
+
+```text
+capture = fpga/kcu105/build_k13_gen3_ila_cdr_hold_low_gt_primitive_qpll_prereq/capture/20260824_152033_u_ila_pipe.csv
+```
+
+`dbg_k13_top[0]=as_cdr_hold_req` 全程为 0；`PHY_RATE/RXRATE` 在 sample 503
+变为 2；sample 512～517 发生 QPLL reset，`QPLL1LOCK` 由 1 变 0，直到
+sample 4095（reset 释放后约 14.3 us）仍为 0，且 `PHYSTATUS`、
+`PCIERATEGEN3`、`PCIEUSERGEN3RDY`、`PCIEUSERRATESTART/DONE` 均未完成。
+这次 A/B 直接排除了“Recovery.Speed 期间 CDR hold=1”作为当前 K13 QPLL
+失锁的充分根因。
+
+同时检查生成 IP 发现 `qpll1lockdetclk_in` 固定为 `1'H0`。根据 UG576，
+`QPLL1LOCKDETCLK` 是 `*_REFCLKLOST/*_FBCLKLOST` 诊断输出所需的稳定检测
+时钟，且不影响 QPLL lock/reset；因此现有两个 `LOST=1` 只能视为未定义的
+诊断值，下一版 bit 必须先接入独立稳定的 100 MHz `phy_refclk` 后再解释。
 
 ## 直接以动态 QPLL reset 触发的实板复测（2026-08-24）
 
