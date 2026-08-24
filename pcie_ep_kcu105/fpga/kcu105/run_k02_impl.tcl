@@ -5,6 +5,8 @@ set part_name   xcku040-ffva1156-2-e
 set top_name    kcu105_pcie_phy_bringup_top
 set build_dir   [file join $script_dir build_k02]
 set bit_stem    k02_pcie_phy_bringup_ila
+set k02_wait_after_ready_ns [expr {[info exists ::env(K02_PHY_CTRL_WAIT_AFTER_READY_NS)] ?
+                                   $::env(K02_PHY_CTRL_WAIT_AFTER_READY_NS) : 10000}]
 
 # K02 顶层直接实例化 Golden `phy_ctrl.v` + `phy_bringup_seq`，独立完成
 # Gen1->Gen3 切换。K02 顶层无参数化 K02_USE_PHY_CTRL 路径、无 DYNAMIC_*
@@ -40,10 +42,12 @@ read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen_lane.v]
 read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen.v]
 read_verilog     [file join $project_dir rtl/phy/phy_ctrl.v]
 read_verilog -sv [file join $project_dir rtl/phy/phy_bringup_seq.sv]
+read_verilog -sv [file join $project_dir rtl/phy/k02_phy_event_recorder.sv]
 read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_bringup_top.sv]
 read_xdc [file join $script_dir k02_pcie_phy_bringup.xdc]
 
-synth_design -top $top_name -part $part_name
+synth_design -top $top_name -part $part_name \
+    -generic K02_PHY_CTRL_WAIT_AFTER_READY_NS=$k02_wait_after_ready_ns
 
 if {$k02_ila_debug} {
     # K02 standalone PHY 没有协议层 ILA；这里直接从综合网表中的 GT Wizard
@@ -116,6 +120,32 @@ if {$k02_ila_debug} {
         connect_debug_port $port $nets
     }
 
+    proc k02_connect_recorder_input {pin_pattern source_net} {
+        set pins [get_pins -hierarchical -quiet -regexp $pin_pattern]
+        if {[llength $pins] != 1} {
+            error "K02 event recorder输入不存在或不唯一：$pin_pattern，实际[llength $pins]"
+        }
+        set pin [lindex $pins 0]
+        set old_nets [get_nets -quiet -of_objects $pin]
+        # The GT Wizard marks primitive output nets DONT_TOUCH.  Clear that
+        # implementation-only property before retargeting the recorder tap;
+        # otherwise Vivado reports success but leaves the recorder input on
+        # its synthesized constant net.
+        set_property DONT_TOUCH FALSE [get_nets -quiet -of_objects $pin]
+        set_property DONT_TOUCH FALSE [get_nets -quiet $source_net]
+        if {[llength $old_nets] == 1} {
+            disconnect_net -net [lindex $old_nets 0] -pinlist [list $pin]
+        }
+        connect_net -hier -net $source_net -objects [list $pin]
+    }
+
+    # 将 recorder 的两个 GT 输入直接接到 primitive pin 网络。这样记录器
+    # 看到的是实际 QPLL1LOCK/QPLL1RESET，而不是 wrapper 的替代/常量端口。
+    set k02_qpll1lock_net  [k02_primitive_pin GTHE3_COMMON QPLL1LOCK]
+    set k02_qpll1reset_net [k02_primitive_pin GTHE3_COMMON QPLL1RESET]
+    k02_connect_recorder_input {^u_k02_event_recorder/qpll1lock$}  $k02_qpll1lock_net
+    k02_connect_recorder_input {^u_k02_event_recorder/qpll1reset$} $k02_qpll1reset_net
+
     create_debug_core u_ila_k02 ila
     set_property C_DATA_DEPTH 8192 [get_debug_cores u_ila_k02]
     set_property C_TRIGIN_EN false [get_debug_cores u_ila_k02]
@@ -152,7 +182,12 @@ if {$k02_ila_debug} {
         [k02_net {^u_phy_wrapper/phy_phystatus_rst$}]]
     k02_add_probe u_ila_k02 1 $k02_probe1
 
-    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] depth=8192"
+    # probe2 = rate-change事件记录器：所有时间戳相对于本次QPLL reset/rate
+    # change开始，避免依赖单个8192点窗口覆盖完整80 us流程。
+    set k02_probe2 [k02_bus {^k02_event_record_w\[[0-9]+\]$} 118]
+    k02_add_probe u_ila_k02 2 $k02_probe2
+
+    puts "K02_PHY_ILA_INSERT_PASS probe0_width=[llength $k02_probe0] probe1_width=[llength $k02_probe1] probe2_width=[llength $k02_probe2] depth=8192"
 }
 write_checkpoint -force [file join $build_dir k02_synth.dcp]
 report_utilization -file [file join $build_dir utilization_synth.rpt]
@@ -242,6 +277,7 @@ puts $summary_file "GTHE3_COMMON_COUNT=[llength $gth_commons]"
 puts $summary_file "GTHE3_COMMON_LOC=$common_loc"
 puts $summary_file "PCIE_HARD_BLOCK_COUNT=$hard_pcie_count"
 puts $summary_file "WNS=$wns"
+puts $summary_file "WAIT_AFTER_READY_NS=$k02_wait_after_ready_ns"
 puts $summary_file "K02_ILA_DEBUG=$k02_ila_debug"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file

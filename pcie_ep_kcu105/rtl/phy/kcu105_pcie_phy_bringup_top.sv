@@ -143,6 +143,15 @@ module kcu105_pcie_phy_bringup_top #(
     (* mark_debug = "true" *) wire        tx_elec_idle_w        = seq_tx_elec_idle;
     (* mark_debug = "true" *) wire        phy_ready_en_w        = seq_phy_ready_en;
 
+    // The implementation Tcl connects these recorder inputs to the actual
+    // GTHE3_COMMON QPLL1LOCK/QPLL1RESET primitive nets after synthesis.
+    // These are deliberately left as synthesizable tap nets.  The K02
+    // implementation Tcl retargets them to the GTHE3_COMMON primitive pins
+    // after synthesis; DONT_TOUCH here would prevent that retargeting.
+    (* KEEP = "TRUE" *) wire        qpll1lock_record_in;
+    (* KEEP = "TRUE" *) wire        qpll1reset_record_in;
+    (* mark_debug = "true" *) wire [117:0] k02_event_record_w;
+
     // 最小 bring-up 计数器：仅给 LED[7] 提供慢闪信号。
     logic [24:0] heartbeat_count;
 
@@ -259,6 +268,17 @@ module kcu105_pcie_phy_bringup_top #(
             heartbeat_count <= heartbeat_count + 1'b1;
         end
     end
+
+    k02_phy_event_recorder u_k02_event_recorder (
+        .clk            (phy_pclk),
+        .rst            (phy_phystatus_rst),
+        .qpll1lock      (qpll1lock_record_in),
+        .qpll1reset     (qpll1reset_record_in),
+        .phy_rate       (phy_rate_cmd),
+        .phy_phystatus  (phy_phystatus),
+        .seq_state      (seq_state_w),
+        .record_bus     (k02_event_record_w)
+    );
 
     // LED 映射：phy_bringup_seq 进度 + heartbeat。
     assign led[0] = pipe_rst_n && !phy_phystatus_rst;

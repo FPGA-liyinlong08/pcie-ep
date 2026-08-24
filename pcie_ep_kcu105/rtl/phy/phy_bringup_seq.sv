@@ -102,6 +102,12 @@ module phy_bringup_seq #(
             end
             S_DONE: begin
                 phy_ready_en = 1'b1;
+                // Keep the Gen3 rate contract asserted after the bring-up
+                // sequence completes.  Dropping all gen*_en requests here
+                // makes phy_ctrl interpret S_DONE as an explicit return to
+                // Gen1, which resets the QPLL again.
+                gen3_en      = 1'b1;
+                gen3_request = 1'b1;
             end
             default: begin
             end

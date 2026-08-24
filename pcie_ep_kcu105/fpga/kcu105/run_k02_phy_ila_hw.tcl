@@ -1,5 +1,5 @@
 # K02 standalone PHY ILA programming/capture helper.
-# Default trigger is `seq_state_w` reaching S_GEN3_WAIT (4'd3) so the capture
+# Default trigger is `seq_state_w` reaching S_GEN3_WAIT (4'd6) so the capture
 # contains the pre-Gen3 divergence (QPLL1 1->0->1, debug_state==8'h04).
 set script_dir  [file dirname [file normalize [info script]]]
 set build_dir   [file join $script_dir build_k02]
@@ -12,7 +12,7 @@ set server_url 127.0.0.1:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm capture-wait upload status}} {
+if {$action ni {program-arm arm-only capture-wait upload status}} {
   error "K02 PHY ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K02 PHY ILA bitstream不存在：$bit_path" }
@@ -38,7 +38,7 @@ if {[llength $ilas] != 1} { error "K02 PHY ILA期望唯一ILA，实际[llength $
 set ila [lindex $ilas 0]
 set trigger_probe {}
 set trigger_compare [expr {[info exists ::env(K02_ILA_TRIGGER_COMPARE)] ?
-                            $::env(K02_ILA_TRIGGER_COMPARE) : "eq4'h3"}]
+                            $::env(K02_ILA_TRIGGER_COMPARE) : "eq4'h6"}]
 set trigger_pos [expr {[info exists ::env(K02_ILA_TRIGGER_POS)] ?
                         $::env(K02_ILA_TRIGGER_POS) : 2048}]
 
@@ -53,7 +53,7 @@ if {[info exists ::env(K02_ILA_TRIGGER_PROBE)]} {
   }
   set trigger_error "K02 PHY ILA 自定义触发探针不存在或不唯一：$target_probe_name"
 } else {
-  # 默认触发：phy_bringup_seq.seq_state 走到 S_GEN3_WAIT (4'd3)。
+  # 默认触发：phy_bringup_seq.seq_state 走到 S_GEN3_WAIT (4'd6)。
   foreach probe [get_hw_probes -of_objects $ila] {
     set probe_name [get_property NAME $probe]
     if {$probe_name eq "seq_state_w"} {
@@ -71,7 +71,7 @@ if {[llength $trigger_probe] != 1} {
 }
 set trigger_probe [lindex $trigger_probe 0]
 
-if {$action eq "program-arm"} {
+if {$action eq "program-arm" || $action eq "arm-only"} {
   set_property CONTROL.TRIGGER_POSITION $trigger_pos $ila
   reset_hw_ila $ila
   set_property TRIGGER_COMPARE_VALUE $trigger_compare $trigger_probe

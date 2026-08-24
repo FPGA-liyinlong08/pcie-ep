@@ -34,6 +34,7 @@ actual_warning_ids="$(grep '^WARNING: \[' "${build_dir}/impl.log" \
     | sort -u)"
 expected_warning_ids="$(printf '%s\n' \
     'Synth 8-3848' \
+    'Synth 8-3295' \
     'Synth 8-6014' \
     'Synth 8-7023' \
     'Synth 8-7071' \
