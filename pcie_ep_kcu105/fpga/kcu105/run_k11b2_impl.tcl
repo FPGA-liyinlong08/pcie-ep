@@ -458,6 +458,7 @@ set sv_files [list \
   rtl/common/pcie_link_loss_trigger.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
   rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \
+  rtl/phy/k13_qpll_event_recorder.sv \
   rtl/phy/pcie_recovery_speed_ctrl.sv \
   rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
   rtl/phy/pcie_k13_production_ctrl.sv \
@@ -613,6 +614,31 @@ if {$ila_debug} {
     set port [get_debug_ports ${core_name}/probe${probe_index}]
     set_property port_width [llength $nets] $port
     connect_debug_port $port $nets
+  }
+
+  proc k13_connect_recorder_input {pin_pattern source_net} {
+    set pins [get_pins -hierarchical -quiet -regexp $pin_pattern]
+    if {[llength $pins] != 1} {
+      error "K13事件记录器输入不存在或不唯一：$pin_pattern，实际[llength $pins]"
+    }
+    set pin [lindex $pins 0]
+    set old_nets [get_nets -quiet -of_objects $pin]
+    set_property DONT_TOUCH FALSE [get_nets -quiet -of_objects $pin]
+    set_property DONT_TOUCH FALSE [get_nets -quiet $source_net]
+    if {[llength $old_nets] == 1} {
+      disconnect_net -net [lindex $old_nets 0] -pinlist [list $pin]
+    }
+    connect_net -hier -net $source_net -objects [list $pin]
+  }
+
+  if {$k13_enable && $k13_gt_primitive_debug} {
+    # Replace the recorder's synthesizable zero taps with the real primitive
+    # outputs. This is diagnostic-only and does not change PHY control logic.
+     k13_connect_recorder_input {.*k13_qpll_event_recorder/qpll1lock$} \
+       [phy_primitive_pin_nets GTHE3_COMMON QPLL1LOCK 1]
+     k13_connect_recorder_input {.*k13_qpll_event_recorder/qpll1reset$} \
+       [phy_primitive_pin_nets GTHE3_COMMON QPLL1RESET 1]
+    puts "K13_QPLL_EVENT_RECORDER_CONNECT_PASS"
   }
 
   create_debug_core u_ila_pipe ila
@@ -781,6 +807,10 @@ if {$ila_debug} {
     set gt_primitive_probe_nets [concat {*}$gt_primitive_probe_nets]
     add_ila_probe u_ila_pipe 20 $gt_primitive_probe_nets
   }
+  if {$k13_enable} {
+    add_ila_probe u_ila_pipe 21 \
+      [debug_bus_nets {.*dbg_k13_qpll_event_record.*\[[0-9]+\]$} 136]
+  }
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]
@@ -799,7 +829,7 @@ if {$ila_debug} {
       [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
   }
 
-  puts "K11G4_ILA_INSERT_PASS pipe_width=478 core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=$ila_pipe_depth"
+  puts "K11G4_ILA_INSERT_PASS pipe_width=[expr {$k13_enable ? 614 : 478}] core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=$ila_pipe_depth"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]

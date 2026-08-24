@@ -143,6 +143,10 @@ $(if [[ "${ila_debug}" == "1" ]]; then
     # inputs observable; Vivado then reports the documented worst-case clock
     # derivation warnings for the variable TXOUTCLKSEL/BUFG_GT DIV pins.
     printf '%s\n' 'Timing 38-252' 'Timing 38-277'
+    # The synthesizable zero tap is intentionally disconnected from the
+    # recorder and replaced with the GT primitive net during ILA insertion.
+    # Vivado may report the now-unused MARK_DEBUG tap as optimized.
+    printf '%s\n' 'Opt 31-233'
   fi
 fi)
 Vivado 12-975

@@ -281,6 +281,7 @@ k11b2-lint:
 		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_ltssm_mac_gen1.sv \
 		rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \
+		rtl/phy/k13_qpll_event_recorder.sv \
 		rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
 		rtl/phy/pcie_k13_production_ctrl.sv \

@@ -108,6 +108,12 @@ module kcu105_pcie_ep_gen1_top #(
     wire [3:0] k13_rate_contract_state;
     wire       k13_rate_contract_busy, k13_rate_contract_done,
                k13_rate_contract_failed, k13_rate_contract_illegal;
+    // These taps are retargeted to the actual GTHE3_COMMON primitive pins by
+    // the implementation Tcl for K13 ILA builds.  They remain harmless zero
+    // nets in non-diagnostic builds.
+    (* mark_debug = "true", keep = "true" *) wire k13_qpll1lock_tap = 1'b0;
+    (* mark_debug = "true", keep = "true" *) wire k13_qpll1reset_tap = 1'b0;
+    (* mark_debug = "true", keep = "true" *) wire [135:0] dbg_k13_qpll_event_record;
     wire ltssm_recovery_speed_ready;
     // 协议层使用的"活动速率"——K13 时来自 contract active_rate，K11 时自环
     wire [1:0] active_phy_rate_int = (K13_ENABLE != 0) ? k13_active_rate
@@ -350,6 +356,16 @@ module kcu105_pcie_ep_gen1_top #(
         .rate_contract_illegal(k13_rate_contract_illegal)
     );
 
+    k13_qpll_event_recorder u_k13_qpll_event_recorder (
+        .clk          (phy_pclk),
+        .rst          (!pipe_rst_n || as_mac_in_detect),
+        .qpll1lock    (k13_qpll1lock_tap),
+        .qpll1reset   (k13_qpll1reset_tap),
+        .phy_rate     (k13_phy_rate_cmd),
+        .phy_phystatus(phy_phystatus),
+        .record_bus   (dbg_k13_qpll_event_record)
+    );
+
     // K13 启用时，wrapper.phy_rate 由 contract.phy_rate_cmd 拥有（=active_rate 稳态，
     // transition 时 = target）；K11 关闭时直接走 ltssm_phy_rate 自环。
     assign phy_rate = (K13_ENABLE != 0) ? k13_phy_rate_cmd : ltssm_phy_rate;
@@ -373,6 +389,7 @@ module kcu105_pcie_ep_gen1_top #(
                               ? k13_negotiated_speed : ltssm_negotiated_speed;
     end else begin : g_k13_disabled_top
         // K11 release旁路：关闭K13时不实例化控制器，也不保留mux逻辑。
+        assign dbg_k13_qpll_event_record = 136'd0;
         assign phy_rate = ltssm_phy_rate;
         assign phy_txelecidle = ltssm_phy_txelecidle;
         assign phy_txeq_ctrl = ltssm_phy_txeq_ctrl;
