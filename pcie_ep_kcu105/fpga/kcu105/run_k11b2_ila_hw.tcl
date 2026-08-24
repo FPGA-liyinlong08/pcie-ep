@@ -23,6 +23,8 @@ set k13_gt_rate_done_reset_release_pulse [expr {[info exists ::env(K13_GT_RATE_D
                                                 $::env(K13_GT_RATE_DONE_RESET_RELEASE_PULSE) eq "1"}]
 set k13_cdr_hold_recovery [expr {[info exists ::env(K13_CDR_HOLD_RECOVERY)] &&
                                   $::env(K13_CDR_HOLD_RECOVERY) eq "1"}]
+set k13_cdr_hold_force_low [expr {[info exists ::env(K13_CDR_HOLD_FORCE_LOW)] &&
+                                  $::env(K13_CDR_HOLD_FORCE_LOW) eq "1"}]
 set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RESET_FORWARD)] &&
                                           $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
 set k13_gt_primitive_debug [expr {[info exists ::env(K13_GT_PRIMITIVE_DEBUG)] &&
@@ -56,6 +58,7 @@ if {$k13_enable} {
   if {$k13_gt_rate_done_start_pulse} { set build_name "${build_name}_gt_rate_done_start" }
   if {$k13_gt_rate_done_reset_release_pulse} { set build_name "${build_name}_gt_rate_done_reset_release" }
   if {$k13_cdr_hold_recovery} { set build_name "${build_name}_cdr_hold" }
+  if {$k13_cdr_hold_force_low} { set build_name "${build_name}_cdr_hold_low" }
   if {$k13_gt_rate_qpll_reset_forward} { set build_name "${build_name}_gt_qpllreset" }
   if {$k13_gt_primitive_debug} { set build_name "${build_name}_gt_primitive" }
   if {$k13_gt_qpll_prereq_debug} { set build_name "${build_name}_qpll_prereq" }

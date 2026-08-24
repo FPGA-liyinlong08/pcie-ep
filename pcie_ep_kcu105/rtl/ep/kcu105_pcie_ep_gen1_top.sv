@@ -16,6 +16,7 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer K13_EQ_TIMEOUT_CYCLES    = 1_000_000,
     parameter integer K13_RXEQ_BOOTSTRAP       = 1,
     parameter integer K13_RXEQ_TWO_PASS        = 0,
+    parameter integer K13_CDR_HOLD_FORCE_LOW   = 0,
     // Optional board bring-up path: after the initial Gen1 L0 is stable,
     // initiate one Gen3 Recovery transaction without requiring privileged
     // Root-Port config writes.  Zero keeps directed simulation behavior.
@@ -453,6 +454,7 @@ module kcu105_pcie_ep_gen1_top #(
         .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
+        .K13_CDR_HOLD_FORCE_LOW(K13_CDR_HOLD_FORCE_LOW),
         // Keep the initial Polling/Configuration TS at the K11 Gen1 rate
         // advertisement.  The K13 retrain path raises the rate capability
         // in Recovery TS; advertising Gen2/Gen3 bits during first Gen1 link

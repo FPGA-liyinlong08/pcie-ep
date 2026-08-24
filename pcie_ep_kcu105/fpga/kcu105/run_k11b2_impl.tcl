@@ -16,6 +16,8 @@ set k13_gt_rate_done_reset_release_pulse [expr {[info exists ::env(K13_GT_RATE_D
                                                 $::env(K13_GT_RATE_DONE_RESET_RELEASE_PULSE) eq "1"}]
 set k13_cdr_hold_recovery [expr {[info exists ::env(K13_CDR_HOLD_RECOVERY)] &&
                                   $::env(K13_CDR_HOLD_RECOVERY) eq "1"}]
+set k13_cdr_hold_force_low [expr {[info exists ::env(K13_CDR_HOLD_FORCE_LOW)] &&
+                                  $::env(K13_CDR_HOLD_FORCE_LOW) eq "1"}]
 set k13_gt_rate_qpll_reset_forward [expr {[info exists ::env(K13_GT_RATE_QPLL_RESET_FORWARD)] &&
                                           $::env(K13_GT_RATE_QPLL_RESET_FORWARD) eq "1"}]
 set k13_gt_primitive_debug [expr {[info exists ::env(K13_GT_PRIMITIVE_DEBUG)] &&
@@ -119,6 +121,7 @@ if {$k13_enable} {
   if {$k13_gt_rate_done_start_pulse} { set build_variant "${build_variant}_gt_rate_done_start" }
   if {$k13_gt_rate_done_reset_release_pulse} { set build_variant "${build_variant}_gt_rate_done_reset_release" }
   if {$k13_cdr_hold_recovery} { set build_variant "${build_variant}_cdr_hold" }
+  if {$k13_cdr_hold_force_low} { set build_variant "${build_variant}_cdr_hold_low" }
   if {$k13_gt_rate_qpll_reset_forward} { set build_variant "${build_variant}_gt_qpllreset" }
   if {$k13_gt_primitive_debug} { set build_variant "${build_variant}_gt_primitive" }
   if {$k13_gt_qpll_prereq_debug} { set build_variant "${build_variant}_qpll_prereq" }
@@ -486,12 +489,14 @@ if {$ila_debug} {
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
       -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
-      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   } else {
     synth_design -top $top_name -part $part_name \
       -generic K11B2_ILA_DEBUG=1 -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
-      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   }
   write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
 } else {
@@ -502,12 +507,14 @@ if {$ila_debug} {
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_wait_remote_detect_cycles \
       -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
-      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   } else {
     synth_design -top $top_name -part $part_name \
       -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
-      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass
+      -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   }
 }
 }
@@ -932,6 +939,7 @@ puts $summary_file "K13_GT_RATE_DONE_TIE_HIGH=$k13_gt_rate_done_tie_high"
 puts $summary_file "K13_GT_RATE_DONE_START_PULSE=$k13_gt_rate_done_start_pulse"
 puts $summary_file "K13_GT_RATE_DONE_RESET_RELEASE_PULSE=$k13_gt_rate_done_reset_release_pulse"
 puts $summary_file "K13_CDR_HOLD_RECOVERY=$k13_cdr_hold_recovery"
+puts $summary_file "K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low"
 puts $summary_file "K13_GT_QPLL_PREREQ_DEBUG=$k13_gt_qpll_prereq_debug"
 puts $summary_file "K13_GT_RATE_QPLL_RESET_FORWARD=$k13_gt_rate_qpll_reset_forward"
 puts $summary_file "G7_RX_P0_QUIET=$g7_rx_p0_quiet"

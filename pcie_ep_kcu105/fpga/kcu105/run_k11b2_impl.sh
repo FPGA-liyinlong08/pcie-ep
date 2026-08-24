@@ -11,6 +11,7 @@ k13_gt_rate_done_tie_high="${K13_GT_RATE_DONE_TIE_HIGH:-0}"
 k13_gt_rate_done_start_pulse="${K13_GT_RATE_DONE_START_PULSE:-0}"
 k13_gt_rate_done_reset_release_pulse="${K13_GT_RATE_DONE_RESET_RELEASE_PULSE:-0}"
 k13_cdr_hold_recovery="${K13_CDR_HOLD_RECOVERY:-0}"
+k13_cdr_hold_force_low="${K13_CDR_HOLD_FORCE_LOW:-0}"
 k13_gt_rate_qpll_reset_forward="${K13_GT_RATE_QPLL_RESET_FORWARD:-0}"
 k13_gt_primitive_debug="${K13_GT_PRIMITIVE_DEBUG:-0}"
 k13_gt_qpll_prereq_debug="${K13_GT_QPLL_PREREQ_DEBUG:-0}"
@@ -76,6 +77,9 @@ if [[ "${k13_enable}" == "1" ]]; then
   fi
   if [[ "${k13_cdr_hold_recovery}" == "1" ]]; then
     build_variant+="_cdr_hold"
+  fi
+  if [[ "${k13_cdr_hold_force_low}" == "1" ]]; then
+    build_variant+="_cdr_hold_low"
   fi
   if [[ "${k13_gt_rate_qpll_reset_forward}" == "1" ]]; then
     build_variant+="_gt_qpllreset"

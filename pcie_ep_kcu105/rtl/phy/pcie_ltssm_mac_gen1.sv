@@ -17,7 +17,11 @@ module pcie_ltssm_mac_gen1 #(
     // 保持Detect assist，等待Root Port的RX activity。默认关闭。
     parameter integer G9_WAIT_REMOTE_DETECT = 0,
     // 默认按250 MHz PIPE时钟等待25 ms；上板若确认phy_pclk不同，可由构建参数覆盖。
-    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
+    // Diagnostic A/B only.  The production PHY-assist contract holds RX CDR
+    // during Recovery.Speed; this switch allows a bitstream to reproduce the
+    // K02 low-CDR timing without changing any rate-contract signals.
+    parameter integer K13_CDR_HOLD_FORCE_LOW = 0
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -652,7 +656,8 @@ module pcie_ltssm_mac_gen1 #(
     // changing rate in Recovery.Speed.  The current MAC does not yet
     // implement the L1/Loopback states, so Recovery.Speed is the only
     // applicable state in this integration.
-    assign as_cdr_hold_req    = (ltssm_state == RECOVERY_SPEED);
+    assign as_cdr_hold_req    = (K13_CDR_HOLD_FORCE_LOW == 0) &&
+                                (ltssm_state == RECOVERY_SPEED);
     assign link_up            = (ltssm_state == STATE_L0);
     assign negotiated_width   = ((ltssm_state >= STATE_L0 &&
                                   ltssm_state <= RECOVERY_IDLE) ||
