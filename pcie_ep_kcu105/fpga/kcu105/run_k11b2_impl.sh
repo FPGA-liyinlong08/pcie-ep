@@ -7,6 +7,9 @@ ila_debug="${K11B2_ILA_DEBUG:-0}"
 k13_enable="${K13_ENABLE:-0}"
 k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
 k13_rxeq_two_pass="${K13_RXEQ_TWO_PASS:-0}"
+k13_pre_rate_txeq_enable="${K13_PRE_RATE_TXEQ_ENABLE:-1}"
+k13_golden_rate_replay="${K13_GOLDEN_RATE_REPLAY:-0}"
+k13_minimal_diag="${K13_MINIMAL_DIAG:-0}"
 k13_gt_rate_done_tie_high="${K13_GT_RATE_DONE_TIE_HIGH:-0}"
 k13_gt_rate_done_start_pulse="${K13_GT_RATE_DONE_START_PULSE:-0}"
 k13_gt_rate_done_reset_release_pulse="${K13_GT_RATE_DONE_RESET_RELEASE_PULSE:-0}"
@@ -15,13 +18,20 @@ k13_cdr_hold_force_low="${K13_CDR_HOLD_FORCE_LOW:-0}"
 k13_gt_rate_qpll_reset_forward="${K13_GT_RATE_QPLL_RESET_FORWARD:-0}"
 k13_gt_primitive_debug="${K13_GT_PRIMITIVE_DEBUG:-0}"
 k13_gt_qpll_prereq_debug="${K13_GT_QPLL_PREREQ_DEBUG:-0}"
+if [[ "${k13_minimal_diag}" == "1" ]]; then
+  # The Tcl flow makes these probes implicit for the timing-clean artifact;
+  # mirror that here so the shell and Tcl build directories stay identical.
+  k13_gt_primitive_debug="1"
+  k13_gt_qpll_prereq_debug="1"
+fi
 k13_gt_rate_direct_source="0"
 if [[ "${k13_gt_rate_done_tie_high}" == "1" ||
       "${k13_gt_rate_done_start_pulse}" == "1" ||
       "${k13_gt_rate_done_reset_release_pulse}" == "1" ||
       "${k13_gt_rate_qpll_reset_forward}" == "1" ||
       "${k13_gt_primitive_debug}" == "1" ||
-      "${k13_gt_qpll_prereq_debug}" == "1" ]]; then
+      "${k13_gt_qpll_prereq_debug}" == "1" ||
+      "${k13_minimal_diag}" == "1" ]]; then
   k13_gt_rate_direct_source="1"
 fi
 build_variant="build_k11b2"
@@ -89,6 +99,15 @@ if [[ "${k13_enable}" == "1" ]]; then
   fi
   if [[ "${k13_gt_qpll_prereq_debug}" == "1" ]]; then
     build_variant+="_qpll_prereq"
+  fi
+  if [[ "${k13_pre_rate_txeq_enable}" == "0" ]]; then
+    build_variant+="_pre_rate_txeq_off"
+  fi
+  if [[ "${k13_golden_rate_replay}" == "1" ]]; then
+    build_variant+="_golden_replay"
+  fi
+  if [[ "${k13_minimal_diag}" == "1" ]]; then
+    build_variant+="_minimal_diag"
   fi
 fi
 build_dir="${script_dir}/${build_variant}/impl"

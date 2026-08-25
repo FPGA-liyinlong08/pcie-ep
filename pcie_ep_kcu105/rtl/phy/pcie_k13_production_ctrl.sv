@@ -15,6 +15,11 @@
 module pcie_k13_production_ctrl #(
     parameter integer K13_ENABLE = 0,
     parameter integer K13_RXEQ_BOOTSTRAP = 1,
+    // Diagnostic A/B: bypass the standalone-PHY pre-rate TXEQ transaction.
+    // Golden replay also bypasses it because replay owns the full command
+    // bundle during the physical rate-change window.
+    parameter integer K13_PRE_RATE_TXEQ_ENABLE = 1,
+    parameter integer K13_GOLDEN_RATE_REPLAY = 0,
     // RXEQ feedback compatibility: 0 keeps strict done+adapt_done behavior;
     // 1 clears and re-issues a done-only RXEQ request once.
     parameter integer K13_RXEQ_TWO_PASS = 0,
@@ -203,7 +208,9 @@ module pcie_k13_production_ctrl #(
                               (retrain_request_valid &&
                                (retrain_request_target == 2'b10));
     wire speed_boundary_ready = ltssm_speed_ready &&
-                                (!gen3_target_active ||
+                                ((K13_PRE_RATE_TXEQ_ENABLE == 0) ||
+                                 (K13_GOLDEN_RATE_REPLAY != 0) ||
+                                 !gen3_target_active ||
                                  pre_rate_txeq_ready);
     wire rxeq_bootstrap_ready = (K13_RXEQ_BOOTSTRAP == 0) ? 1'b1 :
                                  post_rate_rxeq_ready;
@@ -323,10 +330,16 @@ module pcie_k13_production_ctrl #(
                 pre_rate_txeq_active <= 1'b0;
                 pre_rate_txeq_ready <= 1'b0;
             end else begin
-                if ((speed_state_w == 3'd0) ||
+                if ((K13_PRE_RATE_TXEQ_ENABLE == 0) ||
+                    (K13_GOLDEN_RATE_REPLAY != 0) ||
+                    (speed_state_w == 3'd0) ||
                     (!gen3_target_active && !retrain_request_valid)) begin
                     pre_rate_txeq_active <= 1'b0;
-                    pre_rate_txeq_ready <= 1'b0;
+                    // A disabled transaction is already satisfied; do not
+                    // deadlock waiting for a TXEQ_DONE that was not issued.
+                    pre_rate_txeq_ready <=
+                        (K13_PRE_RATE_TXEQ_ENABLE == 0) ||
+                        (K13_GOLDEN_RATE_REPLAY != 0);
                 end else if ((speed_state_w == 3'd1) &&
                              ltssm_speed_ready &&
                              gen3_target_active &&

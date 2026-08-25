@@ -74,6 +74,8 @@ set rtl_files [list \
   [file join $project_dir rtl/phy/pcie_ltssm_mac_gen1.sv] \
   [file join $project_dir rtl/common/pcie_retrain_cdc_mailbox.sv] \
   [file join $project_dir rtl/phy/pcie_phy_rate_contract.sv] \
+  [file join $project_dir rtl/phy/k13_qpll_event_recorder.sv] \
+  [file join $project_dir rtl/phy/k13_golden_rate_replay.sv] \
   [file join $project_dir rtl/phy/pcie_recovery_speed_ctrl.sv] \
   [file join $project_dir rtl/phy/pcie_equalization_ctrl.sv] \
   [file join $project_dir rtl/phy/pcie_recovery_ts_guard.sv] \

@@ -1,0 +1,71 @@
+# K13 QPLL 重锁问题：2026-08-25 上板 A/B 记录
+
+## 问题定义
+
+K13 Root Port Gen1→Gen3 retrain 后，预期 sequence 为：
+
+```text
+PHY_RATE=2 → PCIERATEQPLLRESET → QPLL1RESET → QPLL1LOCK → PHYSTATUS
+```
+
+本记录使用同一套 compact ILA、GT primitive probe、16-bit event recorder、250 MHz
+采样时钟和 `phy_rate 0→2` 事务定义。Golden replay 固定为 `0`，未参与本轮测试。
+
+## Bitstream
+
+用户明确允许使用 WNS 为负的诊断 bitstream；这些 bitstream 仅用于本轮 KCU105
+诊断，不作为生产时序签核结果。
+
+| 版本 | 配置 | WNS / hold | SHA256 |
+|---|---|---:|---|
+| baseline | `K13_PRE_RATE_TXEQ_ENABLE=1` | `-0.246 / +0.004 ns` | `d470aa29f229b47201e35a04867ed1cffaf5d2271499f880bdb060be53433d5e` |
+| TXEQ-off | `K13_PRE_RATE_TXEQ_ENABLE=0` | `-0.276 / +0.004 ns` | `39423c9b51c5ca00138542e586a4961698a30010210c75b0190647c28424a7e6` |
+
+## 硬件环境与操作
+
+- 板卡：KCU105，器件 `xcku040`。
+- Root Port：远端 `192.168.11.126`，通过 `remote_pcie_host.sh retrain-gen3` 发起
+  Gen3 retrain。
+- 为清除此前失败事务状态，baseline 首次有效捕获前重启了一次远端 Root Port 主机。
+- 每个版本重复两次；每次均为同一 Vivado 会话内 `program → arm → retrain → upload`。
+- 不使用 Golden replay，不修改 QPLL 配置、`QPLL1LOCKDETCLK`、RXEQ、TS、EQ、LOCK
+  或 `PCIEUSERRATEDONE`。
+
+## Baseline 结果
+
+两次均成功触发 QPLL reset ILA：
+
+- [capture 1 CSV](../../fpga/kcu105/build_k13_gen3_ila_gt_primitive_qpll_prereq_minimal_diag/capture/20260825_140209_u_ila_pipe.csv)
+- [capture 2 CSV](../../fpga/kcu105/build_k13_gen3_ila_gt_primitive_qpll_prereq_minimal_diag/capture/20260825_140729_u_ila_pipe.csv)
+
+两个 event recorder 结果一致：
+
+| 事件 | 相对 `phy_rate 0→2` |
+|---|---:|
+| QPLL1RESET rise | `+9` cycles |
+| QPLL1RESET fall | `+14` cycles |
+| QPLL1LOCK fall | `+9` cycles |
+| QPLL1LOCK rise | valid，时间戳达到 `0xffff` |
+| 最终 QPLL1LOCK | `1` |
+| 最终 PHYSTATUS | `0` |
+
+`0xffff` 是 16-bit recorder 在 250 MHz 下约 262 µs 的饱和值。因此 baseline
+不是“QPLL 始终不锁”，而是 QPLL 晚重锁，且在记录窗口内没有完成 PHYSTATUS/Gen3
+completion 传播。
+
+## TXEQ-off 结果
+
+两次均完成 bitstream 下载并 arm；远端 Root Port 两次均回到 Gen1，目标速率保持
+8 GT/s，但 ILA 在等待窗口内都没有触发 `PCIERATEQPLLRESET`。TXEQ-off 没有产生
+与 baseline 相同的可捕获 QPLL reset 事务，因此不能归因于“TXEQ-off 使 QPLL 更快
+重锁”。本轮没有生成 TXEQ-off capture CSV，避免把空 buffer 当作硬件证据。
+
+## 当前结论与后续
+
+1. 原先的“baseline QPLL 持续不锁”需要修正为“本次 baseline 约 262 µs 后重锁，
+   但 PHYSTATUS 未出现”。
+2. TXEQ-off A/B 未进入相同的 rate/QPLL reset 事务；它改变了 rate contract 的
+   前置路径，值得作为下一轮 command ownership/时序差分的入口，但还不能直接
+   作为生产修复。
+3. 下一轮优先做 K02/K13 的精确 PHY command ownership 与输入序列差分；Golden
+   replay 仍保持关闭。

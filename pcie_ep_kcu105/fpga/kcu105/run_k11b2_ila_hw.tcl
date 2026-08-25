@@ -15,6 +15,12 @@ set k13_enable [expr {[info exists ::env(K13_ENABLE)] &&
                        $::env(K13_ENABLE) eq "1"}]
 set k13_rxeq_bootstrap [expr {![info exists ::env(K13_RXEQ_BOOTSTRAP)] ||
                               $::env(K13_RXEQ_BOOTSTRAP) ne "0"}]
+set k13_pre_rate_txeq_enable [expr {![info exists ::env(K13_PRE_RATE_TXEQ_ENABLE)] ||
+                                     $::env(K13_PRE_RATE_TXEQ_ENABLE) ne "0"}]
+set k13_golden_rate_replay [expr {[info exists ::env(K13_GOLDEN_RATE_REPLAY)] &&
+                                  $::env(K13_GOLDEN_RATE_REPLAY) eq "1"}]
+set k13_minimal_diag [expr {[info exists ::env(K13_MINIMAL_DIAG)] &&
+                            $::env(K13_MINIMAL_DIAG) eq "1"}]
 set k13_gt_rate_done_tie_high [expr {[info exists ::env(K13_GT_RATE_DONE_TIE_HIGH)] &&
                                      $::env(K13_GT_RATE_DONE_TIE_HIGH) eq "1"}]
 set k13_gt_rate_done_start_pulse [expr {[info exists ::env(K13_GT_RATE_DONE_START_PULSE)] &&
@@ -31,6 +37,10 @@ set k13_gt_primitive_debug [expr {[info exists ::env(K13_GT_PRIMITIVE_DEBUG)] &&
                                   $::env(K13_GT_PRIMITIVE_DEBUG) eq "1"}]
 set k13_gt_qpll_prereq_debug [expr {[info exists ::env(K13_GT_QPLL_PREREQ_DEBUG)] &&
                                     $::env(K13_GT_QPLL_PREREQ_DEBUG) eq "1"}]
+if {$k13_minimal_diag} {
+  set k13_gt_primitive_debug 1
+  set k13_gt_qpll_prereq_debug 1
+}
 if {$g10_cfg_complete && !$g9_wait_remote_detect} {
   error "G10 CFG_COMPLETE诊断必须保留G9 WAIT_REMOTE_DETECT基线"
 }
@@ -62,18 +72,29 @@ if {$k13_enable} {
   if {$k13_gt_rate_qpll_reset_forward} { set build_name "${build_name}_gt_qpllreset" }
   if {$k13_gt_primitive_debug} { set build_name "${build_name}_gt_primitive" }
   if {$k13_gt_qpll_prereq_debug} { set build_name "${build_name}_qpll_prereq" }
+  if {!$k13_pre_rate_txeq_enable} { set build_name "${build_name}_pre_rate_txeq_off" }
+  if {$k13_golden_rate_replay} { set build_name "${build_name}_golden_replay" }
+  if {$k13_minimal_diag} { set build_name "${build_name}_minimal_diag" }
 }
 set impl_dir    [file join $script_dir $build_name impl]
 set capture_dir [file join $script_dir $build_name capture]
 set bit_name    [expr {$k13_enable ? "k13_gen3_endpoint_ila.bit" : "k11b2_gen1_endpoint_ila.bit"}]
 set bit_path    [file join $impl_dir $bit_name]
 set ltx_path    [file join $impl_dir k11b2_gen1_endpoint_ila.ltx]
+if {[info exists ::env(K13_BIT_PATH_OVERRIDE)] &&
+    $::env(K13_BIT_PATH_OVERRIDE) ne ""} {
+  set bit_path [file normalize $::env(K13_BIT_PATH_OVERRIDE)]
+}
+if {[info exists ::env(K13_LTX_PATH_OVERRIDE)] &&
+    $::env(K13_LTX_PATH_OVERRIDE) ne ""} {
+  set ltx_path [file normalize $::env(K13_LTX_PATH_OVERRIDE)]
+}
 
 set server_url localhost:3122
 set action status
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
-if {$action ni {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset capture-k13-qpll-reset-wait program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
+if {$action ni {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset program-arm-k13-qpll-reset-live capture-k13-qpll-reset-wait program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now status upload}} {
   error "K11-B3 ILA action非法：$action"
 }
 if {![file exists $bit_path]} { error "K11-B3 ILA bitstream不存在：$bit_path" }
@@ -91,7 +112,7 @@ set ku040 [lindex $ku040_devices 0]
 set_property PROBES.FILE $ltx_path $ku040
 set_property FULL_PROBES.FILE $ltx_path $ku040
 
-if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-g9-rxidle-wait capture-g9-timeout-wait}} {
+if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset program-arm-k13-qpll-reset-live program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-g9-rxidle-wait capture-g9-timeout-wait}} {
   set_property PROGRAM.FILE $bit_path $ku040
   program_hw_devices $ku040
 }
@@ -111,7 +132,7 @@ foreach ila $ilas {
   }
 }
 
-if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset capture-k13-qpll-reset-wait program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
+if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery program-arm-k13-eq program-arm-k13-phystatus arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset program-arm-k13-qpll-reset-live capture-k13-qpll-reset-wait program-arm-rxidle-conflict program-arm-cfg-complete program-arm-cfg-lanenum-accept program-arm-detect-active arm-detect-active arm-rx-tlp program-arm-perst program-arm-perst-release program-arm-phy-reset-release program-arm-g9-rxidle program-arm-g9-timeout capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
   foreach ila $ilas {
     set cell_name [get_property CELL_NAME $ila]
     if {$action eq "program-arm-perst" && $cell_name eq "u_ila_pipe"} {
@@ -131,9 +152,11 @@ if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery progra
     } elseif {$action in {program-arm-k13-eq capture-k13-eq-wait} && $cell_name eq "u_ila_pipe"} {
       # dbg_pipe_top[56] = K13 EQ active；定位Phase 0～3真实PHY握手。
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*dbg_pipe_top*"}]
-    } elseif {$action in {program-arm-k13-qpll-reset capture-k13-qpll-reset-wait} && $cell_name eq "u_ila_pipe"} {
-      # PCIERATEQPLLRESET只在动态切速时出现，避免被上电/PHY初始
-      # QPLL reset误触发；probe20仍同时采集实际QPLL1RESET/QPLL1LOCK。
+    } elseif {$action in {program-arm-k13-qpll-reset program-arm-k13-qpll-reset-live capture-k13-qpll-reset-wait} && $cell_name eq "u_ila_pipe"} {
+      # PCIERATEQPLLRESET is a two-bit QPLL command bus.  The generated
+      # KCU105 path maps the active QPLL1 reset to bit 0 (the routed timing
+      # path is PCIERATEQPLLRESET[0]); probe20/recorder still capture the
+      # actual QPLL1RESET/QPLL1LOCK edges.
       set trigger_probes [get_hw_probes -of_objects $ila -filter {NAME =~ "*pcierateqpllreset_out*"}]
     } elseif {$action in {program-arm-k13-phystatus arm-k13-phystatus} && $cell_name eq "u_ila_pipe"} {
       # dbg_k13_top[63:61]=RATE_WAIT(3)且[15]=PhyStatus；排除烧录后的初始化PhyStatus。
@@ -182,8 +205,8 @@ if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery progra
       set eq_pattern [string repeat x 64]
       set eq_pattern [string replace $eq_pattern [expr {63 - 56}] [expr {63 - 56}] 1]
       set_property TRIGGER_COMPARE_VALUE "eq64'b$eq_pattern" [lindex $trigger_probes 0]
-    } elseif {$action in {program-arm-k13-qpll-reset capture-k13-qpll-reset-wait} && $cell_name eq "u_ila_pipe"} {
-      set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
+    } elseif {$action in {program-arm-k13-qpll-reset program-arm-k13-qpll-reset-live capture-k13-qpll-reset-wait} && $cell_name eq "u_ila_pipe"} {
+      set_property TRIGGER_COMPARE_VALUE eq2'b01 [lindex $trigger_probes 0]
     } elseif {$action in {program-arm-k13-phystatus arm-k13-phystatus} && $cell_name eq "u_ila_pipe"} {
       set phystatus_pattern [string repeat x 64]
       set phystatus_pattern [string replace $phystatus_pattern [expr {63 - 15}] [expr {63 - 15}] 1]
@@ -241,17 +264,17 @@ if {$action in {program-arm program-arm-linkdown program-arm-k13-recovery progra
     } else {
       set_property TRIGGER_COMPARE_VALUE eq1'b1 [lindex $trigger_probes 0]
     }
-    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-k13-recovery capture-k13-recovery-wait program-arm-k13-eq capture-k13-eq-wait program-arm-k13-phystatus arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset capture-k13-qpll-reset-wait} ? 512 : ($action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : ($action eq "program-arm-cfg-lanenum-accept" ? 256 : 1024))}] $ila
+    set_property CONTROL.TRIGGER_POSITION [expr {$action in {program-arm-k13-recovery capture-k13-recovery-wait program-arm-k13-eq capture-k13-eq-wait program-arm-k13-phystatus arm-k13-phystatus program-arm-k13-fallback program-arm-k13-qpll-reset program-arm-k13-qpll-reset-live capture-k13-qpll-reset-wait} ? 512 : ($action in {program-arm-linkdown capture-linkdown-wait program-arm-rxidle-conflict capture-rxidle-conflict-wait program-arm-cfg-complete capture-cfg-complete-wait program-arm-detect-active arm-detect-active} ? 3072 : ($action eq "program-arm-cfg-lanenum-accept" ? 256 : 1024))}] $ila
     # The wait actions are complete capture transactions: arm the ILA here
     # before wait_on_hw_ila, otherwise Vivado uploads the previous buffer.
     run_hw_ila $ila
     puts "K11B3_ILA_ARMED cell=[get_property CELL_NAME $ila] trigger=[get_property NAME [lindex $trigger_probes 0]]"
   }
   puts "K11B3_ILA_PROGRAM_ARM_PASS bitstream=$bit_path mode=$action"
-    if {$action in {capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-k13-qpll-reset-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
+    if {$action in {capture-wait capture-cfg-wait capture-cfg-complete-wait capture-tx-wait capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait program-arm-k13-qpll-reset-live capture-k13-qpll-reset-wait capture-rxidle-conflict-wait capture-g9-rxidle-wait capture-g9-timeout-wait capture-now}} {
     set timeout_minutes [expr {$action eq "capture-now" ? 1 :
                               ($action eq "capture-wait" ? 2 :
-                              ($action in {capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait capture-k13-qpll-reset-wait capture-rxidle-conflict-wait capture-cfg-complete-wait capture-g9-rxidle-wait capture-g9-timeout-wait} ? 5 : 3))}]
+                              ($action in {capture-linkdown-wait capture-k13-recovery-wait capture-k13-eq-wait program-arm-k13-qpll-reset-live capture-k13-qpll-reset-wait capture-rxidle-conflict-wait capture-cfg-complete-wait capture-g9-rxidle-wait capture-g9-timeout-wait} ? 5 : 3))}]
     puts "K11B3_ILA_WAITING timeout_minutes=$timeout_minutes mode=$action"
     wait_on_hw_ila -timeout $timeout_minutes $ilas
     puts "K11B3_ILA_TRIGGERED"

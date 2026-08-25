@@ -28,6 +28,9 @@ module k13_qpll_event_recorder (
     logic [15:0] phystatus_rise_ts;
     logic [15:0] cdr_hold_rise_ts;
     logic [15:0] cdr_hold_fall_ts;
+    // valid[9:0] are sticky event-valid bits.  The three high bits are kept
+    // as live end-state samples so a late ILA read still proves the final
+    // QPLL/PhyStatus levels after the event window has elapsed.
     logic [15:0] valid;
 
     wire rate_start = !active && (phy_rate == 2'b10) && (rate_d != 2'b10);
@@ -72,6 +75,9 @@ module k13_qpll_event_recorder (
                 cdr_hold_fall_ts   <= 16'd0;
                 valid         <= 16'd0;
                 valid[0]      <= 1'b1;
+                valid[13]     <= qpll1lock;
+                valid[14]     <= qpll1reset;
+                valid[15]     <= phy_phystatus;
                 if (!qpll1lock) begin
                     valid[4]          <= 1'b1;
                     qpll_lock_fall_ts <= 16'd0;
@@ -85,6 +91,9 @@ module k13_qpll_event_recorder (
                     cdr_hold_rise_ts  <= 16'd0;
                 end
             end else if (active) begin
+                valid[13] <= qpll1lock;
+                valid[14] <= qpll1reset;
+                valid[15] <= phy_phystatus;
                 if (!valid[1] && !reset_d && qpll1reset) begin
                     valid[1]           <= 1'b1;
                     qpll_reset_rise_ts <= elapsed;
@@ -126,7 +135,8 @@ module k13_qpll_event_recorder (
     // [175:160] elapsed, [159:144] rate start, [143:128] QPLL reset rise,
     // [127:112] reset fall, [111:96] lock fall, [95:80] lock rise,
     // [79:64] reloss, [63:48] PhyStatus rise, [47:32] CDR hold rise,
-    // [31:16] CDR hold fall, [15:0] valid flags.
+    // [31:16] CDR hold fall, [12:10] reserved, [9:0] sticky event-valid,
+    // [13] final QPLL1LOCK, [14] final QPLL1RESET, [15] final PhyStatus.
     assign record_bus = {elapsed, rate_start_ts, qpll_reset_rise_ts,
                          qpll_reset_fall_ts, qpll_lock_fall_ts,
                          qpll_lock_rise_ts, qpll_reloss_ts,

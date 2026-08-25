@@ -16,6 +16,8 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer K13_EQ_TIMEOUT_CYCLES    = 1_000_000,
     parameter integer K13_RXEQ_BOOTSTRAP       = 1,
     parameter integer K13_RXEQ_TWO_PASS        = 0,
+    parameter integer K13_PRE_RATE_TXEQ_ENABLE = 1,
+    parameter integer K13_GOLDEN_RATE_REPLAY   = 0,
     parameter integer K13_CDR_HOLD_FORCE_LOW   = 0,
     // Optional board bring-up path: after the initial Gen1 L0 is stable,
     // initiate one Gen3 Recovery transaction without requiring privileged
@@ -58,9 +60,11 @@ module kcu105_pcie_ep_gen1_top #(
     wire phy_cdr_loss_observed = &phy_cdr_loss_count;
 
     wire phy_txdata_valid, phy_txstart_block, phy_txdetectrx;
+    wire ltssm_phy_txdetectrx;
     wire [1:0] phy_txsync_header;
     wire phy_txelecidle, phy_txcompliance, phy_rxpolarity;
     wire [1:0] phy_powerdown, phy_rate;
+    wire [1:0] ltssm_phy_powerdown;
     wire [1:0] ltssm_phy_rate;
     wire ltssm_phy_txelecidle;
     wire [2:0] phy_txmargin;
@@ -72,6 +76,7 @@ module kcu105_pcie_ep_gen1_top #(
     wire [3:0] ltssm_phy_txeq_preset, ltssm_phy_rxeq_txpreset;
     wire [5:0] ltssm_phy_txeq_coeff;
     wire as_mac_in_detect, as_cdr_hold_req;
+    wire ltssm_as_mac_in_detect, ltssm_as_cdr_hold_req;
 
     wire mac_rx_valid, mac_rx_sop, mac_rx_eop, mac_rx_is_dllp;
     wire [15:0] mac_rx_data;
@@ -108,6 +113,13 @@ module kcu105_pcie_ep_gen1_top #(
     wire [3:0] k13_rate_contract_state;
     wire       k13_rate_contract_busy, k13_rate_contract_done,
                k13_rate_contract_failed, k13_rate_contract_illegal;
+    wire       k13_golden_replay_active, k13_golden_replay_done;
+    wire [1:0] k13_replay_phy_rate, k13_replay_phy_powerdown;
+    wire       k13_replay_phy_txelecidle, k13_replay_phy_txdetectrx;
+    wire [1:0] k13_replay_txeq_ctrl, k13_replay_rxeq_ctrl;
+    wire [3:0] k13_replay_txeq_preset, k13_replay_rxeq_txpreset;
+    wire [5:0] k13_replay_txeq_coeff;
+    wire       k13_replay_as_mac_in_detect, k13_replay_as_cdr_hold_req;
     // These taps are retargeted to the actual GTHE3_COMMON primitive pins by
     // the implementation Tcl for K13 ILA builds.  They remain harmless zero
     // nets in non-diagnostic builds.
@@ -229,6 +241,22 @@ module kcu105_pcie_ep_gen1_top #(
             phy_rxelecidle, phy_phystatus, phy_rxstatus,
             ltssm_state, 1'b0, k13_rate_contract_state, as_cdr_hold_req
         };
+        // Compact command-bundle probe used by the timing-clean diagnostic
+        // build.  Unlike dbg_k13_top, this explicitly captures the commands
+        // that are otherwise split between LTSSM and K13 production control.
+        (* mark_debug = "true", keep = "true" *)
+        wire [63:0] dbg_k13_command_bundle = {
+            14'd0,
+            phy_rate, phy_powerdown, phy_txelecidle, phy_txdetectrx,
+            phy_txeq_ctrl, phy_txeq_preset, phy_txeq_coeff, phy_txeq_done,
+            phy_rxeq_ctrl, phy_rxeq_txpreset,
+            as_mac_in_detect, as_cdr_hold_req,
+            k13_rate_contract_state, k13_speed_state,
+            k13_recovery_active, k13_rate_contract_busy,
+            k13_golden_replay_active, k13_golden_replay_done,
+            phy_phystatus, phy_phystatus_rst, ltssm_state,
+            k13_requested_rate, k13_active_rate
+        };
     end endgenerate
 
     generate if (K13_ENABLE != 0) begin : g_k13_enabled_top
@@ -306,7 +334,9 @@ module kcu105_pcie_ep_gen1_top #(
         .SPEED_TIMEOUT_CYCLES(K13_SPEED_TIMEOUT_CYCLES),
         .EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES),
         .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
-        .K13_RXEQ_TWO_PASS(K13_RXEQ_TWO_PASS)
+        .K13_RXEQ_TWO_PASS(K13_RXEQ_TWO_PASS),
+        .K13_PRE_RATE_TXEQ_ENABLE(K13_PRE_RATE_TXEQ_ENABLE),
+        .K13_GOLDEN_RATE_REPLAY(K13_GOLDEN_RATE_REPLAY)
     ) u_k13_production_ctrl (
         .core_clk(phy_coreclk), .core_rst_n(core_rst_n),
         .phy_clk(phy_pclk), .phy_rst_n(pipe_rst_n),
@@ -356,12 +386,44 @@ module kcu105_pcie_ep_gen1_top #(
         .rate_contract_illegal(k13_rate_contract_illegal)
     );
 
+    // Diagnostic-only K02 Golden command replay.  The trigger is the K13
+    // semantic Recovery.Speed quiesce state, before the production contract
+    // changes PHY_RATE.  Replay takes one owner of the complete PHY command
+    // bundle below; it never modifies GT-generated control signals.
+    k13_golden_rate_replay #(
+        .RELEASE_GAP_CYCLES(2500)
+    ) u_k13_golden_rate_replay (
+        .clk              (phy_pclk),
+        .rst_n            (pipe_rst_n),
+        .reinitialize_gen1(ltssm_as_mac_in_detect),
+        .start            ((K13_GOLDEN_RATE_REPLAY != 0) &&
+                           (k13_speed_state == 3'd1) &&
+                           (k13_requested_rate == 2'b10)),
+        .phy_phystatus    (phy_phystatus),
+        .active           (k13_golden_replay_active),
+        .done             (k13_golden_replay_done),
+        .phy_rate         (k13_replay_phy_rate),
+        .phy_powerdown    (k13_replay_phy_powerdown),
+        .phy_txelecidle   (k13_replay_phy_txelecidle),
+        .phy_txdetectrx   (k13_replay_phy_txdetectrx),
+        .phy_txeq_ctrl    (k13_replay_txeq_ctrl),
+        .phy_txeq_preset  (k13_replay_txeq_preset),
+        .phy_txeq_coeff   (k13_replay_txeq_coeff),
+        .phy_rxeq_ctrl    (k13_replay_rxeq_ctrl),
+        .phy_rxeq_txpreset(k13_replay_rxeq_txpreset),
+        .as_mac_in_detect (k13_replay_as_mac_in_detect),
+        .as_cdr_hold_req  (k13_replay_as_cdr_hold_req)
+    );
+
     k13_qpll_event_recorder u_k13_qpll_event_recorder (
         .clk          (phy_pclk),
-        .rst          (!pipe_rst_n || as_mac_in_detect),
+        // The recorder owns its transaction boundary at phy_rate 0->2.
+        // Do not clear it on the LTSSM detect indication; that would erase
+        // the very retrain evidence that must be read back 200-250 us later.
+        .rst          (!pipe_rst_n),
         .qpll1lock    (k13_qpll1lock_tap),
         .qpll1reset   (k13_qpll1reset_tap),
-        .phy_rate     (k13_phy_rate_cmd),
+        .phy_rate     (phy_rate),
         .phy_phystatus(phy_phystatus),
         .cdr_hold     (as_cdr_hold_req),
         .record_bus   (dbg_k13_qpll_event_record)
@@ -369,20 +431,42 @@ module kcu105_pcie_ep_gen1_top #(
 
     // K13 启用时，wrapper.phy_rate 由 contract.phy_rate_cmd 拥有（=active_rate 稳态，
     // transition 时 = target）；K11 关闭时直接走 ltssm_phy_rate 自环。
-    assign phy_rate = (K13_ENABLE != 0) ? k13_phy_rate_cmd : ltssm_phy_rate;
-    assign phy_txelecidle = (K13_ENABLE != 0)
-                             ? (ltssm_phy_txelecidle | k13_phy_txelecidle)
-                             : ltssm_phy_txelecidle;
-    assign phy_txeq_ctrl = (K13_ENABLE != 0) && k13_recovery_active
-                           ? k13_phy_txeq_ctrl : ltssm_phy_txeq_ctrl;
-    assign phy_txeq_preset = (K13_ENABLE != 0) && k13_recovery_active
-                             ? k13_phy_txeq_preset : ltssm_phy_txeq_preset;
-    assign phy_txeq_coeff = (K13_ENABLE != 0) && k13_recovery_active
-                            ? k13_phy_txeq_coeff : ltssm_phy_txeq_coeff;
-    assign phy_rxeq_ctrl = (K13_ENABLE != 0) && k13_recovery_active
-                           ? k13_phy_rxeq_ctrl : ltssm_phy_rxeq_ctrl;
-    assign phy_rxeq_txpreset = (K13_ENABLE != 0) && k13_recovery_active
-                               ? k13_phy_rxeq_txpreset : ltssm_phy_rxeq_txpreset;
+    assign phy_rate = k13_golden_replay_active ? k13_replay_phy_rate :
+                      ((K13_ENABLE != 0) ? k13_phy_rate_cmd : ltssm_phy_rate);
+    assign phy_txelecidle = k13_golden_replay_active ?
+                            k13_replay_phy_txelecidle :
+                            ((K13_ENABLE != 0) ?
+                             (ltssm_phy_txelecidle | k13_phy_txelecidle) :
+                             ltssm_phy_txelecidle);
+    assign phy_txeq_ctrl = k13_golden_replay_active ? k13_replay_txeq_ctrl :
+                           ((K13_ENABLE != 0) && k13_recovery_active
+                            ? k13_phy_txeq_ctrl : ltssm_phy_txeq_ctrl);
+    assign phy_txeq_preset = k13_golden_replay_active ?
+                             k13_replay_txeq_preset :
+                             ((K13_ENABLE != 0) && k13_recovery_active
+                              ? k13_phy_txeq_preset : ltssm_phy_txeq_preset);
+    assign phy_txeq_coeff = k13_golden_replay_active ?
+                            k13_replay_txeq_coeff :
+                            ((K13_ENABLE != 0) && k13_recovery_active
+                             ? k13_phy_txeq_coeff : ltssm_phy_txeq_coeff);
+    assign phy_rxeq_ctrl = k13_golden_replay_active ? k13_replay_rxeq_ctrl :
+                           ((K13_ENABLE != 0) && k13_recovery_active
+                            ? k13_phy_rxeq_ctrl : ltssm_phy_rxeq_ctrl);
+    assign phy_rxeq_txpreset = k13_golden_replay_active ?
+                               k13_replay_rxeq_txpreset :
+                               ((K13_ENABLE != 0) && k13_recovery_active
+                                ? k13_phy_rxeq_txpreset :
+                                ltssm_phy_rxeq_txpreset);
+    assign phy_powerdown = k13_golden_replay_active ?
+                           k13_replay_phy_powerdown : ltssm_phy_powerdown;
+    assign phy_txdetectrx = k13_golden_replay_active ?
+                            k13_replay_phy_txdetectrx : ltssm_phy_txdetectrx;
+    assign as_mac_in_detect = k13_golden_replay_active ?
+                              k13_replay_as_mac_in_detect :
+                              ltssm_as_mac_in_detect;
+    assign as_cdr_hold_req = k13_golden_replay_active ?
+                             k13_replay_as_cdr_hold_req :
+                             ltssm_as_cdr_hold_req;
     assign mac_tx_valid = mac_tx_valid_core &&
                           !((K13_ENABLE != 0) && k13_traffic_quiesce);
     assign negotiated_speed = (K13_ENABLE != 0) &&
@@ -392,12 +476,18 @@ module kcu105_pcie_ep_gen1_top #(
         // K11 release旁路：关闭K13时不实例化控制器，也不保留mux逻辑。
         assign dbg_k13_qpll_event_record = 176'd0;
         assign phy_rate = ltssm_phy_rate;
+        assign phy_powerdown = ltssm_phy_powerdown;
+        assign phy_txdetectrx = ltssm_phy_txdetectrx;
         assign phy_txelecidle = ltssm_phy_txelecidle;
         assign phy_txeq_ctrl = ltssm_phy_txeq_ctrl;
         assign phy_txeq_preset = ltssm_phy_txeq_preset;
         assign phy_txeq_coeff = ltssm_phy_txeq_coeff;
         assign phy_rxeq_ctrl = ltssm_phy_rxeq_ctrl;
         assign phy_rxeq_txpreset = ltssm_phy_rxeq_txpreset;
+        assign as_mac_in_detect = ltssm_as_mac_in_detect;
+        assign as_cdr_hold_req = ltssm_as_cdr_hold_req;
+        assign k13_golden_replay_active = 1'b0;
+        assign k13_golden_replay_done = 1'b0;
         assign mac_tx_valid = mac_tx_valid_core;
         assign negotiated_speed = ltssm_negotiated_speed;
         assign k13_phy_txelecidle = 1'b0;
@@ -495,14 +585,15 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_txdata(phy_txdata),
         .phy_txdatak(phy_txdatak), .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block), .phy_txsync_header(phy_txsync_header),
-        .phy_txdetectrx(phy_txdetectrx), .phy_txelecidle(ltssm_phy_txelecidle),
+        .phy_txdetectrx(ltssm_phy_txdetectrx), .phy_txelecidle(ltssm_phy_txelecidle),
         .phy_txcompliance(phy_txcompliance), .phy_rxpolarity(phy_rxpolarity),
-        .phy_powerdown(phy_powerdown), .phy_rate(ltssm_phy_rate),
+        .phy_powerdown(ltssm_phy_powerdown), .phy_rate(ltssm_phy_rate),
         .phy_txmargin(phy_txmargin), .phy_txswing(phy_txswing),
         .phy_txdeemph(phy_txdeemph), .phy_txeq_ctrl(ltssm_phy_txeq_ctrl),
         .phy_txeq_preset(ltssm_phy_txeq_preset), .phy_txeq_coeff(ltssm_phy_txeq_coeff),
         .phy_rxeq_ctrl(ltssm_phy_rxeq_ctrl), .phy_rxeq_txpreset(ltssm_phy_rxeq_txpreset),
-        .as_mac_in_detect(as_mac_in_detect), .as_cdr_hold_req(as_cdr_hold_req),
+        .as_mac_in_detect(ltssm_as_mac_in_detect),
+        .as_cdr_hold_req(ltssm_as_cdr_hold_req),
         .tx_pkt_valid(mac_tx_valid), .tx_pkt_ready(mac_tx_ready),
         .tx_pkt_data(mac_tx_data), .tx_pkt_keep(mac_tx_keep),
         .tx_pkt_sop(mac_tx_sop), .tx_pkt_eop(mac_tx_eop),

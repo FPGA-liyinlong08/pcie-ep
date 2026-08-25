@@ -8,6 +8,12 @@ set k13_rxeq_bootstrap [expr {![info exists ::env(K13_RXEQ_BOOTSTRAP)] ||
                               $::env(K13_RXEQ_BOOTSTRAP) ne "0"}]
 set k13_rxeq_two_pass [expr {[info exists ::env(K13_RXEQ_TWO_PASS)] &&
                              $::env(K13_RXEQ_TWO_PASS) eq "1"}]
+set k13_pre_rate_txeq_enable [expr {![info exists ::env(K13_PRE_RATE_TXEQ_ENABLE)] ||
+                                     $::env(K13_PRE_RATE_TXEQ_ENABLE) ne "0"}]
+set k13_golden_rate_replay [expr {[info exists ::env(K13_GOLDEN_RATE_REPLAY)] &&
+                                  $::env(K13_GOLDEN_RATE_REPLAY) eq "1"}]
+set k13_minimal_diag [expr {[info exists ::env(K13_MINIMAL_DIAG)] &&
+                            $::env(K13_MINIMAL_DIAG) eq "1"}]
 set k13_gt_rate_done_tie_high [expr {[info exists ::env(K13_GT_RATE_DONE_TIE_HIGH)] &&
                                      $::env(K13_GT_RATE_DONE_TIE_HIGH) eq "1"}]
 set k13_gt_rate_done_start_pulse [expr {[info exists ::env(K13_GT_RATE_DONE_START_PULSE)] &&
@@ -29,7 +35,8 @@ set k13_gt_rate_direct_source [expr {$k13_gt_rate_done_tie_high ||
                                      $k13_gt_rate_done_reset_release_pulse ||
                                      $k13_gt_rate_qpll_reset_forward ||
                                      $k13_gt_primitive_debug ||
-                                     $k13_gt_qpll_prereq_debug}]
+                                     $k13_gt_qpll_prereq_debug ||
+                                     $k13_minimal_diag}]
 set ila_pipe_only [expr {$ila_debug && [info exists ::env(K11B2_ILA_PIPE_ONLY)] &&
                          $::env(K11B2_ILA_PIPE_ONLY) eq "1"}]
 set g2_gen1_only [expr {[info exists ::env(G2_GEN1_ONLY)] &&
@@ -54,6 +61,18 @@ if {$ila_debug &&
     ($g9_wait_remote_detect || $g10_cfg_complete || $g11_rx_parser || $g12_ordered_set)} {
   # G9只需要PIPE域结果；省下Core ILA资源和等待一个永远不会触发的Core核。
   set ila_pipe_only 1
+}
+if {$k13_minimal_diag && (!$k13_enable || !$ila_debug)} {
+  error "K13_MINIMAL_DIAG requires K13_ENABLE=1 and K11B2_ILA_DEBUG=1"
+}
+if {$k13_minimal_diag} {
+  # The compact PIPE ILA is the only timing-clean diagnostic artifact.  The
+  # core ILA and wide packet probes are not part of this experiment.
+  set ila_pipe_only 1
+  # The minimal artifact must retain the direct GT evidence and QPLL reference
+  # selection probe; make these requirements implicit in the build switch.
+  set k13_gt_primitive_debug 1
+  set k13_gt_qpll_prereq_debug 1
 }
 if {$ila_debug && $g2_gen1_only} {
   error "G2 Gen1/CPLL诊断构建不支持ILA模式"
@@ -125,6 +144,9 @@ if {$k13_enable} {
   if {$k13_gt_rate_qpll_reset_forward} { set build_variant "${build_variant}_gt_qpllreset" }
   if {$k13_gt_primitive_debug} { set build_variant "${build_variant}_gt_primitive" }
   if {$k13_gt_qpll_prereq_debug} { set build_variant "${build_variant}_qpll_prereq" }
+  if {!$k13_pre_rate_txeq_enable} { set build_variant "${build_variant}_pre_rate_txeq_off" }
+  if {$k13_golden_rate_replay} { set build_variant "${build_variant}_golden_replay" }
+  if {$k13_minimal_diag} { set build_variant "${build_variant}_minimal_diag" }
 }
 set build_dir   [file join $script_dir $build_variant impl]
 set xci_path    [file join $phy_ip_root $phy_module ${phy_module}.xci]
@@ -459,6 +481,7 @@ set sv_files [list \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
   rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \
   rtl/phy/k13_qpll_event_recorder.sv \
+  rtl/phy/k13_golden_rate_replay.sv \
   rtl/phy/pcie_recovery_speed_ctrl.sv \
   rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
   rtl/phy/pcie_k13_production_ctrl.sv \
@@ -491,12 +514,16 @@ if {$ila_debug} {
       -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
       -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_PRE_RATE_TXEQ_ENABLE=$k13_pre_rate_txeq_enable \
+      -generic K13_GOLDEN_RATE_REPLAY=$k13_golden_rate_replay \
       -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   } else {
     synth_design -top $top_name -part $part_name \
       -generic K11B2_ILA_DEBUG=1 -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
       -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_PRE_RATE_TXEQ_ENABLE=$k13_pre_rate_txeq_enable \
+      -generic K13_GOLDEN_RATE_REPLAY=$k13_golden_rate_replay \
       -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   }
   write_checkpoint -force [file join $build_dir k11b3_pre_ila_synth.dcp]
@@ -509,12 +536,16 @@ if {$ila_debug} {
       -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
       -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_PRE_RATE_TXEQ_ENABLE=$k13_pre_rate_txeq_enable \
+      -generic K13_GOLDEN_RATE_REPLAY=$k13_golden_rate_replay \
       -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   } else {
     synth_design -top $top_name -part $part_name \
       -generic K13_ENABLE=$k13_enable \
       -generic K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap \
       -generic K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass \
+      -generic K13_PRE_RATE_TXEQ_ENABLE=$k13_pre_rate_txeq_enable \
+      -generic K13_GOLDEN_RATE_REPLAY=$k13_golden_rate_replay \
       -generic K13_CDR_HOLD_FORCE_LOW=$k13_cdr_hold_force_low
   }
 }
@@ -648,7 +679,7 @@ if {$ila_debug} {
   # 取证窗口，确认RXRESETDONE不是仅仅晚于上一版131 us采集窗口。
   # K13 的 478-bit PIPE ILA 在 KU040 上不能使用 32768 深度，否则调试
   # 核自身会耗尽 BRAM。允许构建调用方显式覆盖，默认给 K13 采用 4096。
-  set ila_pipe_depth [expr {$g11_rx_parser || $g12_ordered_set ? 4096 : ($g10_cfg_complete ? 8192 : ($k13_enable ? 4096 : 32768))}]
+  set ila_pipe_depth [expr {$k13_minimal_diag ? 1024 : ($g11_rx_parser || $g12_ordered_set ? 4096 : ($g10_cfg_complete ? 8192 : ($k13_enable ? 4096 : 32768)))}]
   if {[info exists ::env(K11B2_ILA_PIPE_DEPTH)]} {
     set ila_pipe_depth $::env(K11B2_ILA_PIPE_DEPTH)
   }
@@ -665,6 +696,18 @@ if {$ila_debug} {
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_pipe_clk]
   add_ila_probe u_ila_pipe 0 \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_pipe_tlp_trigger]
+  if {$k13_minimal_diag} {
+    # Keep the historical probe indices stable while replacing the wide
+    # packet/TS payload with only the command bundle and sticky recorder.
+    add_ila_probe u_ila_pipe 1 \
+      [debug_bus_nets {.*dbg_k13_command_bundle.*\[[0-9]+\]$} 64]
+    add_ila_probe u_ila_pipe 2 \
+      [debug_bus_nets {.*dbg_k13_qpll_event_record.*\[[0-9]+\]$} 176]
+    for {set minimal_pad_probe 3} {$minimal_pad_probe <= 18} {incr minimal_pad_probe} {
+      add_ila_probe u_ila_pipe $minimal_pad_probe \
+        [debug_bus_nets {.*dbg_k13_command_bundle.*\[0\]$} 1]
+    }
+  } else {
   add_ila_probe u_ila_pipe 1 \
     [debug_bus_nets {.*dbg_pipe_top.*\[[0-9]+\]$} 64]
   add_ila_probe u_ila_pipe 2 \
@@ -776,10 +819,21 @@ if {$ila_debug} {
     [debug_bus_nets {.*dbg_g11_rx.*\[[0-9]+\]$} 128]
   add_ila_probe u_ila_pipe 18 \
     [debug_bus_nets {.*dbg_g12_tx.*\[[0-9]+\]$} 32]
-  # K13 probe19: Recovery.Speed, RXEQ done/adapt_done, TXELECIDLE and
-  # TX/RX first-block boundary evidence. The packed field order is in RTL.
-  add_ila_probe u_ila_pipe 19 \
-    [debug_bus_nets {.*dbg_k13_top.*\[[0-9]+\]$} 64]
+  }
+  if {$k13_minimal_diag} {
+    # Keep probe20/21 hardware names stable without retaining the historical
+    # 64-bit K13 status payload in the timing-clean artifact.
+    add_ila_probe u_ila_pipe 19 \
+      [debug_bus_nets {.*dbg_k13_command_bundle.*\[0\]$} 1]
+  } else {
+    # K13 probe19: Recovery.Speed, RXEQ done/adapt_done, TXELECIDLE and
+    # TX/RX first-block boundary evidence. The packed field order is in RTL.
+    # The timing-clean minimal artifact carries the required command and
+    # completion evidence in probes 1/2/20/21 and does not retain this
+    # historical 64-bit packet of redundant status signals.
+    add_ila_probe u_ila_pipe 19 \
+      [debug_bus_nets {.*dbg_k13_top.*\[[0-9]+\]$} 64]
+  }
   if {$k13_gt_primitive_debug} {
     # K13 probe20：直接从实际 GTHE3_COMMON/GTHE3_CHANNEL primitive 取样。
     # 低到高依次为 QPLL1PD、QPLL1RESET、QPLL1LOCKEN、
@@ -793,6 +847,11 @@ if {$ila_debug} {
       [phy_primitive_pin_nets GTHE3_CHANNEL RXPLLCLKSEL 2] \
       [phy_primitive_pin_nets GTHE3_CHANNEL TXRATE 3] \
       [phy_primitive_pin_nets GTHE3_CHANNEL RXRATE 3] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL PCIERATEIDLE 1] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL PCIERATEQPLLRESET 2] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL PCIERATEGEN3 1] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL PCIEUSERGEN3RDY 1] \
+      [phy_primitive_pin_nets GTHE3_CHANNEL PCIEUSERRATESTART 1] \
       [phy_primitive_pin_nets GTHE3_COMMON QPLL1REFCLKLOST 1] \
       [phy_primitive_pin_nets GTHE3_COMMON QPLL1FBCLKLOST 1] \
       [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieuserratedone_in\[0\]$}] \
@@ -831,7 +890,7 @@ if {$ila_debug} {
       [debug_scalar_net u_endpoint/u_protocol_core/g_ila_debug_core/dbg_core_link_loss_trigger]
   }
 
-  puts "K11G4_ILA_INSERT_PASS pipe_width=[expr {$k13_enable ? 614 : 478}] core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=$ila_pipe_depth"
+  puts "K11G4_ILA_INSERT_PASS pipe_width=[expr {$k13_minimal_diag ? 459 : ($k13_enable ? 614 : 478)}] core_width=[expr {$ila_pipe_only ? 0 : 450}] depth=$ila_pipe_depth"
 }
 set afifo_gray_sync_cells [get_cells -hier -quiet -regexp \
   {.*u_.*afifo/(rgray_cross_reg|wgray_cross_reg|rd_wgray_reg|wr_rgray_reg).*}]
@@ -914,6 +973,10 @@ set setup_paths [get_timing_paths -delay_type max -slack_lesser_than 0 -max_path
 set hold_paths [get_timing_paths -delay_type min -slack_lesser_than 0 -max_paths 1]
 if {!$ila_debug && [llength $setup_paths] != 0} { error "K11-B2存在setup负时序" }
 if {!$ila_debug && [llength $hold_paths] != 0} { error "K11-B2存在hold负时序" }
+if {$k13_minimal_diag &&
+    ([llength $setup_paths] != 0 || [llength $hold_paths] != 0)} {
+  error "K13_MINIMAL_DIAG要求timing-clean：存在setup或hold负时序"
+}
 if {$ila_debug && ([llength $setup_paths] != 0 || [llength $hold_paths] != 0)} {
   puts "K11B3_ILA_DIAGNOSTIC_TIMING_ONLY setup_negative=[llength $setup_paths] hold_negative=[llength $hold_paths]"
 }
@@ -967,6 +1030,9 @@ puts $summary_file "G2_GEN1_ONLY=$g2_gen1_only"
 puts $summary_file "K13_ENABLE=$k13_enable"
 puts $summary_file "K13_RXEQ_BOOTSTRAP=$k13_rxeq_bootstrap"
 puts $summary_file "K13_RXEQ_TWO_PASS=$k13_rxeq_two_pass"
+puts $summary_file "K13_PRE_RATE_TXEQ_ENABLE=$k13_pre_rate_txeq_enable"
+puts $summary_file "K13_GOLDEN_RATE_REPLAY=$k13_golden_rate_replay"
+puts $summary_file "K13_MINIMAL_DIAG=$k13_minimal_diag"
 puts $summary_file "K13_GT_RATE_DONE_TIE_HIGH=$k13_gt_rate_done_tie_high"
 puts $summary_file "K13_GT_RATE_DONE_START_PULSE=$k13_gt_rate_done_start_pulse"
 puts $summary_file "K13_GT_RATE_DONE_RESET_RELEASE_PULSE=$k13_gt_rate_done_reset_release_pulse"
@@ -977,7 +1043,7 @@ puts $summary_file "K13_GT_RATE_QPLL_RESET_FORWARD=$k13_gt_rate_qpll_reset_forwa
 puts $summary_file "G7_RX_P0_QUIET=$g7_rx_p0_quiet"
 puts $summary_file "G8_FAST_DETECT=$g8_fast_detect"
 puts $summary_file "PHY_MODULE=$phy_module"
-puts $summary_file "TIMING_POLICY=[expr {$ila_debug ? "DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED" : "WNS_GE_0_REQUIRED"}]"
+puts $summary_file "TIMING_POLICY=[expr {$k13_minimal_diag ? "WNS_GE_0_REQUIRED_MINIMAL_DIAG" : ($ila_debug ? "DIAGNOSTIC_ONLY_NEGATIVE_ALLOWED" : "WNS_GE_0_REQUIRED")}]"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
 puts "$pass_marker channel=$channel_loc common=$common_loc K13_ENABLE=$k13_enable WNS=$wns"
