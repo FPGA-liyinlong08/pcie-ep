@@ -1,6 +1,6 @@
 # K03 Gen1 x1 LTSSM/MAC 架构说明
 
-状态：**K03-v1.1 已实现；VCS真实串行门禁PASS，实板门禁延期**
+状态：**K03-v1.2 PHY Command 边界已实现；VCS与KCU105 Gen1门禁PASS**
 
 目标器件：`xcku040-ffva1156-2-e`
 依赖接口：`K02-PHY32-v1.1`
@@ -11,7 +11,7 @@ K03 负责：
 
 - 固定 Gen1 x1 的 Detect、Polling、Configuration、Recovery、Hot Reset 和 L0；
 - 在 PHY Gen1 低 16 bit 接口上生成、识别 TS1、TS2 和 Logical Idle；
-- 生成 Receiver Detect、P0/P1、Electrical Idle 等 standalone PHY 控制；
+- 选择 Receiver Detect、P0 PowerUp、G9等待及活动态语义 profile，并拥有协议超时和状态跳转；
 - 捕获 Root Port 分配的 Link Number，固定 Lane Number 为 0；
 - 识别/插入 Gen1 TLP/DLLP 的 `STP/SDP/END/EDB` framing Symbol；
 - 输出 LTSSM 状态、训练/超时/成帧错误计数和 Gen1 x1 链路状态。
@@ -21,6 +21,8 @@ K03 不负责：
 - 不计算 CRC16/LCRC，不实现 InitFC、ACK/NAK、Sequence 或 Replay；
 - 不解析 TLP/DLLP 内容，不实现配置空间、BAR 或枚举；
 - 不实现 Gen2/Gen3 升速或 Equalization，`phy_rate` 永久为 Gen1；
+- 不直接驱动 raw PHY command，也不直接消费 Detect/Power 操作的
+  `phy_phystatus/phy_rxstatus`；
 - 不实现 x4、Lane Reversal、Lane Skew、ASPM、Compliance 或 Loopback；
 - 不用硬件结果替代延期的 K02 VCS/实板门禁。
 
@@ -42,9 +44,14 @@ flowchart LR
         FR <--> ARB
     end
 
+    CMD["pcie_phy_command_ctrl<br/>唯一 raw command owner"]
+
     DLL["K05/K06 Data Link<br/>K03 尚未实现"]
 
     PARTNER <--> PHY
+    FSM -->|profile + valid/kind| CMD
+    CMD -->|ready/done/result| FSM
+    CMD -->|raw PHY command| PHY
     PHY --> SCR --> RXOS
     PHY <--> ARB
     FR <--> DLL
@@ -100,8 +107,9 @@ L0 → Recovery.RcvrLock → Recovery.RcvrCfg → Recovery.Idle → L0
 L0 --HotResetReq--> HotReset → Detect.Quiet
 ```
 
-- Detect.Quiet 在 P1/Electrical Idle 等待，Detect.Active 拉高 `phy_txdetectrx`，直到
-  Receiver Detect 的 `phy_phystatus`；仅 `phy_rxstatus=3'b011` 视为 Receiver Present；
+- Detect.Quiet 选择P1/Electrical Idle profile；Detect.Active发出Receiver Detect
+  语义事务。controller在当前拍把`phy_phystatus/phy_rxstatus`转换为`done/result`，
+  仅Receiver Present结果使LTSSM继续；
 - Detect 成功后进入 PHY.PowerUp，请求 P0 但继续保持 TX Electrical Idle；等待
   Power 操作的第二个、独立 `phy_phystatus` 后才进入 Polling.Active 发 TS1；
 - Polling.Active 连续接收 8 个 PAD/PAD TS1 后进入 Polling.Configuration；
@@ -153,7 +161,6 @@ backpressure 或空拍，物理线上 Packet 内部不会产生空洞。
 
 ## 5. K03 验收边界
 
-本阶段以行为 PHY Partner、Verilator 回归和 KU040 OOC/集成静态实现验收。由于当前
-未插板，KCU105 Gen1 L0 记为延期，不伪造 PASS；该实板项与 K02 延期项一起在板卡
-可用后补测，且最迟在 K11 冻结前完成。K03 通过后只能开始 K04 CRC，不能提前加入
-DLL 功能。
+K03-v1.2以行为PHY Partner、controller逐拍等价测试、ownership负向fixture、KU040
+OOC/完整实现、真实PHY VCS及KCU105 Gen1 Endpoint闭环验收。Phase B/C固定Gen1，
+`phy_rate`及TXEQ/RXEQ均为零；Golden rate-change、128b/130b和EQ不属于本版本。

@@ -1,6 +1,6 @@
 set script_dir [file dirname [file normalize [info script]]]
-set build_dir  [file join $script_dir build_k11b2 hw]
-set bit_path   [file join $script_dir build_k11b2 impl k11b2_gen1_endpoint.bit]
+set build_dir  [file join $script_dir build_k11_gen1_release hw]
+set bit_path   [file join $script_dir build_k11_gen1_release impl k11b2_gen1_endpoint.bit]
 set common_tcl [file join $script_dir .. .. scripts program_ku040.tcl]
 
 set server_url localhost:3122

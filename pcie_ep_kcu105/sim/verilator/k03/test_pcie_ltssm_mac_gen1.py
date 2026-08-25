@@ -462,11 +462,11 @@ async def polling_active_accepts_mixed_ts1_ts2_after_tx_threshold(dut):
     await writable_phase()
     assert int(dut.ltssm_state.value) == POLLING_ACTIVE
     assert int(dut.rx_ts_count.value) >= 8
-    assert int(dut.polling_tx_ts1_count.value) < 1024
+    assert int(dut.u_ltssm_mac.polling_tx_ts1_count.value) < 1024
 
     await send_ts(dut, 1, 1016)
     await wait_state(dut, POLLING_CONFIG)
-    assert int(dut.polling_tx_ts1_count.value) == 1024
+    assert int(dut.u_ltssm_mac.polling_tx_ts1_count.value) == 1024
 
 
 @cocotb.test()
@@ -503,14 +503,14 @@ async def l0_enters_recovery_after_sustained_rxelecidle(dut):
     dut.phy_rxdata.value = 0x000000BC
     await tick(dut, 8)
     assert int(dut.ltssm_state.value) == L0
-    assert int(dut.rxelecidle_count.value) == 0
+    assert int(dut.u_ltssm_mac.rxelecidle_count.value) == 0
 
     # 真正Electrical Idle：RxValid撤销后，连续7拍只累积滤波计数。
     await writable_phase()
     dut.phy_rxvalid.value = 0
     await tick(dut, 7)
     assert int(dut.ltssm_state.value) == L0
-    assert int(dut.rxelecidle_count.value) == 7
+    assert int(dut.u_ltssm_mac.rxelecidle_count.value) == 7
     # 第8拍观察到qualified，下一状态必须是Recovery.RcvrLock。
     await tick(dut)
     assert int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK
@@ -653,7 +653,7 @@ async def collect_wire_packet(dut, timeout=400):
         await ReadOnly()
         data = int(dut.phy_txdata.value)
         datak = int(dut.phy_txdatak.value)
-        tx_state = int(dut.u_tx_scrambler.lfsr_state.value)
+        tx_state = int(dut.u_ltssm_mac.u_tx_scrambler.lfsr_state.value)
         _, data = scrambler_word(tx_state, data & 0xFFFF, datak, False)
         for lane in range(2):
             byte = (data >> (lane * 8)) & 0xFF

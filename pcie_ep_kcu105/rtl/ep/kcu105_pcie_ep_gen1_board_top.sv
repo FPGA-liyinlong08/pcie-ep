@@ -4,21 +4,9 @@
 // K11-B2 KCU105板级封装。完整状态保留在生产顶层内部，板级仅导出已冻结管脚。
 module kcu105_pcie_ep_gen1_board_top #(
     parameter integer K11B2_ILA_DEBUG = 0,
-    parameter integer G7_RX_P0_QUIET  = 0,
-    parameter integer G9_WAIT_REMOTE_DETECT = 0,
+    parameter integer G9_WAIT_REMOTE_DETECT = 1,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
-    parameter integer DETECT_QUIET_CYCLES = 1_500_000,
-    parameter integer K13_ENABLE = 0,
-    parameter integer K13_SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer K13_EQ_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer K13_RXEQ_BOOTSTRAP = 1,
-    parameter integer K13_RXEQ_TWO_PASS = 0,
-    parameter integer K13_PRE_RATE_TXEQ_ENABLE = 1,
-    parameter integer K13_GOLDEN_RATE_REPLAY = 0,
-    parameter integer K13_CDR_HOLD_FORCE_LOW = 0,
-    // K13 hardware images autonomously leave the deliberately conservative
-    // initial Gen1 link after 1 ms at the 250 MHz PIPE clock.
-    parameter integer K13_AUTO_RETRAIN_CYCLES = 250_000
+    parameter integer DETECT_QUIET_CYCLES = 1_500_000
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -43,19 +31,9 @@ module kcu105_pcie_ep_gen1_board_top #(
 
     kcu105_pcie_ep_gen1_top #(
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
-        .G7_RX_P0_QUIET(G7_RX_P0_QUIET),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
-        .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES),
-        .K13_ENABLE(K13_ENABLE),
-        .K13_SPEED_TIMEOUT_CYCLES(K13_SPEED_TIMEOUT_CYCLES),
-        .K13_EQ_TIMEOUT_CYCLES(K13_EQ_TIMEOUT_CYCLES),
-        .K13_RXEQ_BOOTSTRAP(K13_RXEQ_BOOTSTRAP),
-        .K13_RXEQ_TWO_PASS(K13_RXEQ_TWO_PASS),
-        .K13_PRE_RATE_TXEQ_ENABLE(K13_PRE_RATE_TXEQ_ENABLE),
-        .K13_GOLDEN_RATE_REPLAY(K13_GOLDEN_RATE_REPLAY),
-        .K13_CDR_HOLD_FORCE_LOW(K13_CDR_HOLD_FORCE_LOW),
-        .K13_AUTO_RETRAIN_CYCLES(K13_AUTO_RETRAIN_CYCLES)
+        .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),
         .pcie_refclk_n(pcie_refclk_n),

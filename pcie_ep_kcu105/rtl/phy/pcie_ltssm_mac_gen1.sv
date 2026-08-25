@@ -10,18 +10,11 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer TX_BUFFER_BYTES       = 160,
     parameter integer K11B2_ILA_DEBUG       = 0,
     parameter [7:0]  TX_RATE_ID             = 8'h02,
-    // G7仅用于上板A/B：Detect.Quiet保持P0，让Root Port在首次Detect前
-    // 有完整窗口观察Endpoint接收终端；Detect.Active仍切到P1执行本端Detect。
-    parameter integer G7_RX_P0_QUIET        = 0,
     // G9仅用于上板诊断：本端Receiver Detect成功并切到P0后，暂不发TS1，
     // 保持Detect assist，等待Root Port的RX activity。默认关闭。
     parameter integer G9_WAIT_REMOTE_DETECT = 0,
     // 默认按250 MHz PIPE时钟等待25 ms；上板若确认phy_pclk不同，可由构建参数覆盖。
-    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
-    // Diagnostic A/B only.  The production PHY-assist contract holds RX CDR
-    // during Recovery.Speed; this switch allows a bitstream to reproduce the
-    // K02 low-CDR timing without changing any rate-contract signals.
-    parameter integer K13_CDR_HOLD_FORCE_LOW = 0
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -31,9 +24,13 @@ module pcie_ltssm_mac_gen1 #(
     input  wire        phy_rxstart_block,
     input  wire [1:0]  phy_rxsync_header,
     input  wire        phy_rxvalid,
-    input  wire        phy_phystatus,
     input  wire        phy_rxelecidle,
-    input  wire [2:0]  phy_rxstatus,
+    output wire [2:0]  phy_cmd_profile,
+    output wire        phy_cmd_valid,
+    output wire        phy_cmd_kind,
+    input  wire        phy_cmd_ready,
+    input  wire        phy_cmd_done,
+    input  wire [1:0]  phy_cmd_result,
     input  wire [1:0]  active_phy_rate,
     input  wire [1:0]  recovery_target_rate,
     input  wire        recovery_fallback_active,
@@ -46,23 +43,6 @@ module pcie_ltssm_mac_gen1 #(
     output wire        phy_txdata_valid,
     output wire        phy_txstart_block,
     output wire [1:0]  phy_txsync_header,
-    output wire        phy_txdetectrx,
-    output wire        phy_txelecidle,
-    output wire        phy_txcompliance,
-    output wire        phy_rxpolarity,
-    output wire [1:0]  phy_powerdown,
-    output wire [1:0]  phy_rate,
-    output wire [2:0]  phy_txmargin,
-    output wire        phy_txswing,
-    output wire        phy_txdeemph,
-    output wire [1:0]  phy_txeq_ctrl,
-    output wire [3:0]  phy_txeq_preset,
-    output wire [5:0]  phy_txeq_coeff,
-    output wire [1:0]  phy_rxeq_ctrl,
-    output wire [3:0]  phy_rxeq_txpreset,
-    output wire        as_mac_in_detect,
-    output wire        as_cdr_hold_req,
-
     input  wire        tx_pkt_valid,
     output wire        tx_pkt_ready,
     input  wire [15:0] tx_pkt_data,
@@ -131,6 +111,15 @@ module pcie_ltssm_mac_gen1 #(
     localparam [5:0] WAIT_REMOTE_DETECT    = 6'd16;
     localparam [5:0] G9_DETECT_TIMEOUT     = 6'd17;
     localparam [5:0] RECOVERY_SPEED        = 6'd18;
+    localparam [2:0] PROFILE_DETECT_QUIET  = 3'd0;
+    localparam [2:0] PROFILE_DETECT_ACTIVE = 3'd1;
+    localparam [2:0] PROFILE_PHY_POWERUP   = 3'd2;
+    localparam [2:0] PROFILE_G9_REMOTE_WAIT = 3'd3;
+    localparam [2:0] PROFILE_ACTIVE        = 3'd4;
+    localparam [2:0] PROFILE_RECOVERY_SPEED = 3'd5;
+    localparam       OP_RECEIVER_DETECT = 1'b0;
+    localparam       OP_POWER_UP = 1'b1;
+    localparam [1:0] CMD_RESULT_SUCCESS = 2'd1;
 
     localparam [31:0] DETECT_QUIET_LIMIT   = DETECT_QUIET_CYCLES - 1;
     localparam [31:0] DETECT_TIMEOUT_LIMIT = DETECT_TIMEOUT_CYCLES - 1;
@@ -279,7 +268,7 @@ module pcie_ltssm_mac_gen1 #(
         wire [10:0] dbg_polling_tx_ts1_count = polling_tx_ts1_count;
         (* mark_debug = "true", keep = "true" *)
         wire [255:0] dbg_ltssm_detail = {
-            61'd0, polling_tx_ts1_count, os_tx_ts1_complete,
+            59'd0, polling_tx_ts1_count, os_tx_ts1_complete,
             polling_tx_ts1_done, polling_rx_ts_done,
             link_disable, hot_reset_req, force_recovery,
             tx_os_mode, tx_os_link, tx_os_link_pad, tx_os_lane,
@@ -290,8 +279,8 @@ module pcie_ltssm_mac_gen1 #(
             os_link_is_pad, os_lane_number, os_lane_is_pad, os_n_fts,
             os_rate_id, os_training_control,
             phy_rxdata, phy_rxdatak, phy_rxvalid, phy_rxdata_valid,
-            phy_rxelecidle, phy_rxstatus, phy_phystatus,
-            phy_txdata, phy_txdatak, phy_txdata_valid, phy_txelecidle
+            phy_rxelecidle, 3'd0, phy_cmd_done, phy_cmd_result,
+            phy_txdata, phy_txdatak, phy_txdata_valid, phy_cmd_profile
         };
         (* mark_debug = "true", keep = "true" *)
         wire dbg_g9_active = (ltssm_state == WAIT_REMOTE_DETECT);
@@ -299,12 +288,11 @@ module pcie_ltssm_mac_gen1 #(
         wire dbg_g9_rxelecidle_low_seen = g9_rxelecidle_low_seen;
         (* mark_debug = "true", keep = "true" *)
         wire dbg_g9_timeout_seen = g9_timeout_seen;
-        // bit0 RXELECIDLE, bit1 RXVALID, bit2 TXELECIDLE, bit3 TXDETECTRX,
-        // bit4 AS_MAC_IN_DETECT, bit[6:5] PHY_POWERDOWN, bit7 reserved.
+        // Semantic command handshake used by the G9 diagnostic view.
         (* mark_debug = "true", keep = "true" *)
         wire [7:0] dbg_g9_control = {
-            1'b0, phy_powerdown, as_mac_in_detect, phy_txdetectrx,
-            phy_txelecidle, phy_rxvalid, phy_rxelecidle
+            phy_cmd_result, phy_cmd_profile, phy_cmd_done,
+            phy_cmd_valid, phy_rxvalid
         };
         // G10 counts: low-to-high fields are any, match, mismatch, link PAD,
         // lane PAD, link mismatch, lane mismatch, then state-entry latches.
@@ -354,7 +342,7 @@ module pcie_ltssm_mac_gen1 #(
             phy_rxdatak,
             phy_rxvalid,
             phy_rxdata_valid,
-            phy_rxstatus,
+            3'd0,
             rx_raw_aligned_valid,
             rx_raw_aligned_data,
             rx_raw_aligned_datak,
@@ -626,38 +614,18 @@ module pcie_ltssm_mac_gen1 #(
                                              tx_scrambled_valid;
     assign phy_txstart_block  = gen3_mode && gen3_os_tx_start_block;
     assign phy_txsync_header  = gen3_mode ? gen3_os_tx_sync_header : 2'b00;
-    assign phy_txdetectrx     = (ltssm_state == DETECT_ACTIVE);
-    assign phy_txelecidle     = (ltssm_state == DETECT_QUIET) ||
-                                (ltssm_state == DETECT_ACTIVE) ||
-                                (ltssm_state == PHY_POWERUP) ||
-                                (ltssm_state == WAIT_REMOTE_DETECT) ||
-                                (ltssm_state == G9_DETECT_TIMEOUT);
-    assign phy_txcompliance   = 1'b0;
-    assign phy_rxpolarity     = 1'b0;
-    // Receiver Detect必须在P1执行；Detect成功后的PHY_POWERUP已请求P0，
-    // 但在第二个PhyStatus到达前仍保持TX Electrical Idle且不提交数据。
-    assign phy_powerdown      = (ltssm_state == DETECT_ACTIVE) ? 2'b10 :
-                                ((ltssm_state == DETECT_QUIET) &&
-                                 (G7_RX_P0_QUIET == 0)) ? 2'b10 : 2'b00;
-    assign phy_rate           = 2'b00;
-    assign phy_txmargin       = 3'b000;
-    assign phy_txswing        = 1'b0;
-    assign phy_txdeemph       = 1'b0;
-    assign phy_txeq_ctrl      = 2'b00;
-    assign phy_txeq_preset    = 4'd0;
-    assign phy_txeq_coeff     = 6'd0;
-    assign phy_rxeq_ctrl      = 2'b00;
-    assign phy_rxeq_txpreset  = 4'd0;
-    assign as_mac_in_detect   = (ltssm_state == DETECT_QUIET) ||
-                                (ltssm_state == DETECT_ACTIVE) ||
-                                (ltssm_state == WAIT_REMOTE_DETECT) ||
-                                (ltssm_state == G9_DETECT_TIMEOUT);
-    // PG239 PHY assist contract: hold the RX CDR while the LTSSM is
-    // changing rate in Recovery.Speed.  The current MAC does not yet
-    // implement the L1/Loopback states, so Recovery.Speed is the only
-    // applicable state in this integration.
-    assign as_cdr_hold_req    = (K13_CDR_HOLD_FORCE_LOW == 0) &&
-                                (ltssm_state == RECOVERY_SPEED);
+    assign phy_cmd_profile =
+        (ltssm_state == DETECT_QUIET) ? PROFILE_DETECT_QUIET :
+        (ltssm_state == DETECT_ACTIVE) ? PROFILE_DETECT_ACTIVE :
+        (ltssm_state == PHY_POWERUP) ? PROFILE_PHY_POWERUP :
+        ((ltssm_state == WAIT_REMOTE_DETECT) ||
+         (ltssm_state == G9_DETECT_TIMEOUT)) ? PROFILE_G9_REMOTE_WAIT :
+        (ltssm_state == RECOVERY_SPEED) ? PROFILE_RECOVERY_SPEED :
+                                          PROFILE_ACTIVE;
+    assign phy_cmd_valid = (ltssm_state == DETECT_ACTIVE) ||
+                           (ltssm_state == PHY_POWERUP);
+    assign phy_cmd_kind = (ltssm_state == PHY_POWERUP) ? OP_POWER_UP :
+                                                         OP_RECEIVER_DETECT;
     assign link_up            = (ltssm_state == STATE_L0);
     assign negotiated_width   = ((ltssm_state >= STATE_L0 &&
                                   ltssm_state <= RECOVERY_IDLE) ||
@@ -772,10 +740,10 @@ module pcie_ltssm_mac_gen1 #(
                     end
                     DETECT_ACTIVE: begin
                         polling_tx_ts1_count <= 11'd0;
-                        if (phy_phystatus) begin
+                        if (phy_cmd_ready && phy_cmd_done) begin
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
-                            if (phy_rxstatus == 3'b011) begin
+                            if (phy_cmd_result == CMD_RESULT_SUCCESS) begin
                                 ltssm_state <= PHY_POWERUP;
                             end else begin
                                 ltssm_state <= DETECT_QUIET;
@@ -792,7 +760,7 @@ module pcie_ltssm_mac_gen1 #(
                     PHY_POWERUP: begin
                         rx_ts_count <= 5'd0;
                         polling_tx_ts1_count <= 11'd0;
-                        if (phy_phystatus) begin
+                        if (phy_cmd_ready && phy_cmd_done) begin
                             ltssm_state <= (G9_WAIT_REMOTE_DETECT != 0) ?
                                             WAIT_REMOTE_DETECT : POLLING_ACTIVE;
                             state_timer <= 32'd0;
@@ -1149,7 +1117,7 @@ module pcie_ltssm_mac_gen1 #(
                                os_n_fts, os_rate_id, os_training_control[7:1],
                                os_raw_idle_pair_valid, tx_scrambler_state,
                                rx_scrambler_state, os_tx_data[31:16],
-                               frame_tx_data[31:16]};
+                               frame_tx_data[31:16], phy_cmd_ready};
 endmodule
 
 `default_nettype wire

@@ -1,6 +1,6 @@
 # K03 Gen1 x1 LTSSM/MAC 接口契约
 
-状态：**K03-MAC16-v1 接口与 RTL 已冻结**
+状态：**K03-MAC16-v1.2 / semantic PHY command 接口已冻结**
 
 时钟域：除异步低有效 `pipe_rst_n` 外，全部信号属于 `phy_pclk` 域。
 
@@ -14,9 +14,7 @@
 | `phy_rxdatak` | 输入 | 2 | 对应低、次低两个字节 |
 | `phy_rxdata_valid` | 输入 | 1 | Gen3 block 有效指示；K03 Gen1 不用它门控 Symbol |
 | `phy_rxvalid` | 输入 | 1 | Gen1 CDR/Symbol 有效；K03 以此作为接收条件 |
-| `phy_phystatus` | 输入 | 1 | Detect/Power 操作完成脉冲；两项操作各需要独立脉冲 |
 | `phy_rxelecidle` | 输入 | 1 | RX Electrical Idle |
-| `phy_rxstatus` | 输入 | 3 | Detect 成功编码 `3'b011` |
 | `phy_txdata` | 输出 | 32 | Gen1 高 16 bit 固定 0，先上线字节在 `[7:0]` |
 | `phy_txdatak` | 输出 | 2 | 每个低 16 bit 字节的 K-code 标记 |
 | `phy_txdata_valid` | 输出 | 1 | 有效 Symbol 期间为 1 |
@@ -34,23 +32,21 @@
 `16'hFFFF`；无有效拍时状态保持。`scramble_disable=1`只旁路Data异或，仍按有效
 Symbol更新LFSR。TX/RX均使用同一模块，线路先到的低字节先推进LFSR。
 
-### MAC → PHY 控制
+### K03 → PHY Command Controller
 
-| 端口 | 位宽 | 复位值 | K03 规则 |
+| 端口 | 方向 | 位宽 | 规则 |
 |---|---:|---:|---|
-| `phy_txdetectrx` | 1 | 0 | 只在 Detect.Active 为 1 |
-| `phy_txelecidle` | 1 | 1 | Detect、PHY.PowerUp等待期为1，训练与L0为0 |
-| `phy_txcompliance` | 1 | 0 | 固定 0 |
-| `phy_rxpolarity` | 1 | 0 | 固定 0 |
-| `phy_powerdown` | 2 | `2'b10` | Detect=P1；PHY.PowerUp等待期及其余状态=P0 |
-| `phy_rate` | 2 | `2'b00` | K03 永久 Gen1 |
-| `phy_txmargin` | 3 | 0 | 固定 0 |
-| `phy_txswing` | 1 | 0 | 固定 0 |
-| `phy_txdeemph` | 1 | 0 | 固定 0 |
-| `phy_txeq_ctrl/preset/coeff` | 2/4/6 | 0 | 固定 0，K12 实现 |
-| `phy_rxeq_ctrl/txpreset` | 2/4 | 0 | 固定 0，K12 实现 |
-| `as_mac_in_detect` | 1 | 1 | Detect.Quiet/Active 为 1 |
-| `as_cdr_hold_req` | 1 | 0 | 固定 0 |
+| `phy_cmd_profile` | 输出 | 3 | Quiet、Detect、PowerUp、G9、Active或Recovery.Speed |
+| `phy_cmd_valid` | 输出 | 1 | Detect.Active和PHY.PowerUp操作请求；保持至完成/超时 |
+| `phy_cmd_kind` | 输出 | 1 | 0=Receiver Detect，1=P0 PowerUp |
+| `phy_cmd_ready` | 输入 | 1 | controller可接受当前语义操作 |
+| `phy_cmd_done` | 输入 | 1 | 当前拍PhyStatus产生的完成事件，不增加流水拍 |
+| `phy_cmd_result` | 输入 | 2 | 0=无完成，1=成功，2=Receiver Not Present |
+
+`pcie_phy_command_ctrl`是生产顶层唯一raw command owner。它直接接收
+`phy_phystatus/phy_rxstatus`，逐profile产生`phy_powerdown/txdetectrx/txelecidle/rate`、
+TXEQ/RXEQ、Detect Assist和CDR Hold，并集中驱动compliance、polarity、margin、
+swing及deemphasis。Phase B/C中`phy_rate=Gen1`且全部EQ命令为零。
 
 ## 2. DLL → MAC TX Packet Stream
 
@@ -125,10 +121,9 @@ Symbol 0 时，同拍 Symbol 1 的首数据字节以 `keep=01,sop=1` 输出；EN
 | 14 | HotReset |
 | 15 | PHY.PowerUp（standalone PHY适配子状态） |
 
-Receiver Detect 必须在 P1 下执行。Detect 的 `phy_phystatus` 且
-`phy_rxstatus=3'b011` 到达后，MAC 进入 PHY.PowerUp：请求 P0、撤销
-`phy_txdetectrx`，但继续保持 TX Electrical Idle 且不提交 TX 数据。只有收到下一次
-独立的 `phy_phystatus` 后才进入 Polling.Active 并开始发送 TS1。
+Receiver Detect必须在P1 profile下执行。controller把Detect的PhyStatus/Receiver
+Present转换为第一笔`done/result`，随后K03进入PHY.PowerUp profile。只有controller
+收到第二次独立PhyStatus并完成P0事务后，K03才进入Polling.Active并发送TS1。
 
 所有状态输出和 Packet 输出均为寄存器或只依赖寄存状态的组合逻辑；禁止形成
 `valid-ready-valid` 组合环路。计数器达到全 1 后饱和，不回绕。

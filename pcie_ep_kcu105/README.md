@@ -16,9 +16,9 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
 - K02：**K02-v1.2 条件冻结**；架构/接口、错误Stub、Verilator、XCI指纹、
   Vivado完整实现及VCS真实IP动态仿真均已通过；KCU105 Receiver Detect因当前
   未插板延期。K11-B真实PHY串行回归已补齐非实板动态门禁。
-- K03：**K03-v1.1 条件冻结**；架构/接口、错误 Stub、Verilator随机回归、
-  KU040 OOC、K02 PHY联合布局布线及VCS真PHY串行Gen1 x1 L0均通过；KCU105
-  实板门禁因当前未插板延期。
+- K03：**K03-v1.2 PHY Command边界冻结**；LTSSM改用语义profile与事务结果，
+  `pcie_phy_command_ctrl`成为唯一raw命令owner。Verilator、ownership门禁、KU040
+  实现、真实PHY VCS及KCU105 Gen1 x1 Endpoint均通过。
 - K04：**PASS / K04-v1 已冻结**；DLLP CRC16、TLP LCRC32、错误 Stub、
   cocotb Directed/随机、100 万算法向量和 KU040 250 MHz OOC 均通过；K11-B
   真实PHY VCS已编译并运行包含K04～K10的完整生产链路，兼容性延期闭环。
@@ -47,30 +47,25 @@ Detect、速率切换和均衡执行；LTSSM、Ordered Set、DLL、TLP、配置�
   边界以上连接生产DLL、异步Packet/事件FIFO、TLP/CFG/BAR和Demo，完成DLL Active、
   `1234:e001`配置读取、BAR0分配/MSE、签名MMIO及Hot Reset；KU040离线实现
   `WNS=+0.001 ns`、`WHS=+0.022 ns`。K11-B1真PHY串行L0已冻结。
-- K11-B2：**PASS / K11-PHASE-RELEASE-v1 阶段性冻结**。真实PHY路径已完成DLL
+- K11-B2：**PASS / K11 Gen1 PHY Command boundary release**。真实PHY路径已完成DLL
   Active、`1234:e001`枚举、4 KiB BAR0和Demo读写；G1修复Receiver Detect后的
   P1→P0握手，G9加入首次Root Port活动等待，G12-B把Configuration状态切换对齐到
-  完整Ordered Set边界。无ILA release bit实现`WNS=+0.019 ns`、DRC 0 Error，实板
-  reboot后成功枚举并连续5次BAR mmap通过；另有3轮reboot、15次BAR mmap压力通过。
+  完整Ordered Set边界。canonical无ILA release实现`WNS=+0.035 ns`、`WHS=+0.015 ns`、
+  DRC 0 Error、debug core 0；边界重构后连续3轮reboot、15次BAR mmap及AER检查通过。
   允许进入K12。严格断电cold boot、20次启动、100次PERST#/重训和长时MMIO保留给
   K14最终发布门，不把阶段性release表述为最终量产冻结。
 - K12：**K12-A/B/C/D及K12-E真实PHY影子适配 PASS**；已完成原子跨域、速率切换/
   fallback、Phase 0～3、Preset/Coefficient、TX/RX done超时、CDR loss、TS类型/速率/
   Lane/Link合法性和Ordered Set边界检查；真实PHY VCS下Gen1默认反馈已知且EQ控制为0，
   K11-B2枚举/BAR仍通过。真实Gen3 retrain/EQ生产驱动接线归入K13，K11 release基线不变。
-- K13：**控制阶段 PASS，生产顶层边界接线完成，全集成未完成**；新增可关闭的
-  `pcie_k13_production_ctrl`，并接入配置空间Retrain、生产LTSSM Ordered Set边界、
-  PHY `phystatus`/TX-RX EQ done；`K13_ENABLE=0`为静态旁路并保持K11路径。K13控制、
-  K12集成和双配置lint通过；真实VCS elaboration受 `VCSCompiler_Net` license 阻塞，
-  默认Vivado最终时序为`WNS=-0.033 ns`，因此尚未生成K13 bit。下一步修复现有Gen1
-  TX时序，并补齐真实Gen3 LTSSM/TS TX和CDR-loss后再做Gen3 bit/上板验证。
+- K13：**reference-only**；RTL、单元测试、报告和ILA实验记录保留，但已退出K11
+  生产顶层、lint/VCS源清单及canonical release。Gen3 rate-change与EQ后续另立里程碑。
 - K00 导入通用 Smoke 验证、CDC 同步器和已冻结的 M02 Packet FIFO；不导入
   KU060 的时钟、GT、PCS 或 PCIe 协议 RTL。
 - K01 已实现 PCIe REFCLK 缓冲、PERST# 分发和 PIPE/Core 四级复位同步释放。
-- K02 已生成 standalone PHY 封装和 bring-up bitstream；原延期的VCS动态门禁已
-  补齐，只剩实板Receiver Detect。K03 已完成软件、静态与VCS串行门禁，K04、K05已
-  独立完成并冻结；K06～K10已完成并冻结，K11已形成阶段性release，K12已完成控制与
-  影子适配，当前进入K13生产接线。
+- K02已作为Golden PHY baseline保留；K03 PHY command ownership重构与Gen1实板
+  重签署完成。K04～K10继续冻结。下一步只有另立Phase D里程碑后才重新引入Golden
+  Recovery.Speed与Gen3 PHY切速。
 - 历史工程 `/home/wx/Documents/PCIe/pcie_ep_ku060` 保持原位，不移动、不删除、
   不由本工程脚本写入。
 
@@ -99,7 +94,8 @@ KCU105/KU040 的公共 JTAG 下载、远程 SSH/reboot/lspci 操作和板级连�
 
 ```bash
 make ku040-hw-probe
-make ku040-hw-program KU040_BIT=fpga/kcu105/build_k11b2/impl/k11b2_gen1_endpoint.bit
+make k11b2-vivado
+make k11b2-hw-program
 make remote-check
 make remote-cycle
 ```

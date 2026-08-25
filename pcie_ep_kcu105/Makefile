@@ -4,7 +4,7 @@
 	k00-m02-vivado k00-m02 \
 	k01-checker-selftest k01-lint k01-verilator k01-vcs k01-vivado k01 \
 	k02-checker-selftest k02-lint k02-verilator k02-ip k02-vcs k02-gen3-vcs k02-vivado \
-	k02-hw-probe k02-hw-program k02 \
+	k02-hw-probe k02-hw-program k02 phy-command-ctrl-test phy-command-ownership \
 	k03-checker-selftest k03-scrambler-checker-selftest k03-scrambler \
 	k03-lint k03-verilator k03-vivado k03 \
 	k04-checker-selftest k04-lint k04-verilator k04-verilator-signoff \
@@ -40,7 +40,7 @@
 	k12c-eq-lint k12c-eq k12c-checker-selftest k12c \
 	k12-integration-lint k12-integration-sim k12-integration-checker-selftest k12-integration \
 	k12de-vcs-serial k12de \
-	k13-ctrl-lint k13-ctrl-sim k13-integration-lint k13-integration-sim k13 \
+	k13-rate-contract k13-ctrl-lint k13-ctrl-sim \
 	ku040-hw-probe ku040-hw-program \
 	remote-check remote-reboot remote-wait remote-lspci remote-cycle remote-retrain-gen3 \
 	xdma-x1-demo xdma-x1-hw-program clean
@@ -48,7 +48,7 @@
 PYTHON ?= python3
 VIVADO ?= /home/Xilinx/Vivado/2021.2/bin/vivado
 KU040_SERVER ?= localhost:3122
-KU040_BIT ?= fpga/kcu105/build_k11b2/impl/k11b2_gen1_endpoint.bit
+KU040_BIT ?= fpga/kcu105/build_k11_gen1_release/impl/k11b2_gen1_endpoint.bit
 
 k00: k00-baseline k00-m02
 
@@ -231,6 +231,7 @@ k03-lint:
 		rtl/phy/pcie_gen3_os_rx.sv \
 		rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv \
+		rtl/phy/pcie_phy_command_ctrl.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD -Wno-DECLFILENAME \
 		-Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM --top-module kcu105_pcie_gen1_top \
@@ -248,11 +249,23 @@ k03-lint:
 		rtl/phy/pcie_gen3_os_rx.sv \
 		rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv \
+		rtl/phy/pcie_phy_command_ctrl.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv \
 		rtl/phy/kcu105_pcie_gen1_top.sv
 
 k03-verilator:
 	./sim/verilator/k03/run_k03.sh
+
+phy-command-ctrl-test:
+	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_phy_command_ctrl \
+		$(CURDIR)/rtl/phy/pcie_phy_command_ctrl.sv \
+		$(CURDIR)/sim/verilator/phy_command_ctrl/pcie_phy_command_ctrl_test.cpp \
+		-Mdir sim/verilator/phy_command_ctrl/sim_build
+	./sim/verilator/phy_command_ctrl/sim_build/Vpcie_phy_command_ctrl
+
+phy-command-ownership:
+	python3 scripts/check_phy_command_ownership.py
 
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
@@ -279,13 +292,8 @@ k11b2-lint:
 		rtl/phy/pcie_gen12_scrambler.sv rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
 		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
-		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_ltssm_mac_gen1.sv \
-		rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \
-		rtl/phy/k13_qpll_event_recorder.sv \
-		rtl/phy/k13_golden_rate_replay.sv \
-		rtl/phy/pcie_recovery_speed_ctrl.sv \
-		rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
-		rtl/phy/pcie_k13_production_ctrl.sv \
+		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_phy_command_ctrl.sv \
+		rtl/phy/pcie_ltssm_mac_gen1.sv \
 		rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
 		rtl/dll/pcie_crc32_lcrc.sv rtl/dll/pcie_fc_local_credit_pool.sv \
 		rtl/dll/pcie_dllp_codec.sv rtl/dll/pcie_dllp_fc_manager.sv \
@@ -303,7 +311,7 @@ k11b2-vcs-stress:
 	./sim/vcs/run_k11b2_stress.sh
 
 k11b2-vivado:
-	./fpga/kcu105/run_k11b2_impl.sh
+	./fpga/kcu105/run_k11_gen1_release.sh
 
 k12a-cdc-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
@@ -443,38 +451,10 @@ k13-ctrl-sim:
 	@grep -q 'production_rxeq_done_without_adapt_falls_back' sim/verilator/k13_ctrl/results.xml
 	@echo "K13_CTRL_SIM_PASS"
 
-k13-integration-lint:
-	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
-		--top-module k13_ltssm_partner_top \
-		rtl/common/pcie_retrain_cdc_mailbox.sv \
-		rtl/phy/pcie_phy_rate_contract.sv \
-		rtl/phy/pcie_recovery_speed_ctrl.sv \
-		rtl/phy/pcie_equalization_ctrl.sv \
-		rtl/phy/pcie_recovery_ts_guard.sv \
-		rtl/phy/pcie_k13_production_ctrl.sv \
-		rtl/phy/pcie_gen12_scrambler.sv \
-		rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
-		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
-		rtl/phy/pcie_gen3_scrambler32.sv \
-		rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
-		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_ltssm_mac_gen1.sv \
-		sim/verilator/k13_integration/k13_ltssm_partner_top.sv
-
-k13-integration-sim:
-	@rm -f sim/verilator/k13_integration/results.xml
-	$(MAKE) -C sim/verilator/k13_integration \
-		SIM_BUILD=sim_build COCOTB_RESULTS_FILE=results.xml results.xml
-	@if grep -Eq '<failure|<error|<skipped' sim/verilator/k13_integration/results.xml; then \
-		echo "错误：K13 LTSSM/PHY Partner联合回归失败"; exit 1; \
-	fi
-	@grep -q 'production_ltssm_gen1_to_gen3_eq_closed_loop' \
-		sim/verilator/k13_integration/results.xml
-	@grep -q 'partner_initiated_speed_change_closes_recovery_and_eq' \
-		sim/verilator/k13_integration/results.xml
-	@echo "K13_LTSSM_PARTNER_INTEGRATION_PASS"
-
-k13: k13-ctrl-lint k13-ctrl-sim k13-integration-lint k13-integration-sim
-	@echo "K13_CTRL_AND_LTSSM_INTEGRATION_PASS"
+# K13 full-top/LTSSM integration is intentionally reference-only after the
+# Gen1 command-boundary split.  Its RTL, tests and reports remain in-tree but
+# are not production Make entry points.  Independent rate-contract/controller
+# unit targets above remain available for later Phase D work.
 
 g2-gen1-vcs-serial:
 	G2_GEN1_ONLY=1 K11B2_MODE=1 K11B_SKIP_SELFTEST=1 ./sim/vcs/run_k11b_serial.sh

@@ -34,8 +34,8 @@ ooc_warning_ids="$(grep '^WARNING: \[' "${build_dir}/ooc/vivado.log" \
     | sed -E 's/^WARNING: \[([^]]+)\].*/\1/' | sort -u)"
 expected_ooc_warning_ids="$(printf '%s\n' \
     'Synth 8-3917' \
+    'Synth 8-6014' \
     'Synth 8-7080' \
-    'Synth 8-7129' \
     'Timing 38-242')"
 if [[ "${ooc_warning_ids}" != "${expected_ooc_warning_ids}" ]]; then
     echo "错误：K03 OOC Warning ID 集合与固定 allowlist 不一致" >&2

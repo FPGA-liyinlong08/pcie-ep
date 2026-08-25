@@ -7,7 +7,9 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer DETECT_TIMEOUT_CYCLES = 64,
     parameter integer TRAIN_TIMEOUT_CYCLES = 512,
     parameter integer HOT_RESET_CYCLES = 8,
-    parameter integer TX_BUFFER_BYTES = 160
+    parameter integer TX_BUFFER_BYTES = 160,
+    parameter integer G9_WAIT_REMOTE_DETECT = 0,
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 32
 ) (
     input wire phy_pclk, input wire pipe_rst_n,
     input wire [31:0] phy_rxdata, input wire [1:0] phy_rxdatak,
@@ -76,7 +78,8 @@ module pcie_ltssm_mac_gen1 #(
         tx_pkt_is_dllp, tx_pkt_bad, link_disable, hot_reset_req, force_recovery,
         speed_retrain_active, recovery_speed_done,
         DETECT_TIMEOUT_CYCLES[0], TRAIN_TIMEOUT_CYCLES[0], HOT_RESET_CYCLES[0],
-        TX_BUFFER_BYTES[0]};
+        TX_BUFFER_BYTES[0], G9_WAIT_REMOTE_DETECT[0],
+        G9_WAIT_REMOTE_DETECT_CYCLES[0]};
 endmodule
 
 `default_nettype wire

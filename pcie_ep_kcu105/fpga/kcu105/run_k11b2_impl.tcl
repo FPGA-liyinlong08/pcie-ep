@@ -903,8 +903,8 @@ report_cdc -details -file [file join $build_dir cdc_synth.rpt]
 
 opt_design
 place_design
-phys_opt_design
-route_design
+phys_opt_design -directive AggressiveExplore
+route_design -directive AggressiveExplore
 # 路由后对正式与ILA构建统一执行进取物理优化。这不改变RTL，
 # 主要收敛MAC TX到GTHE3 TXDATA的跨层长路由；正式构建仍由下方
 # WNS/WHS>=0门禁决定是否生成bitstream。

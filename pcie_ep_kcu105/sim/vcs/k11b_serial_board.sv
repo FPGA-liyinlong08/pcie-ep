@@ -1636,35 +1636,17 @@ module k11b_endpoint_compat #(
     wire [31:0] bar0_base;
     wire [7:0] cdc_errors;
 
-`ifdef K13_DUT
-    localparam integer K13_ENABLED = 1;
-`else
-    localparam integer K13_ENABLED = 0;
-`endif
-`ifdef K13_RXEQ_BOOTSTRAP_VALUE
-    localparam integer K13_RXEQ_BOOTSTRAP_CFG = `K13_RXEQ_BOOTSTRAP_VALUE;
-`else
-    localparam integer K13_RXEQ_BOOTSTRAP_CFG = 1;
-`endif
-`ifdef K13_RXEQ_TWO_PASS_VALUE
-    localparam integer K13_RXEQ_TWO_PASS_CFG = `K13_RXEQ_TWO_PASS_VALUE;
-`else
-    localparam integer K13_RXEQ_TWO_PASS_CFG = 0;
-`endif
-
     kcu105_pcie_ep_gen1_top #(
         .DETECT_QUIET_CYCLES   (DETECT_QUIET_CYCLES),
         .DETECT_TIMEOUT_CYCLES (DETECT_TIMEOUT_CYCLES),
         .TRAIN_TIMEOUT_CYCLES  (TRAIN_TIMEOUT_CYCLES),
         .HOT_RESET_CYCLES      (HOT_RESET_CYCLES),
-        .K13_ENABLE            (K13_ENABLED),
-        // The encrypted Xilinx Root Port can spend tens of microseconds in
-        // same-rate Recovery before asserting the rate-change handshake.
-        // Keep these above that real serial-model latency.
-        .K13_SPEED_TIMEOUT_CYCLES(65_536),
-        .K13_EQ_TIMEOUT_CYCLES (65_536),
-        .K13_RXEQ_BOOTSTRAP    (K13_RXEQ_BOOTSTRAP_CFG),
-        .K13_RXEQ_TWO_PASS     (K13_RXEQ_TWO_PASS_CFG)
+        // The encrypted Root-Port model restarts Detect when the Endpoint
+        // holds the board-only G9 activity window.  G9 itself is covered by
+        // the K03/controller directed suite; the canonical hardware release
+        // keeps it enabled.
+        .G9_WAIT_REMOTE_DETECT (0),
+        .G9_WAIT_REMOTE_DETECT_CYCLES(65_536)
     ) DUT (
         .pcie_refclk_p(pcie_refclk_p), .pcie_refclk_n(pcie_refclk_n),
         .pcie_perst_n(pcie_perst_n), .pcie_rxp(pcie_rxp), .pcie_rxn(pcie_rxn),

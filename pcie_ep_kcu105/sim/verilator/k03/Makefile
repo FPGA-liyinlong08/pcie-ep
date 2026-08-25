@@ -2,14 +2,16 @@ SIM ?= verilator
 TOPLEVEL_LANG := verilog
 
 PROJECT_DIR := $(abspath ../../..)
-TOPLEVEL := pcie_ltssm_mac_gen1
+TOPLEVEL := k03_command_boundary_test_top
 MODULE := test_pcie_ltssm_mac_gen1
 SIM_BUILD ?= sim_build
 
 ifeq ($(NEGATIVE_STUB),1)
+TOPLEVEL := pcie_ltssm_mac_gen1
 VERILOG_SOURCES := $(CURDIR)/pcie_ltssm_mac_gen1_bad_stub.sv
 else
 VERILOG_SOURCES := \
+	$(PROJECT_DIR)/rtl/phy/pcie_phy_command_ctrl.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen12_scrambler.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_os_rx.sv \
@@ -18,7 +20,8 @@ VERILOG_SOURCES := \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen3_os_rx.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen3_os_tx.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_framer.sv \
-	$(PROJECT_DIR)/rtl/phy/pcie_ltssm_mac_gen1.sv
+	$(PROJECT_DIR)/rtl/phy/pcie_ltssm_mac_gen1.sv \
+	$(CURDIR)/k03_command_boundary_test_top.sv
 endif
 
 COMPILE_ARGS += -Wall -Wno-fatal -Wno-TIMESCALEMOD

@@ -63,6 +63,12 @@ module kcu105_pcie_gen1_top #(
     wire [3:0]  phy_rxeq_txpreset;
     wire        as_mac_in_detect;
     wire        as_cdr_hold_req;
+    wire [2:0]  phy_cmd_profile;
+    wire        phy_cmd_valid;
+    wire        phy_cmd_kind;
+    wire        phy_cmd_ready;
+    wire        phy_cmd_done;
+    wire [1:0]  phy_cmd_result;
 
     (* mark_debug = "true" *) wire [5:0]  ltssm_state;
     (* mark_debug = "true" *) wire        link_up;
@@ -155,6 +161,24 @@ module kcu105_pcie_gen1_top #(
         .phy_rxeq_done          (phy_rxeq_done)
     );
 
+    pcie_phy_command_ctrl u_phy_command_ctrl (
+        .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
+        .cmd_profile(phy_cmd_profile), .op_valid(phy_cmd_valid),
+        .op_kind(phy_cmd_kind), .op_ready(phy_cmd_ready),
+        .op_done(phy_cmd_done), .op_result(phy_cmd_result),
+        .phy_phystatus(phy_phystatus), .phy_rxstatus(phy_rxstatus),
+        .phy_powerdown(phy_powerdown), .phy_txdetectrx(phy_txdetectrx),
+        .phy_txelecidle(phy_txelecidle), .phy_rate(phy_rate),
+        .phy_txeq_ctrl(phy_txeq_ctrl), .phy_txeq_preset(phy_txeq_preset),
+        .phy_txeq_coeff(phy_txeq_coeff), .phy_rxeq_ctrl(phy_rxeq_ctrl),
+        .phy_rxeq_txpreset(phy_rxeq_txpreset),
+        .as_mac_in_detect(as_mac_in_detect),
+        .as_cdr_hold_req(as_cdr_hold_req),
+        .phy_txcompliance(phy_txcompliance), .phy_rxpolarity(phy_rxpolarity),
+        .phy_txmargin(phy_txmargin), .phy_txswing(phy_txswing),
+        .phy_txdeemph(phy_txdeemph)
+    );
+
     pcie_ltssm_mac_gen1 #(
         .DETECT_QUIET_CYCLES   (DETECT_QUIET_CYCLES),
         .DETECT_TIMEOUT_CYCLES (DETECT_TIMEOUT_CYCLES),
@@ -169,9 +193,13 @@ module kcu105_pcie_gen1_top #(
         .phy_rxstart_block      (phy_rxstart_block),
         .phy_rxsync_header      (phy_rxsync_header),
         .phy_rxvalid            (phy_rxvalid),
-        .phy_phystatus          (phy_phystatus),
         .phy_rxelecidle         (phy_rxelecidle),
-        .phy_rxstatus           (phy_rxstatus),
+        .phy_cmd_profile        (phy_cmd_profile),
+        .phy_cmd_valid          (phy_cmd_valid),
+        .phy_cmd_kind           (phy_cmd_kind),
+        .phy_cmd_ready          (phy_cmd_ready),
+        .phy_cmd_done           (phy_cmd_done),
+        .phy_cmd_result         (phy_cmd_result),
         .active_phy_rate        (phy_rate),
         .recovery_target_rate   (2'b00),
         .recovery_fallback_active(1'b0),
@@ -183,22 +211,6 @@ module kcu105_pcie_gen1_top #(
         .phy_txdata_valid       (phy_txdata_valid),
         .phy_txstart_block      (phy_txstart_block),
         .phy_txsync_header      (phy_txsync_header),
-        .phy_txdetectrx         (phy_txdetectrx),
-        .phy_txelecidle         (phy_txelecidle),
-        .phy_txcompliance       (phy_txcompliance),
-        .phy_rxpolarity         (phy_rxpolarity),
-        .phy_powerdown          (phy_powerdown),
-        .phy_rate               (phy_rate),
-        .phy_txmargin           (phy_txmargin),
-        .phy_txswing            (phy_txswing),
-        .phy_txdeemph           (phy_txdeemph),
-        .phy_txeq_ctrl          (phy_txeq_ctrl),
-        .phy_txeq_preset        (phy_txeq_preset),
-        .phy_txeq_coeff         (phy_txeq_coeff),
-        .phy_rxeq_ctrl          (phy_rxeq_ctrl),
-        .phy_rxeq_txpreset      (phy_rxeq_txpreset),
-        .as_mac_in_detect       (as_mac_in_detect),
-        .as_cdr_hold_req        (as_cdr_hold_req),
         .tx_pkt_valid           (1'b0),
         .tx_pkt_ready           (tx_pkt_ready),
         .tx_pkt_data            (16'd0),

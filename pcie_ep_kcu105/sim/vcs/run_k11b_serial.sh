@@ -158,6 +158,7 @@ fi
     "${project_dir}/rtl/phy/pcie_gen3_os_rx.sv" \
     "${project_dir}/rtl/phy/pcie_gen3_os_tx.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_framer.sv" \
+    "${project_dir}/rtl/phy/pcie_phy_command_ctrl.sv" \
     "${project_dir}/rtl/phy/pcie_ltssm_mac_gen1.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_gen1_top.sv" \
     "${project_dir}/rtl/dll/pcie_crc_stream.sv" \
@@ -177,14 +178,6 @@ fi
     "${project_dir}/sim/verilator/k09_integration/k09_tlp_test_top.sv" \
     "${project_dir}/rtl/ep/k11a_offline_top.sv" \
     "${project_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" \
-    "${project_dir}/rtl/common/pcie_retrain_cdc_mailbox.sv" \
-    "${project_dir}/rtl/phy/pcie_phy_rate_contract.sv" \
-    "${project_dir}/rtl/phy/k13_qpll_event_recorder.sv" \
-    "${project_dir}/rtl/phy/k13_golden_rate_replay.sv" \
-    "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv" \
-    "${project_dir}/rtl/phy/pcie_equalization_ctrl.sv" \
-    "${project_dir}/rtl/phy/pcie_recovery_ts_guard.sv" \
-    "${project_dir}/rtl/phy/pcie_k13_production_ctrl.sv" \
     $(if [[ "${k12e_mode}" == "1" ]]; then echo "${script_dir}/k12e_phy_monitor.sv"; fi) \
     "${vivado_home}/data/verilog/src/glbl.v" \
     "${script_dir}/k11b_serial_board.sv" \

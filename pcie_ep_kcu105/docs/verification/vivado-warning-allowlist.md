@@ -55,7 +55,7 @@ K03 OOC 允许以下唯一 Warning ID：
 |---|---|
 | `Synth 8-3917` | K03 固定 Gen1，Gen3/EQ/协商状态输出按契约固定为常量 |
 | `Synth 8-7080` | OOC 模块规模不足以启用并行综合 |
-| `Synth 8-7129` | PHY32 高 16 bit 在 Gen1 契约中明确不采样 |
+| `Synth 8-6014` | 非ILA OOC构建裁剪仅供板级诊断的G9/配置状态记录寄存器 |
 | `Timing 38-242` | OOC 顶层没有 K02 BUFG_GT 的实际 `HD.CLK_SRC` |
 
 K03+K02 完整集成允许 K02 的六类固定 Warning，并新增 `Synth 8-3332`：集成
