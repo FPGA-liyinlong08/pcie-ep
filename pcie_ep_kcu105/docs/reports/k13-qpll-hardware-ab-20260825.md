@@ -9,7 +9,8 @@ PHY_RATE=2 → PCIERATEQPLLRESET → QPLL1RESET → QPLL1LOCK → PHYSTATUS
 ```
 
 本记录使用同一套 compact ILA、GT primitive probe、16-bit event recorder、250 MHz
-采样时钟和 `phy_rate 0→2` 事务定义。Golden replay 固定为 `0`，未参与本轮测试。
+采样时钟和 `phy_rate 0→2` 事务定义。baseline/TXEQ-off 使用
+`K13_GOLDEN_RATE_REPLAY=0`；随后追加 Golden replay 实验，结果见文末。
 
 ## Bitstream
 
@@ -46,12 +47,13 @@ PHY_RATE=2 → PCIERATEQPLLRESET → QPLL1RESET → QPLL1LOCK → PHYSTATUS
 | QPLL1RESET fall | `+14` cycles |
 | QPLL1LOCK fall | `+9` cycles |
 | QPLL1LOCK rise | valid，时间戳达到 `0xffff` |
-| 最终 QPLL1LOCK | `1` |
+| 最终 QPLL1LOCK | `0` |
 | 最终 PHYSTATUS | `0` |
 
-`0xffff` 是 16-bit recorder 在 250 MHz 下约 262 µs 的饱和值。因此 baseline
-不是“QPLL 始终不锁”，而是 QPLL 晚重锁，且在记录窗口内没有完成 PHYSTATUS/Gen3
-completion 传播。
+`0xffff` 是 16-bit recorder 在 250 MHz 下约 262 µs 的饱和值。两次 CSV 的末尾
+event record 均为 `ffff00000009000e0009ffffffffffff0000ffff03f7`；按
+`valid[13:15]` 的 live end-state 解码为 `QPLL1LOCK=0、QPLL1RESET=0、PHYSTATUS=0`。
+中间出现的 `...23f7` 只是较早采样点，不能作为窗口末端的锁定证据。
 
 ## TXEQ-off 结果
 
@@ -62,10 +64,42 @@ completion 传播。
 
 ## 当前结论与后续
 
-1. 原先的“baseline QPLL 持续不锁”需要修正为“本次 baseline 约 262 µs 后重锁，
-   但 PHYSTATUS 未出现”。
+1. baseline 的中间采样出现过 lock-rise 事件，但两次 CSV 末尾状态均为
+   `QPLL1LOCK=0、QPLL1RESET=0、PHYSTATUS=0`，不能称为最终恢复 LOCK。
 2. TXEQ-off A/B 未进入相同的 rate/QPLL reset 事务；它改变了 rate contract 的
    前置路径，值得作为下一轮 command ownership/时序差分的入口，但还不能直接
    作为生产修复。
 3. 下一轮优先做 K02/K13 的精确 PHY command ownership 与输入序列差分；Golden
-   replay 仍保持关闭。
+   replay 追加实验结果见下节。
+
+## Golden replay 追加实验
+
+Golden replay 版本使用 `K13_PRE_RATE_TXEQ_ENABLE=1`、
+`K13_GOLDEN_RATE_REPLAY=1`，其余 K13、GT probe、event recorder 和采样时钟保持
+不变。由于 `K13_MINIMAL_DIAG=1` 的 timing gate 仍会拦截负 WNS，使用用户明确
+授权的 routed DCP 生成诊断 bitstream。
+
+| 项目 | 结果 |
+|---|---|
+| WNS / hold | `-0.322 / +0.004 ns` |
+| DRC | `0 Errors`（bitgen 4 个调试核 warning） |
+| bitstream | `build_k13_gen3_ila_gt_primitive_qpll_prereq_golden_replay_minimal_diag/impl/k13_gen3_endpoint_ila_golden_replay_negative_wns.bit` |
+| SHA256 | `21a6bb5493d9a8a53b9cdc581e4d9b941b134826dae74d6cba3bb23f6922175c` |
+| capture | [Golden replay CSV](../../fpga/kcu105/build_k13_gen3_ila_gt_primitive_qpll_prereq_golden_replay_minimal_diag/capture/20260825_144314_u_ila_pipe.csv) |
+
+硬件流程为同一 Vivado 会话内 `program → arm → Root Port retrain → upload`。
+Golden replay 成功触发 `PCIERATEQPLLRESET`，但 CSV 末尾 event record 为
+`ffff00000008000d0008ffffffffffff0000ffff03f7`，仍表示：
+
+```text
+QPLL1LOCK=0 / QPLL1RESET=0 / PHYSTATUS=0
+```
+
+远端 Root Port 最终状态仍为 `2.5GT/s x1`，未完成 Gen3 equalization。因此在
+当前实现中，Golden replay 没有使 QPLL 在观测窗口末端恢复 LOCK，也没有产生
+`PHYSTATUS/PCIEUSERGEN3RDY`。
+
+本次 sticky event timestamp 在第二次 rate trigger 前已经达到 `0xffff`，所以
+`valid[5]` 的 lock-rise 事件不能单独证明本次触发对应的 relock；本次结论以
+触发后末尾的 `valid[13:15]` live end-state 为准。下一轮应让 recorder 在每个
+新的 `phy_rate 0→2` 前沿重新 arm，或每次测试重新清除事务状态。

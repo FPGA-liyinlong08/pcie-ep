@@ -51,10 +51,30 @@ baseline 已在 KCU105 上完成两次有效 Root Port retrain capture：
 
 两次 recorder 结果一致：`QPLL1RESET` rise=`+9`、fall=`+14`，`QPLL1LOCK`
 fall=`+9`；`QPLL1LOCK` rise valid 但时间戳达到 16-bit 上限（约 262 us），最终
-`QPLL1LOCK=1`，`PHYSTATUS=0`。因此 baseline 不是“始终不锁”，而是本次窗口内
-晚重锁且未完成 PHY completion。
+`QPLL1LOCK=0`、`QPLL1RESET=0`、`PHYSTATUS=0`。早期采样中的 `...23f7` 不是
+最终状态，因此 baseline 仍未证明 QPLL 在窗口末端恢复 LOCK。
 
 TXEQ-off 已在 KCU105 上完成两次 retrain 尝试；两次均未触发
 `PCIERATEQPLLRESET` ILA，远端链路保持 Gen1，故当前不能判定 TXEQ-off 带来更快
 QPLL 重锁；它至少没有进入与 baseline 相同的可捕获 QPLL reset 事务。Golden replay
-仍固定为 `0`，未编程。
+baseline/TXEQ-off 版本固定为 `0`；Golden replay 已在下节追加生成并上板。
+
+## Golden replay 追加实验
+
+Golden replay 已使用 `K13_PRE_RATE_TXEQ_ENABLE=1`、`K13_GOLDEN_RATE_REPLAY=1`
+生成并上板。由于用户明确允许诊断 bit 使用负 WNS，基于 routed DCP 生成了：
+
+```text
+bit:  fpga/kcu105/build_k13_gen3_ila_gt_primitive_qpll_prereq_golden_replay_minimal_diag/impl/k13_gen3_endpoint_ila_golden_replay_negative_wns.bit
+ltx:  fpga/kcu105/build_k13_gen3_ila_gt_primitive_qpll_prereq_golden_replay_minimal_diag/impl/k11b2_gen1_endpoint_ila_golden_replay_negative_wns.ltx
+WNS:  -0.322 ns
+WHS:  +0.004 ns
+SHA:  21a6bb5493d9a8a53b9cdc581e4d9b941b134826dae74d6cba3bb23f6922175c
+```
+
+同一 Vivado 会话内 arm 后触发 Root Port retrain，ILA 成功捕获
+`PCIERATEQPLLRESET`。Golden replay 的末尾 event record 为
+`ffff00000008000d0008ffffffffffff0000ffff03f7`，即
+`QPLL1LOCK=0`、`QPLL1RESET=0`、`PHYSTATUS=0`；远端 Root Port 最终仍为
+`2.5GT/s x1`。因此 Golden replay 当前未恢复 QPLL LOCK，也未到达 Gen3
+completion，后续应转入 K02/K13 精确 command ownership/input sequence 差分。
