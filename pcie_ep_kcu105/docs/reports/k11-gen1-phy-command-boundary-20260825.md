@@ -35,24 +35,26 @@ G9_WAIT_REMOTE_DETECT_CYCLES=6250000
 GEN3_RATE_CHANGE=0
 EQ_ENABLE=0
 PHY_COMMAND_CTRL_COUNT=1
-WNS=+0.035 ns
-WHS=+0.015 ns
+WNS=+0.010 ns
+WHS=+0.030 ns
 DRC_ERROR_COUNT=0
 DEBUG_CORE_COUNT=0
-SHA256=4006e1a008ac462bbf3a98cf61733b7a2871ed74f575685ba892f921519d068d
+SHA256=1489516e07a8d75b30992a1589805306d2b0e3f4a447bc3ec14e708f3605ee70
 ```
 
 `make k11b2-vivado`与`make k11b2-hw-program`使用同一canonical bitstream路径。
 
 ## KCU105实板
 
-下载canonical bit后曾在首个压力尝试中复现历史偶发现象：第一次MMIO PASS、第二次
-读回全`ffffffff`，Root Port记录Corrected Data Link `Rollover + Timeout`。按门禁
-立即停止并保存Root Port/Endpoint/AER现场；未执行remove/rescan，也未修改K04～K10。
-静态逐状态差分确认旧/新raw PHY command映射一致。该样本与既有K11报告中的偶发
-DLL/事务生命周期现象相同，不能归因于PHY command重构。
+下载当前canonical bit后，初始一轮5次MMIO通过。下一次reboot的第1次MMIO通过，
+第2次工具瞬态返回`BAR_MMAP_FAIL`。按门禁立即停止压力并保存现场；未执行
+remove/rescan，也未修改K04～K10。原地受控重读随即恢复PASS，同时Endpoint/Root
+Port均保持2.5 GT/s x1、DLL Active，Root Port `UESta/CESta/RootSta`全零，当前启动
+周期也没有PCIe错误日志。该轮不计入PASS，且不能在没有复现证据时归因于PHY command
+边界。
 
-随后仅通过Root Port reboot清场，完整重跑并获得连续3轮干净结果：
+随后从新的Root Port reboot开始，用
+`fpga/kcu105/run_k11_gen1_release_acceptance_hw.sh`完整重跑并获得连续3轮干净结果：
 
 ```text
 reboot/enumeration: 3/3 PASS

@@ -2,7 +2,7 @@
 `default_nettype none
 
 // Semantic Recovery.Speed controller.  Raw PHY_RATE, TXEI and PhyStatus are
-// owned/consumed by pcie_phy_rate_contract; this block only sequences protocol
+// owned/consumed by pcie_phy_command_ctrl; this block only sequences protocol
 // requests, completion and fallback policy.
 module pcie_recovery_speed_ctrl #(
     parameter integer SPEED_TIMEOUT_CYCLES = 1_000_000

@@ -17,11 +17,14 @@
 // 250 MHz, so the delays below preserve the original wall-clock intervals.
 module phy_bringup_seq #(
     parameter integer SEQ_CLK_HZ = 250_000_000,
-    parameter integer WAIT_AFTER_READY_NS = 10_000,
-    parameter integer WAIT_AFTER_GEN1_ON_NS = 5_000,
-    parameter integer GEN1_HOLD_NS = 50_000,
-    parameter integer WAIT_AFTER_GEN1_OFF_NS = 10_000,
-    parameter integer GEN3_HOLD_NS = 80_000
+    // The hardware capture build intentionally uses a multi-second arm
+    // window.  A 32-bit signed integer overflows above 2.147 s and silently
+    // turns the delay into zero, so keep the nanosecond parameters 64-bit.
+    parameter longint unsigned WAIT_AFTER_READY_NS = 10_000,
+    parameter longint unsigned WAIT_AFTER_GEN1_ON_NS = 5_000,
+    parameter longint unsigned GEN1_HOLD_NS = 50_000,
+    parameter longint unsigned WAIT_AFTER_GEN1_OFF_NS = 10_000,
+    parameter longint unsigned GEN3_HOLD_NS = 80_000
 ) (
     input  wire       clk,
     input  wire       rst,

@@ -9,8 +9,13 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer TRAIN_TIMEOUT_CYCLES = 6_000_000,
     parameter integer HOT_RESET_CYCLES = 250_000,
     parameter integer K11B2_ILA_DEBUG = 0,
+    parameter integer K14_RATE_DEBUG = 0,
     parameter integer G9_WAIT_REMOTE_DETECT = 1,
-    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000
+    parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
+    // Phase D experimental path.  Zero is the signed Phase C Gen1 release.
+    parameter integer GEN3_RATE_CHANGE_ENABLE = 0,
+    parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0
 ) (
     input wire pcie_refclk_p, input wire pcie_refclk_n,
     input wire pcie_perst_n, input wire pcie_rxp, input wire pcie_rxn,
@@ -49,12 +54,17 @@ module kcu105_pcie_ep_gen1_top #(
     wire [2:0] phy_cmd_profile;
     wire phy_cmd_valid, phy_cmd_kind, phy_cmd_ready, phy_cmd_done;
     wire [1:0] phy_cmd_result;
+    wire phy_rate_req_valid, phy_rate_req_ready, phy_rate_busy;
+    wire phy_rate_done, phy_rate_abort;
+    wire [1:0] phy_rate_req_target, phy_active_rate;
+    wire [2:0] phy_rate_result;
+    wire [3:0] phy_rate_state;
 
     wire mac_rx_valid, mac_rx_sop, mac_rx_eop, mac_rx_is_dllp;
     wire [15:0] mac_rx_data;
     wire [1:0] mac_rx_keep;
     wire [3:0] mac_rx_error;
-    wire mac_tx_valid, mac_tx_ready, mac_tx_sop, mac_tx_eop;
+    wire mac_tx_valid, mac_tx_valid_core, mac_tx_ready, mac_tx_sop, mac_tx_eop;
     wire mac_tx_is_dllp, mac_tx_bad;
     wire [15:0] mac_tx_data;
     wire [1:0] mac_tx_keep;
@@ -65,6 +75,14 @@ module kcu105_pcie_ep_gen1_top #(
     wire core_retrain_link_pulse;
     wire [1:0] core_target_link_speed;
     wire ltssm_recovery_speed_ready;
+    wire os_ts1_valid, os_ts2_valid, os_malformed, os_tx_complete;
+    wire [7:0] os_link_number, os_lane_number, os_rate_id;
+    wire [7:0] os_training_control, os_eq_control;
+    wire [23:0] os_eq_data;
+    wire speed_recovery_active, speed_recovery_done;
+    wire speed_traffic_quiesce, speed_fallback_req, speed_fallback_active;
+    wire [1:0] speed_requested_rate;
+    wire [2:0] speed_state;
     reg [24:0] heartbeat_count;
 
     wire dbg_operational_seen, dbg_link_loss_seen;
@@ -87,6 +105,169 @@ module kcu105_pcie_ep_gen1_top #(
         assign dbg_link_loss_pipe = 1'b0;
         assign dbg_link_loss_core = 1'b0;
     end endgenerate
+
+    // Phase D coordinator is semantic-only.  It can accept an Endpoint
+    // configuration retrain request through the CDC mailbox, a Root Port TS1
+    // speed-change indication, or the explicitly configured one-shot board
+    // stimulus.  None of these paths owns a raw PHY signal.
+    generate if (GEN3_RATE_CHANGE_ENABLE != 0) begin : g_gen3_rate_change
+        wire mailbox_valid, mailbox_accept, mailbox_busy;
+        wire mailbox_overflow_sticky;
+        wire [1:0] mailbox_target;
+        wire speed_retrain_accept;
+        wire speed_rate_req_valid;
+        wire [1:0] speed_rate_req_target;
+        wire speed_timeout_sticky, speed_peer_reject_sticky;
+        wire speed_illegal_sticky, speed_cdr_loss_sticky;
+        wire speed_fallback_sticky;
+        wire [1:0] speed_negotiated;
+        wire partner_retrain_window = link_up ||
+                                      (ltssm_state == 6'd11) ||
+                                      (ltssm_state == 6'd12) ||
+                                      (ltssm_state == 6'd18);
+        wire [1:0] partner_target = os_rate_id[3] ? 2'b10 :
+                                    os_rate_id[2] ? 2'b01 :
+                                    os_rate_id[1] ? 2'b00 : 2'b11;
+        wire partner_retrain_valid = partner_retrain_window && os_ts1_valid &&
+                                      os_rate_id[7] &&
+                                      (partner_target != 2'b11);
+
+        localparam integer AUTO_RETRAIN_LIMIT =
+            (GEN3_AUTO_RETRAIN_CYCLES < 1) ? 1 : GEN3_AUTO_RETRAIN_CYCLES;
+        reg [31:0] auto_retrain_count;
+        reg auto_retrain_issued;
+        wire auto_retrain_pulse = (GEN3_AUTO_RETRAIN_CYCLES != 0) &&
+                                   link_up && !auto_retrain_issued &&
+                                   (auto_retrain_count >=
+                                    (AUTO_RETRAIN_LIMIT - 1));
+        always @(posedge phy_pclk or negedge pipe_rst_n) begin
+            if (!pipe_rst_n) begin
+                auto_retrain_count <= 32'd0;
+                auto_retrain_issued <= 1'b0;
+            end else if (!auto_retrain_issued && link_up) begin
+                if (auto_retrain_pulse)
+                    auto_retrain_issued <= 1'b1;
+                else if (GEN3_AUTO_RETRAIN_CYCLES != 0)
+                    auto_retrain_count <= auto_retrain_count + 1'b1;
+            end
+        end
+
+        pcie_retrain_cdc_mailbox u_retrain_mailbox (
+            .s_clk(phy_coreclk), .s_rst_n(core_rst_n),
+            .s_retrain_pulse(core_retrain_link_pulse),
+            .s_target_speed(core_target_link_speed),
+            .s_busy(mailbox_busy),
+            .s_overflow_sticky(mailbox_overflow_sticky),
+            .d_clk(phy_pclk), .d_rst_n(pipe_rst_n),
+            .d_retrain_valid(mailbox_valid), .d_target_speed(mailbox_target),
+            .d_retrain_accept(mailbox_accept)
+        );
+
+        wire semantic_retrain_valid = auto_retrain_pulse ||
+                                      partner_retrain_valid || mailbox_valid;
+        wire [1:0] semantic_retrain_target = auto_retrain_pulse ? 2'b10 :
+                                               partner_retrain_valid ?
+                                               partner_target : mailbox_target;
+        assign mailbox_accept = mailbox_valid && speed_retrain_accept &&
+                                !auto_retrain_pulse &&
+                                !partner_retrain_valid;
+
+        wire reinitialize_gen1 = (ltssm_state == 6'd0) ||
+                                 (ltssm_state == 6'd1) ||
+                                 (ltssm_state == 6'd14) ||
+                                 (ltssm_state == 6'd15) ||
+                                 (ltssm_state == 6'd16) ||
+                                 (ltssm_state == 6'd17);
+        wire rate_op_success = phy_rate_done &&
+                               (phy_rate_result == 3'd1);
+        wire rate_op_failed = phy_rate_done &&
+                              (phy_rate_result != 3'd0) &&
+                              (phy_rate_result != 3'd1);
+        wire peer_speed_ok = (phy_active_rate == speed_requested_rate) &&
+                             (os_ts1_valid || os_ts2_valid);
+
+        pcie_recovery_speed_ctrl #(
+            .SPEED_TIMEOUT_CYCLES(GEN3_SPEED_TIMEOUT_CYCLES)
+        ) u_recovery_speed (
+            .clk(phy_pclk), .rst_n(pipe_rst_n), .link_up(link_up),
+            .reinitialize_gen1(reinitialize_gen1),
+            .retrain_valid(semantic_retrain_valid),
+            .retrain_target_speed(semantic_retrain_target),
+            .ltssm_speed_ready(ltssm_recovery_speed_ready),
+            .rate_req_valid(speed_rate_req_valid),
+            .rate_req_target(speed_rate_req_target),
+            .fallback_req(speed_fallback_req),
+            .rate_req_ready(phy_rate_req_ready),
+            .rate_op_done(rate_op_success), .rate_op_failed(rate_op_failed),
+            .active_rate(phy_active_rate), .requested_rate(speed_requested_rate),
+            .retrain_accept(speed_retrain_accept), .phy_cdr_lost(1'b0),
+            .peer_speed_ok(peer_speed_ok), .peer_speed_reject(1'b0),
+            .state(speed_state), .traffic_quiesce(speed_traffic_quiesce),
+            .recovery_active(speed_recovery_active),
+            .negotiated_speed(speed_negotiated),
+            .speed_timeout_sticky(speed_timeout_sticky),
+            .peer_reject_sticky(speed_peer_reject_sticky),
+            .illegal_speed_sticky(speed_illegal_sticky),
+            .cdr_loss_sticky(speed_cdr_loss_sticky),
+            .fallback_taken_sticky(speed_fallback_sticky)
+        );
+
+        assign phy_rate_req_valid = speed_rate_req_valid;
+        assign phy_rate_req_target = speed_rate_req_target;
+        assign phy_rate_abort = reinitialize_gen1 || rate_op_failed;
+        assign speed_recovery_done = rate_op_success;
+
+        if (K14_RATE_DEBUG != 0) begin : g_rate_debug
+            (* KEEP = "TRUE" *) wire qpll1lock_record_in;
+            (* KEEP = "TRUE" *) wire qpll1reset_record_in;
+            (* mark_debug = "true" *) wire [117:0] k14_event_record_w;
+            (* mark_debug = "true" *) wire [3:0] k14_event_state_w =
+                rate_op_success ? 4'd8 :
+                rate_op_failed ? 4'd15 :
+                (speed_rate_req_valid || phy_rate_busy) ? 4'd6 : 4'd0;
+            (* mark_debug = "true" *) wire [1:0] k14_phy_rate_w = phy_rate;
+            (* mark_debug = "true" *) wire [1:0] k14_phy_powerdown_w =
+                phy_powerdown;
+            (* mark_debug = "true" *) wire k14_phy_txei_w = phy_txelecidle;
+            (* mark_debug = "true" *) wire k14_detect_assist_w =
+                as_mac_in_detect;
+            (* mark_debug = "true" *) wire k14_cdr_hold_w = as_cdr_hold_req;
+            (* mark_debug = "true" *) wire [3:0] k14_rate_state_w =
+                phy_rate_state;
+            (* mark_debug = "true" *) wire [2:0] k14_speed_state_w =
+                speed_state;
+            (* mark_debug = "true" *) wire [5:0] k14_ltssm_state_w =
+                ltssm_state;
+            k02_phy_event_recorder u_k14_event_recorder (
+                .clk(phy_pclk), .rst(!pipe_rst_n),
+                .qpll1lock(qpll1lock_record_in),
+                .qpll1reset(qpll1reset_record_in), .phy_rate(phy_rate),
+                .phy_phystatus(phy_phystatus),
+                .seq_state(k14_event_state_w),
+                .record_bus(k14_event_record_w)
+            );
+        end
+
+        wire _unused_gen3 = &{1'b0, mailbox_busy, mailbox_overflow_sticky,
+            speed_fallback_req,
+            speed_timeout_sticky, speed_peer_reject_sticky,
+            speed_illegal_sticky, speed_cdr_loss_sticky,
+            speed_fallback_sticky, speed_negotiated};
+    end else begin : g_gen3_rate_change_disabled
+        assign phy_rate_req_valid = 1'b0;
+        assign phy_rate_req_target = 2'b00;
+        assign phy_rate_abort = 1'b0;
+        assign speed_recovery_active = 1'b0;
+        assign speed_recovery_done = 1'b0;
+        assign speed_traffic_quiesce = 1'b0;
+        assign speed_fallback_req = 1'b0;
+        assign speed_requested_rate = 2'b00;
+        assign speed_state = 3'd0;
+    end endgenerate
+
+    // The LTSSM needs a level for the complete fallback sequence, not the
+    // coordinator's one-cycle fallback request pulse.
+    assign speed_fallback_active = (speed_state >= 3'd5);
 
     kcu105_pcie_phy_wrapper u_phy_wrapper (
         .pcie_refclk_p(pcie_refclk_p), .pcie_refclk_n(pcie_refclk_n),
@@ -128,6 +309,12 @@ module kcu105_pcie_ep_gen1_top #(
         .cmd_profile(phy_cmd_profile), .op_valid(phy_cmd_valid),
         .op_kind(phy_cmd_kind), .op_ready(phy_cmd_ready),
         .op_done(phy_cmd_done), .op_result(phy_cmd_result),
+        .rate_req_valid(phy_rate_req_valid),
+        .rate_req_target(phy_rate_req_target),
+        .rate_abort(phy_rate_abort), .rate_req_ready(phy_rate_req_ready),
+        .rate_busy(phy_rate_busy), .rate_done(phy_rate_done),
+        .rate_result(phy_rate_result), .active_rate(phy_active_rate),
+        .rate_state(phy_rate_state),
         .phy_phystatus(phy_phystatus), .phy_rxstatus(phy_rxstatus),
         .phy_powerdown(phy_powerdown), .phy_txdetectrx(phy_txdetectrx),
         .phy_txelecidle(phy_txelecidle), .phy_rate(phy_rate),
@@ -160,8 +347,10 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_cmd_profile(phy_cmd_profile), .phy_cmd_valid(phy_cmd_valid),
         .phy_cmd_kind(phy_cmd_kind), .phy_cmd_ready(phy_cmd_ready),
         .phy_cmd_done(phy_cmd_done), .phy_cmd_result(phy_cmd_result),
-        .active_phy_rate(2'b00), .recovery_target_rate(2'b00),
-        .recovery_fallback_active(1'b0), .gen3_tx_eq_control(8'h00),
+        .active_phy_rate(phy_active_rate),
+        .recovery_target_rate(speed_requested_rate),
+        .recovery_fallback_active(speed_fallback_active),
+        .gen3_tx_eq_control(8'h00),
         .gen3_tx_eq_data(24'd0), .gen3_protocol_eq_complete(1'b0),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),
         .phy_txdata_valid(phy_txdata_valid),
@@ -175,8 +364,10 @@ module kcu105_pcie_ep_gen1_top #(
         .rx_pkt_keep(mac_rx_keep), .rx_pkt_sop(mac_rx_sop),
         .rx_pkt_eop(mac_rx_eop), .rx_pkt_is_dllp(mac_rx_is_dllp),
         .rx_pkt_error(mac_rx_error), .link_disable(1'b0),
-        .hot_reset_req(1'b0), .force_recovery(recovery_req),
-        .speed_retrain_active(1'b0), .recovery_speed_done(1'b0),
+        .hot_reset_req(1'b0),
+        .force_recovery(recovery_req || speed_recovery_active),
+        .speed_retrain_active(speed_recovery_active),
+        .recovery_speed_done(speed_recovery_done),
         .recovery_speed_ready(ltssm_recovery_speed_ready),
         .ltssm_state(ltssm_state), .link_up(link_up),
         .negotiated_width(negotiated_width),
@@ -184,10 +375,12 @@ module kcu105_pcie_ep_gen1_top #(
         .rx_ts_count(rx_ts_count),
         .training_error_count(training_error_count),
         .timeout_count(timeout_count), .frame_error_count(frame_error_count),
-        .hot_reset_seen(hot_reset_seen), .os_ts1_valid(), .os_ts2_valid(),
-        .os_malformed(), .os_link_number(), .os_lane_number(), .os_rate_id(),
-        .os_training_control(), .os_tx_complete(), .os_eq_control(),
-        .os_eq_data()
+        .hot_reset_seen(hot_reset_seen), .os_ts1_valid(os_ts1_valid),
+        .os_ts2_valid(os_ts2_valid), .os_malformed(os_malformed),
+        .os_link_number(os_link_number), .os_lane_number(os_lane_number),
+        .os_rate_id(os_rate_id), .os_training_control(os_training_control),
+        .os_tx_complete(os_tx_complete), .os_eq_control(os_eq_control),
+        .os_eq_data(os_eq_data)
     );
 
     k11a_offline_top #(.K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)) u_protocol_core (
@@ -200,7 +393,7 @@ module kcu105_pcie_ep_gen1_top #(
         .mac_rx_valid(mac_rx_valid), .mac_rx_data(mac_rx_data),
         .mac_rx_keep(mac_rx_keep), .mac_rx_sop(mac_rx_sop),
         .mac_rx_eop(mac_rx_eop), .mac_rx_is_dllp(mac_rx_is_dllp),
-        .mac_rx_error(mac_rx_error), .mac_tx_valid(mac_tx_valid),
+        .mac_rx_error(mac_rx_error), .mac_tx_valid(mac_tx_valid_core),
         .mac_tx_ready(mac_tx_ready), .mac_tx_data(mac_tx_data),
         .mac_tx_keep(mac_tx_keep), .mac_tx_sop(mac_tx_sop),
         .mac_tx_eop(mac_tx_eop), .mac_tx_is_dllp(mac_tx_is_dllp),
@@ -211,6 +404,8 @@ module kcu105_pcie_ep_gen1_top #(
         .retrain_link_pulse(core_retrain_link_pulse),
         .target_link_speed(core_target_link_speed), .cdc_errors(cdc_errors)
     );
+
+    assign mac_tx_valid = mac_tx_valid_core && !speed_traffic_quiesce;
 
     always @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) heartbeat_count <= 25'd0;
@@ -234,7 +429,9 @@ module kcu105_pcie_ep_gen1_top #(
         phy_rxeq_adapt_done, phy_rxeq_done, link_number, rx_ts_count,
         ltssm_recovery_speed_ready, core_retrain_link_pulse,
         core_target_link_speed, dbg_operational_seen, dbg_link_loss_seen,
-        dbg_link_loss_pipe};
+        dbg_link_loss_pipe, os_malformed, os_link_number, os_lane_number,
+        os_training_control, os_tx_complete, os_eq_control, os_eq_data,
+        phy_rate_state, speed_state};
 endmodule
 
 `default_nettype wire

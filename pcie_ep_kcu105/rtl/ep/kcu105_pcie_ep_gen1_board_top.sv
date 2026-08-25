@@ -4,9 +4,13 @@
 // K11-B2 KCU105板级封装。完整状态保留在生产顶层内部，板级仅导出已冻结管脚。
 module kcu105_pcie_ep_gen1_board_top #(
     parameter integer K11B2_ILA_DEBUG = 0,
+    parameter integer K14_RATE_DEBUG = 0,
     parameter integer G9_WAIT_REMOTE_DETECT = 1,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
-    parameter integer DETECT_QUIET_CYCLES = 1_500_000
+    parameter integer DETECT_QUIET_CYCLES = 1_500_000,
+    parameter integer GEN3_RATE_CHANGE_ENABLE = 0,
+    parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -31,9 +35,13 @@ module kcu105_pcie_ep_gen1_board_top #(
 
     kcu105_pcie_ep_gen1_top #(
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
+        .K14_RATE_DEBUG(K14_RATE_DEBUG),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
-        .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES)
+        .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES),
+        .GEN3_RATE_CHANGE_ENABLE(GEN3_RATE_CHANGE_ENABLE),
+        .GEN3_SPEED_TIMEOUT_CYCLES(GEN3_SPEED_TIMEOUT_CYCLES),
+        .GEN3_AUTO_RETRAIN_CYCLES(GEN3_AUTO_RETRAIN_CYCLES)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),
         .pcie_refclk_n(pcie_refclk_n),

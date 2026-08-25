@@ -4,7 +4,11 @@
 // Gen1 PHY command boundary.  The LTSSM selects a semantic profile and owns
 // protocol timeout/state policy; this block is the sole owner of raw PIPE/PHY
 // commands and translates PhyStatus into a same-cycle semantic completion.
-module pcie_phy_command_ctrl (
+module pcie_phy_command_ctrl #(
+    parameter integer GOLDEN_RELEASE_GAP_CYCLES = 2_500,
+    parameter integer RATE_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer GEN3_TX_SETTLE_CYCLES = 32
+) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
 
@@ -15,13 +19,25 @@ module pcie_phy_command_ctrl (
     output wire        op_done,
     output wire [1:0]  op_result,
 
+    // Recovery.Speed semantic transaction.  The requester owns protocol
+    // policy/timeouts; this block owns the complete raw PHY rate envelope.
+    input  wire        rate_req_valid,
+    input  wire [1:0]  rate_req_target,
+    input  wire        rate_abort,
+    output wire        rate_req_ready,
+    output wire        rate_busy,
+    output wire        rate_done,
+    output wire [2:0]  rate_result,
+    output wire [1:0]  active_rate,
+    output wire [3:0]  rate_state,
+
     input  wire        phy_phystatus,
     input  wire [2:0]  phy_rxstatus,
 
     output reg  [1:0]  phy_powerdown,
     output reg         phy_txdetectrx,
     output reg         phy_txelecidle,
-    output wire [1:0]  phy_rate,
+    output reg  [1:0]  phy_rate,
     output wire [1:0]  phy_txeq_ctrl,
     output wire [3:0]  phy_txeq_preset,
     output wire [5:0]  phy_txeq_coeff,
@@ -46,10 +62,47 @@ module pcie_phy_command_ctrl (
     localparam [1:0] RESULT_SUCCESS = 2'd1;
     localparam [1:0] RESULT_NOT_PRESENT = 2'd2;
 
+    localparam [1:0] RATE_GEN1 = 2'b00;
+    localparam [1:0] RATE_GEN3 = 2'b10;
+    localparam [2:0] RATE_RESULT_NONE = 3'd0;
+    localparam [2:0] RATE_RESULT_SUCCESS = 3'd1;
+    localparam [2:0] RATE_RESULT_ILLEGAL = 3'd2;
+    localparam [2:0] RATE_RESULT_PHYSTATUS_TIMEOUT = 3'd3;
+    localparam [2:0] RATE_RESULT_ABORTED = 3'd4;
+
+    localparam [3:0] RATE_STABLE = 4'd0;
+    localparam [3:0] RATE_RELEASE = 4'd1;
+    localparam [3:0] RATE_GOLDEN_GAP = 4'd2;
+    localparam [3:0] RATE_APPLY = 4'd3;
+    localparam [3:0] RATE_WAIT_PHYSTATUS = 4'd4;
+    localparam [3:0] RATE_GEN3_SETTLE = 4'd5;
+    localparam [3:0] RATE_COMPLETE = 4'd6;
+    localparam [3:0] RATE_ERROR_HOLD = 4'd7;
+
+    localparam integer GAP_LIMIT =
+        (GOLDEN_RELEASE_GAP_CYCLES < 1) ? 1 : GOLDEN_RELEASE_GAP_CYCLES;
+    localparam integer TIMEOUT_LIMIT =
+        (RATE_TIMEOUT_CYCLES < 1) ? 1 : RATE_TIMEOUT_CYCLES;
+    localparam integer SETTLE_LIMIT =
+        (GEN3_TX_SETTLE_CYCLES < 1) ? 1 : GEN3_TX_SETTLE_CYCLES;
+
+    reg [3:0] rate_state_r;
+    reg [1:0] active_rate_r;
+    reg [1:0] target_rate_r;
+    reg [31:0] gap_count_r;
+    reg [31:0] timeout_count_r;
+    reg [31:0] settle_count_r;
+    reg phy_phystatus_q;
+    reg rate_done_r;
+    reg [2:0] rate_result_r;
+
+    wire phystatus_rising = phy_phystatus && !phy_phystatus_q;
+    wire rate_envelope_active = (rate_state_r != RATE_STABLE);
+
     // The controller is always able to accept the profile selected for the
     // current LTSSM state.  Completion deliberately uses the current
     // PhyStatus beat; no completion pipeline is inserted at this boundary.
-    assign op_ready = pipe_rst_n;
+    assign op_ready = pipe_rst_n && !rate_envelope_active;
     assign op_done = pipe_rst_n && op_valid && op_ready && phy_phystatus;
     assign op_result = !op_done ? 2'd0 :
         ((op_kind == OP_RECEIVER_DETECT) && (phy_rxstatus != 3'b011)) ?
@@ -81,19 +134,159 @@ module pcie_phy_command_ctrl (
                 as_mac_in_detect = 1'b1;
             end
             PROFILE_RECOVERY_SPEED: begin
-                as_cdr_hold_req = 1'b1;
+                // K02 Golden keeps the CDR hold assist deasserted before and
+                // throughout a Gen1->Gen3 rate transaction.
+                as_cdr_hold_req = 1'b0;
             end
             default: begin
                 // Polling, Configuration, Recovery, L0 and Hot Reset use
                 // the active Gen1 P0 profile.
             end
         endcase
+
+        // Golden Recovery.Speed envelope overrides only the semantic profile
+        // mapping.  P0 is maintained, TX is held in Electrical Idle, Detect
+        // assist and CDR hold are both disabled through completion.  This is
+        // intentionally different from the retired K13 replay envelope.
+        if (rate_envelope_active) begin
+            phy_powerdown = 2'b00;
+            phy_txdetectrx = 1'b0;
+            phy_txelecidle = 1'b1;
+            as_mac_in_detect = 1'b0;
+            as_cdr_hold_req = 1'b0;
+        end
     end
 
-    // Phase B/C is intentionally Gen1-only.  Compliance, polarity, margin,
-    // swing, deemphasis and all equalization controls have one centralized
-    // zero owner here.
-    assign phy_rate = 2'b00;
+    // Raw PHY_RATE changes only inside this controller.  The 10 us Golden
+    // release gap holds the committed rate; APPLY/WAIT/SETTLE then hold the
+    // requested rate continuously through PhyStatus completion.
+    always @* begin
+        case (rate_state_r)
+            RATE_APPLY, RATE_WAIT_PHYSTATUS, RATE_GEN3_SETTLE,
+            RATE_COMPLETE, RATE_ERROR_HOLD:
+                phy_rate = target_rate_r;
+            default:
+                phy_rate = active_rate_r;
+        endcase
+    end
+
+    assign rate_req_ready = pipe_rst_n && (rate_state_r == RATE_STABLE);
+    assign rate_busy = rate_envelope_active;
+    assign rate_done = rate_done_r;
+    assign rate_result = rate_result_r;
+    assign active_rate = active_rate_r;
+    assign rate_state = rate_state_r;
+
+    always @(posedge phy_pclk or negedge pipe_rst_n) begin
+        if (!pipe_rst_n) begin
+            rate_state_r <= RATE_STABLE;
+            active_rate_r <= RATE_GEN1;
+            target_rate_r <= RATE_GEN1;
+            gap_count_r <= 32'd0;
+            timeout_count_r <= 32'd0;
+            settle_count_r <= 32'd0;
+            phy_phystatus_q <= 1'b0;
+            rate_done_r <= 1'b0;
+            rate_result_r <= RATE_RESULT_NONE;
+        end else if (rate_abort) begin
+            // PERST/hot-reset/link-loss recovery always returns to the signed
+            // Gen1 command baseline; no in-flight transaction is retried.
+            rate_state_r <= RATE_STABLE;
+            active_rate_r <= RATE_GEN1;
+            target_rate_r <= RATE_GEN1;
+            gap_count_r <= 32'd0;
+            timeout_count_r <= 32'd0;
+            settle_count_r <= 32'd0;
+            phy_phystatus_q <= phy_phystatus;
+            rate_done_r <= rate_envelope_active;
+            rate_result_r <= rate_envelope_active ? RATE_RESULT_ABORTED :
+                                                    RATE_RESULT_NONE;
+        end else begin
+            phy_phystatus_q <= phy_phystatus;
+            rate_done_r <= 1'b0;
+            rate_result_r <= RATE_RESULT_NONE;
+            case (rate_state_r)
+                RATE_STABLE: begin
+                    gap_count_r <= 32'd0;
+                    timeout_count_r <= 32'd0;
+                    settle_count_r <= 32'd0;
+                    if (rate_req_valid && rate_req_ready) begin
+                        if ((rate_req_target == 2'b11) ||
+                            (rate_req_target == 2'b01)) begin
+                            // Phase D admits only Gen1 and Gen3.  Gen2 and the
+                            // reserved encoding are explicit semantic errors.
+                            rate_done_r <= 1'b1;
+                            rate_result_r <= RATE_RESULT_ILLEGAL;
+                        end else if (rate_req_target == active_rate_r) begin
+                            rate_done_r <= 1'b1;
+                            rate_result_r <= RATE_RESULT_SUCCESS;
+                        end else begin
+                            target_rate_r <= rate_req_target;
+                            rate_state_r <= RATE_RELEASE;
+                        end
+                    end
+                end
+                RATE_RELEASE: begin
+                    gap_count_r <= 32'd0;
+                    rate_state_r <= RATE_GOLDEN_GAP;
+                end
+                RATE_GOLDEN_GAP: begin
+                    if (gap_count_r >= (GAP_LIMIT - 1)) begin
+                        gap_count_r <= 32'd0;
+                        rate_state_r <= RATE_APPLY;
+                    end else begin
+                        gap_count_r <= gap_count_r + 1'b1;
+                    end
+                end
+                RATE_APPLY: begin
+                    timeout_count_r <= 32'd0;
+                    rate_state_r <= RATE_WAIT_PHYSTATUS;
+                end
+                RATE_WAIT_PHYSTATUS: begin
+                    if (phystatus_rising) begin
+                        timeout_count_r <= 32'd0;
+                        settle_count_r <= 32'd0;
+                        rate_state_r <= (target_rate_r == RATE_GEN3) ?
+                                        RATE_GEN3_SETTLE : RATE_COMPLETE;
+                    end else if (timeout_count_r >= (TIMEOUT_LIMIT - 1)) begin
+                        rate_done_r <= 1'b1;
+                        rate_result_r <= RATE_RESULT_PHYSTATUS_TIMEOUT;
+                        rate_state_r <= RATE_ERROR_HOLD;
+                    end else begin
+                        timeout_count_r <= timeout_count_r + 1'b1;
+                    end
+                end
+                RATE_GEN3_SETTLE: begin
+                    if (settle_count_r >= (SETTLE_LIMIT - 1)) begin
+                        settle_count_r <= 32'd0;
+                        rate_state_r <= RATE_COMPLETE;
+                    end else begin
+                        settle_count_r <= settle_count_r + 1'b1;
+                    end
+                end
+                RATE_COMPLETE: begin
+                    active_rate_r <= target_rate_r;
+                    rate_done_r <= 1'b1;
+                    rate_result_r <= RATE_RESULT_SUCCESS;
+                    rate_state_r <= RATE_STABLE;
+                end
+                RATE_ERROR_HOLD: begin
+                    // Preserve the failed raw target and Golden TXEI envelope
+                    // for traceability. rate_abort or PIPE reset is the only
+                    // safe return to the Gen1 baseline.
+                    rate_state_r <= RATE_ERROR_HOLD;
+                end
+                default: begin
+                    rate_state_r <= RATE_STABLE;
+                    active_rate_r <= RATE_GEN1;
+                    target_rate_r <= RATE_GEN1;
+                end
+            endcase
+        end
+    end
+
+    // Compliance, polarity, margin, swing, deemphasis and all equalization
+    // controls retain one centralized zero owner through Phase D.
     assign phy_txeq_ctrl = 2'b00;
     assign phy_txeq_preset = 4'd0;
     assign phy_txeq_coeff = 6'd0;
@@ -105,7 +298,7 @@ module pcie_phy_command_ctrl (
     assign phy_txswing = 1'b0;
     assign phy_txdeemph = 1'b0;
 
-    wire _unused = &{1'b0, phy_pclk, PROFILE_ACTIVE};
+    wire _unused = &{1'b0, PROFILE_ACTIVE, RATE_GEN1};
 endmodule
 
 `default_nettype wire

@@ -2,11 +2,22 @@ set script_dir  [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
 set xci_path    [file join $script_dir ip pcie_phy_x1_gen3 pcie_phy_x1_gen3.xci]
 set part_name   xcku040-ffva1156-2-e
-set top_name    kcu105_pcie_phy_bringup_top
-set build_dir   [file join $script_dir build_k02]
-set bit_stem    k02_pcie_phy_bringup_ila
+set command_rate_variant [expr {[info exists ::env(K14_COMMAND_RATE)] &&
+                                $::env(K14_COMMAND_RATE) eq "1"}]
+set top_name    [expr {$command_rate_variant ?
+                       "kcu105_pcie_phy_command_rate_top" :
+                       "kcu105_pcie_phy_bringup_top"}]
+set build_dir   [file join $script_dir [expr {$command_rate_variant ?
+                                              "build_k14_phy_command_rate" :
+                                              "build_k02"}]]
+set bit_stem    [expr {$command_rate_variant ?
+                       "k14_phy_command_rate_ila" :
+                       "k02_pcie_phy_bringup_ila"}]
 set k02_wait_after_ready_ns [expr {[info exists ::env(K02_PHY_CTRL_WAIT_AFTER_READY_NS)] ?
                                    $::env(K02_PHY_CTRL_WAIT_AFTER_READY_NS) : 10000}]
+if {$k02_wait_after_ready_ns < 1 || $k02_wait_after_ready_ns > 2000000000} {
+    error "K02_PHY_CTRL_WAIT_AFTER_READY_NS必须在1..2000000000内；Vivado 2021.2的-generic会先按32位有符号整数解析无类型十进制值"
+}
 
 # K02 顶层直接实例化 Golden `phy_ctrl.v` + `phy_bringup_seq`，独立完成
 # Gen1->Gen3 切换。K02 顶层无参数化 K02_USE_PHY_CTRL 路径、无 DYNAMIC_*
@@ -38,16 +49,28 @@ read_verilog -sv [file join $project_dir rtl/phy/kcu105_refclk_reset.sv]
 read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_wrapper.sv]
 # Golden controller 移植到 K02 顶层。读顺序：底层 -> 顶层。
 # phy_ctrl.v 内部实例化 pat_gen，因此 pat_gen 必须先读。
-read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen_lane.v]
-read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen.v]
-read_verilog     [file join $project_dir rtl/phy/phy_ctrl.v]
-read_verilog -sv [file join $project_dir rtl/phy/phy_bringup_seq.sv]
 read_verilog -sv [file join $project_dir rtl/phy/k02_phy_event_recorder.sv]
-read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_bringup_top.sv]
+if {$command_rate_variant} {
+    read_verilog -sv [file join $project_dir rtl/phy/pcie_phy_command_ctrl.sv]
+    read_verilog -sv [file join $project_dir rtl/phy/pcie_phy_rate_test_seq.sv]
+    read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_command_rate_top.sv]
+} else {
+    read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen_lane.v]
+    read_verilog     [file join $project_dir rtl/phy/phy_ctrl_pat_gen.v]
+    read_verilog     [file join $project_dir rtl/phy/phy_ctrl.v]
+    read_verilog -sv [file join $project_dir rtl/phy/phy_bringup_seq.sv]
+    read_verilog -sv [file join $project_dir rtl/phy/kcu105_pcie_phy_bringup_top.sv]
+}
 read_xdc [file join $script_dir k02_pcie_phy_bringup.xdc]
 
-synth_design -top $top_name -part $part_name \
-    -generic K02_PHY_CTRL_WAIT_AFTER_READY_NS=$k02_wait_after_ready_ns
+if {$command_rate_variant} {
+    set arm_delay_cycles [expr {$k02_wait_after_ready_ns / 4}]
+    synth_design -top $top_name -part $part_name \
+        -generic ARM_DELAY_CYCLES=$arm_delay_cycles
+} else {
+    synth_design -top $top_name -part $part_name \
+        -generic K02_PHY_CTRL_WAIT_AFTER_READY_NS=$k02_wait_after_ready_ns
+}
 
 if {$k02_ila_debug} {
     # K02 standalone PHY 没有协议层 ILA；这里直接从综合网表中的 GT Wizard
@@ -268,7 +291,8 @@ if {$k02_ila_debug} {
 
 set summary_path [file join $build_dir impl_summary.txt]
 set summary_file [open $summary_path w]
-puts $summary_file "K02_IMPL_PASS"
+puts $summary_file [expr {$command_rate_variant ?
+                          "K14_PHY_COMMAND_RATE_IMPL_PASS" : "K02_IMPL_PASS"}]
 puts $summary_file "part=$part_name"
 puts $summary_file "top=$top_name"
 puts $summary_file "GTHE3_CHANNEL_COUNT=[llength $gth_channels]"
@@ -279,7 +303,9 @@ puts $summary_file "PCIE_HARD_BLOCK_COUNT=$hard_pcie_count"
 puts $summary_file "WNS=$wns"
 puts $summary_file "WAIT_AFTER_READY_NS=$k02_wait_after_ready_ns"
 puts $summary_file "K02_ILA_DEBUG=$k02_ila_debug"
+puts $summary_file "K14_COMMAND_RATE=$command_rate_variant"
 puts $summary_file "bitstream=[file join $build_dir $bit_name]"
 close $summary_file
 
-puts "K02_IMPL_PASS channel=$channel_loc common=$common_loc WNS=$wns"
+puts "[expr {$command_rate_variant ? "K14_PHY_COMMAND_RATE_IMPL_PASS" :
+                                      "K02_IMPL_PASS"}] channel=$channel_loc common=$common_loc WNS=$wns"

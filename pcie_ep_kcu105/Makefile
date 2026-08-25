@@ -22,7 +22,10 @@
 	k11a-checker-selftest k11a-lint k11a-bridge k11a-offline \
 	k11a-regression k11a-vivado k11a \
 	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vcs-stress k11b2-vivado \
-	k11b2-hw-probe k11b2-hw-program k11b2-hw-program-debug \
+	k11b2-hw-probe k11b2-hw-program k11b2-hw-acceptance k11b2-hw-program-debug \
+	k14-recovery-speed-vivado k14-recovery-speed-hw-program-arm \
+	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
+	k14-recovery-speed-hw-repeat k14-recovery-speed-test \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
@@ -259,6 +262,8 @@ k03-verilator:
 phy-command-ctrl-test:
 	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		--top-module pcie_phy_command_ctrl \
+		-GGOLDEN_RELEASE_GAP_CYCLES=4 -GRATE_TIMEOUT_CYCLES=8 \
+		-GGEN3_TX_SETTLE_CYCLES=2 \
 		$(CURDIR)/rtl/phy/pcie_phy_command_ctrl.sv \
 		$(CURDIR)/sim/verilator/phy_command_ctrl/pcie_phy_command_ctrl_test.cpp \
 		-Mdir sim/verilator/phy_command_ctrl/sim_build
@@ -266,6 +271,16 @@ phy-command-ctrl-test:
 
 phy-command-ownership:
 	python3 scripts/check_phy_command_ownership.py
+
+k14-recovery-speed-test:
+	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module k14_recovery_speed_test_top \
+		$(CURDIR)/rtl/phy/pcie_phy_command_ctrl.sv \
+		$(CURDIR)/rtl/phy/pcie_recovery_speed_ctrl.sv \
+		$(CURDIR)/sim/verilator/k14_recovery_speed/k14_recovery_speed_test_top.sv \
+		$(CURDIR)/sim/verilator/k14_recovery_speed/k14_recovery_speed_test.cpp \
+		-Mdir sim/verilator/k14_recovery_speed/sim_build
+	./sim/verilator/k14_recovery_speed/sim_build/Vk14_recovery_speed_test_top
 
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
@@ -312,6 +327,9 @@ k11b2-vcs-stress:
 
 k11b2-vivado:
 	./fpga/kcu105/run_k11_gen1_release.sh
+
+k14-recovery-speed-vivado:
+	./fpga/kcu105/run_k14_recovery_speed_impl.sh
 
 k12a-cdc-lint:
 	verilator --lint-only -Wall -Wno-fatal -Wno-TIMESCALEMOD \
@@ -580,10 +598,32 @@ k11b2-hw-program:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_hw.tcl -tclargs localhost:3122 program
 
+k11b2-hw-acceptance:
+	./fpga/kcu105/run_k11_gen1_release_acceptance_hw.sh 3 5
+
 k11b2-hw-program-debug:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k11b2_hw.tcl \
 		-tclargs localhost:3122 program-debug
+
+k14-recovery-speed-hw-program-arm:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) program-arm
+
+k14-recovery-speed-hw-capture-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) capture-wait
+
+k14-recovery-speed-hw-upload:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) upload
+
+k14-recovery-speed-hw-repeat:
+	./fpga/kcu105/run_k14_recovery_speed_repeated_hw.sh \
+		$(or $(K14_REPEAT_CYCLES),10)
 
 g2-gen1-hw-program:
 	$(VIVADO) -mode batch -nojournal -nolog \

@@ -16,11 +16,11 @@
 module kcu105_pcie_phy_bringup_top #(
     // 5 个参数对齐 `pcie_phy_0_ex/board_kcu105/phy_bringup_seq.sv` 的
     // 250 MHz 计数器预算，phy_bringup_seq 内部按 ns 折算。
-    parameter integer K02_PHY_CTRL_WAIT_AFTER_READY_NS    = 10_000,
-    parameter integer K02_PHY_CTRL_WAIT_AFTER_GEN1_ON_NS  =  5_000,
-    parameter integer K02_PHY_CTRL_GEN1_HOLD_NS           = 50_000,
-    parameter integer K02_PHY_CTRL_WAIT_AFTER_GEN1_OFF_NS = 10_000,
-    parameter integer K02_PHY_CTRL_GEN3_HOLD_NS           = 80_000
+    parameter longint unsigned K02_PHY_CTRL_WAIT_AFTER_READY_NS    = 10_000,
+    parameter longint unsigned K02_PHY_CTRL_WAIT_AFTER_GEN1_ON_NS  =  5_000,
+    parameter longint unsigned K02_PHY_CTRL_GEN1_HOLD_NS           = 50_000,
+    parameter longint unsigned K02_PHY_CTRL_WAIT_AFTER_GEN1_OFF_NS = 10_000,
+    parameter longint unsigned K02_PHY_CTRL_GEN3_HOLD_NS           = 80_000
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,

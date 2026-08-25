@@ -2,8 +2,14 @@
 # Default trigger is `seq_state_w` reaching S_GEN3_WAIT (4'd6) so the capture
 # contains the pre-Gen3 divergence (QPLL1 1->0->1, debug_state==8'h04).
 set script_dir  [file dirname [file normalize [info script]]]
-set build_dir   [file join $script_dir build_k02]
-set bit_stem    k02_pcie_phy_bringup_ila
+set command_rate_variant [expr {[info exists ::env(K14_COMMAND_RATE)] &&
+                                $::env(K14_COMMAND_RATE) eq "1"}]
+set build_dir   [file join $script_dir [expr {$command_rate_variant ?
+                                              "build_k14_phy_command_rate" :
+                                              "build_k02"}]]
+set bit_stem    [expr {$command_rate_variant ?
+                       "k14_phy_command_rate_ila" :
+                       "k02_pcie_phy_bringup_ila"}]
 set capture_dir [file join $build_dir capture]
 set bit_path    [file join $build_dir ${bit_stem}.bit]
 set ltx_path    [file join $build_dir ${bit_stem}.ltx]
