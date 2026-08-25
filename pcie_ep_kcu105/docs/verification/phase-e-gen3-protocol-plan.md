@@ -1,6 +1,6 @@
 # Phase E：Gen3协议与完整Endpoint计划
 
-状态：**E0/E1 PASS；E2 RTL、仿真与K14实现复验PASS；E2实板20次门禁待实施**
+状态：**E0/E1 PASS；E2 RTL/仿真/实现PASS；实板BLOCKED于Gen3 PIPE无有效接收block**
 
 ## 目标与入口
 
@@ -49,9 +49,12 @@ fallback；E2不直接驱动raw PHY命令。
 - PERST、Hot Reset、CDR loss和malformed block必须确定性回到Gen1安全路径；
 - ILA同时观察语义状态、raw rate最终条件、block lock和TS计数。
 
-软件/实现门禁已满足；阶段最终完成条件仍是同板连续20次到达Gen3 RcvrLock终点，
-无重复rate transaction、QPLL reloss或raw owner毛刺。K14原ILA探针结构保持不变，
-E2语义探针和20次实板采集留给单独的E2 debug build。
+软件/实现门禁已满足；单独E2 debug build保持K14原`probe0=31`、`probe1=118`逐位
+不变，并追加14-bit语义状态和8-bit PIPE状态。实板trace已证明K14 Golden切速成功并
+进入Gen3 RcvrLock，`RxElecIdle=0`，但`RxDataValid/RxStartBlock/RxValid`始终为0，
+所以没有block lock或TS1。连续20次最终门禁因此未执行、未通过；先转入GT/PCS→PIPE
+接收路径诊断，且不得修改K14 raw owner。只有PIPE恢复有效block后，才恢复同板20次
+RcvrLock验收并检查重复rate transaction、QPLL reloss和owner毛刺。
 
 ## E3：Recovery.RcvrCfg
 

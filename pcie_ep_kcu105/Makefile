@@ -26,7 +26,9 @@
 	k14-recovery-speed-vivado k14-recovery-speed-hw-program-arm \
 	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
 	k14-recovery-speed-hw-repeat k14-recovery-speed-test phase-e-gen3-block-test \
-	phase-e-k14-rate-guard phase-e2-rcvrlock-test \
+	phase-e-k14-rate-guard phase-e2-rcvrlock-test phase-e2-rcvrlock-vivado \
+	phase-e2-trace-analyzer-selftest phase-e2-rcvrlock-hw-probe \
+	phase-e2-rcvrlock-hw-repeat \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
@@ -293,6 +295,12 @@ phase-e-k14-rate-guard: phy-command-ownership k14-recovery-speed-test
 
 phase-e2-rcvrlock-test:
 	./sim/verilator/phase_e2_rcvrlock/run_phase_e2_rcvrlock.sh
+
+phase-e2-rcvrlock-vivado:
+	./fpga/kcu105/run_phase_e2_rcvrlock_impl.sh
+
+phase-e2-trace-analyzer-selftest:
+	python3 scripts/check_phase_e2_trace_analyzer.py
 
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
@@ -637,6 +645,15 @@ k14-recovery-speed-hw-upload:
 k14-recovery-speed-hw-repeat:
 	./fpga/kcu105/run_k14_recovery_speed_repeated_hw.sh \
 		$(or $(K14_REPEAT_CYCLES),10)
+
+phase-e2-rcvrlock-hw-probe:
+	env PHASE_E2_RCVRLOCK_DEBUG=1 $(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) program-arm
+
+phase-e2-rcvrlock-hw-repeat:
+	./fpga/kcu105/run_phase_e2_rcvrlock_repeated_hw.sh \
+		$(or $(PHASE_E2_REPEAT_CYCLES),20)
 
 g2-gen1-hw-program:
 	$(VIVADO) -mode batch -nojournal -nolog \

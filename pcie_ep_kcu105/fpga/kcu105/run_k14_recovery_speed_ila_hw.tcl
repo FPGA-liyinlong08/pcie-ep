@@ -1,10 +1,18 @@
 # K14 endpoint Recovery.Speed ILA program/capture helper.
 set script_dir  [file dirname [file normalize [info script]]]
-set build_root  [file join $script_dir build_k14_recovery_speed]
+set phase_e2_debug [expr {[info exists ::env(PHASE_E2_RCVRLOCK_DEBUG)] &&
+                          $::env(PHASE_E2_RCVRLOCK_DEBUG) eq "1"}]
+set build_name  [expr {$phase_e2_debug ? "build_phase_e2_rcvrlock" :
+                                          "build_k14_recovery_speed"}]
+set file_prefix [expr {$phase_e2_debug ? "phase_e2_rcvrlock" :
+                                          "k14_recovery_speed"}]
+set pass_prefix [expr {$phase_e2_debug ? "PHASE_E2_RCVRLOCK" :
+                                          "K14_RECOVERY"}]
+set build_root  [file join $script_dir $build_name]
 set impl_dir    [file join $build_root impl]
 set capture_dir [file join $build_root capture]
-set bit_path    [file join $impl_dir k14_recovery_speed_ila.bit]
-set ltx_path    [file join $impl_dir k14_recovery_speed_ila.ltx]
+set bit_path    [file join $impl_dir ${file_prefix}_ila.bit]
+set ltx_path    [file join $impl_dir ${file_prefix}_ila.ltx]
 
 set server_url 127.0.0.1:3122
 set action status
@@ -89,7 +97,7 @@ if {$action eq "program-arm" || $action eq "program-capture-wait" ||
     set_property TRIGGER_COMPARE_VALUE $rate_trigger_compare $rate_trigger_probe
   }
   run_hw_ila $ila
-  puts "K14_RECOVERY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe] rate_compare=$rate_trigger_compare pos=$trigger_pos"
+  puts "${pass_prefix}_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe] rate_compare=$rate_trigger_compare pos=$trigger_pos"
 }
 if {$action eq "program-capture-wait" || $action eq "arm-capture-wait" ||
     $action eq "capture-wait" || $action eq "upload"} {
@@ -99,13 +107,13 @@ if {$action eq "program-capture-wait" || $action eq "arm-capture-wait" ||
   }
   set data [upload_hw_ila_data $ila]
   set timestamp [clock format [clock seconds] -format {%Y%m%d_%H%M%S}]
-  set csv_path [file join $capture_dir ${timestamp}_k14_recovery_speed.csv]
-  set ila_path [file join $capture_dir ${timestamp}_k14_recovery_speed.ila]
+  set csv_path [file join $capture_dir ${timestamp}_${file_prefix}.csv]
+  set ila_path [file join $capture_dir ${timestamp}_${file_prefix}.ila]
   write_hw_ila_data -force -csv_file $csv_path $data
   write_hw_ila_data -force $ila_path $data
-  puts "K14_RECOVERY_ILA_CAPTURE_PASS csv=$csv_path ila=$ila_path"
+  puts "${pass_prefix}_ILA_CAPTURE_PASS csv=$csv_path ila=$ila_path"
 } elseif {$action eq "status"} {
-  puts "K14_RECOVERY_ILA_STATUS_PASS device=$device ila=$ila"
+  puts "${pass_prefix}_ILA_STATUS_PASS device=$device ila=$ila"
   foreach property [lsort [list_property $ila]] {
     if {[string match "STATUS.*" $property]} {
       puts "K14_ILA_${property}=[get_property $property $ila]"

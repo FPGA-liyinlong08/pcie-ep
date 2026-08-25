@@ -10,6 +10,7 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer HOT_RESET_CYCLES = 250_000,
     parameter integer K11B2_ILA_DEBUG = 0,
     parameter integer K14_RATE_DEBUG = 0,
+    parameter integer PHASE_E2_RCVRLOCK_DEBUG = 0,
     parameter integer G9_WAIT_REMOTE_DETECT = 1,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
     // Phase D experimental path.  Zero is the signed Phase C Gen1 release.
@@ -269,6 +270,35 @@ module kcu105_pcie_ep_gen1_top #(
         assign speed_fallback_req = 1'b0;
         assign speed_requested_rate = 2'b00;
         assign speed_state = 3'd0;
+    end endgenerate
+
+    // The E2 hardware build adds semantic probes in a separate generic so
+    // the signed K14 rate-change build keeps its exact 31/118 probe schema.
+    generate if (PHASE_E2_RCVRLOCK_DEBUG != 0) begin : g_phase_e2_rcvrlock_debug
+        (* mark_debug = "true" *) wire e2_gen3_block_locked_w =
+            gen3_block_locked;
+        (* mark_debug = "true" *) wire e2_rcvrlock_complete_w =
+            gen3_rcvrlock_complete;
+        (* mark_debug = "true" *) wire e2_rcvrlock_failed_w =
+            gen3_rcvrlock_failed;
+        (* mark_debug = "true" *) wire [4:0] e2_rx_ts_count_w = rx_ts_count;
+        (* mark_debug = "true" *) wire e2_os_ts1_valid_w = os_ts1_valid;
+        (* mark_debug = "true" *) wire e2_os_ts2_valid_w = os_ts2_valid;
+        (* mark_debug = "true" *) wire e2_os_malformed_w = os_malformed;
+        (* mark_debug = "true" *) wire e2_speed_fallback_req_w =
+            speed_fallback_req;
+        (* mark_debug = "true" *) wire e2_speed_fallback_active_w =
+            speed_fallback_active;
+        (* mark_debug = "true" *) wire e2_phy_rxelecidle_w = phy_rxelecidle;
+        (* mark_debug = "true" *) wire e2_phy_rxdata_valid_w =
+            phy_rxdata_valid;
+        (* mark_debug = "true" *) wire e2_phy_rxstart_block_w =
+            phy_rxstart_block;
+        (* mark_debug = "true" *) wire [1:0] e2_phy_rxsync_header_w =
+            phy_rxsync_header;
+        (* mark_debug = "true" *) wire e2_phy_rxvalid_w = phy_rxvalid;
+        (* mark_debug = "true" *) wire [2:0] e2_phy_rxstatus_w =
+            phy_rxstatus;
     end endgenerate
 
     // The LTSSM needs a level for the complete fallback sequence, not the

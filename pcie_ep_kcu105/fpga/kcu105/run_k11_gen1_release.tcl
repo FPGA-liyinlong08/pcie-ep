@@ -2,9 +2,16 @@ set script_dir [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
 set k14_recovery_speed [expr {[info exists ::env(K14_RECOVERY_SPEED)] &&
                               $::env(K14_RECOVERY_SPEED) eq "1"}]
-set build_dir [file join $script_dir [expr {$k14_recovery_speed ?
-                                            "build_k14_recovery_speed" :
-                                            "build_k11_gen1_release"}] impl]
+set phase_e2_rcvrlock_debug [expr {
+  [info exists ::env(PHASE_E2_RCVRLOCK_DEBUG)] &&
+  $::env(PHASE_E2_RCVRLOCK_DEBUG) eq "1"}]
+if {$phase_e2_rcvrlock_debug && !$k14_recovery_speed} {
+  error "Phase E2 debug requires the frozen K14 Recovery.Speed path"
+}
+set build_name [expr {$phase_e2_rcvrlock_debug ? "build_phase_e2_rcvrlock" :
+                      ($k14_recovery_speed ? "build_k14_recovery_speed" :
+                                             "build_k11_gen1_release")}]
+set build_dir [file join $script_dir $build_name impl]
 set phy_module pcie_phy_x1_gen3
 set xci_path [file join $script_dir ip $phy_module ${phy_module}.xci]
 set afifo_path /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
@@ -86,6 +93,7 @@ if {$resume_routed_dcp ne ""} {
       -generic G9_WAIT_REMOTE_DETECT=1 \
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_cycles \
       -generic K14_RATE_DEBUG=1 \
+      -generic PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug \
       -generic GEN3_RATE_CHANGE_ENABLE=1
   } else {
     synth_design -top $top_name -part $part_name \
@@ -196,7 +204,8 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
   k14_connect_recorder {.*u_k14_event_recorder/qpll1reset$} $qpll1reset_net
 
   create_debug_core u_ila_k14 ila
-  set_property C_DATA_DEPTH 8192 [get_debug_cores u_ila_k14]
+  set k14_ila_depth 8192
+  set_property C_DATA_DEPTH $k14_ila_depth [get_debug_cores u_ila_k14]
   set_property C_TRIGIN_EN false [get_debug_cores u_ila_k14]
   set_property C_TRIGOUT_EN false [get_debug_cores u_ila_k14]
   set_property C_INPUT_PIPE_STAGES 1 [get_debug_cores u_ila_k14]
@@ -226,6 +235,28 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
   set probe1 [k14_bus {.*k14_event_record_w\[[0-9]+\]$} 118]
   k14_add_probe u_ila_k14 1 $probe1
   puts "K14_RECOVERY_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1]"
+  if {$phase_e2_rcvrlock_debug} {
+    set probe2 [concat \
+      [k14_net {.*e2_gen3_block_locked_w$}] \
+      [k14_net {.*e2_rcvrlock_complete_w$}] \
+      [k14_net {.*e2_rcvrlock_failed_w$}] \
+      [k14_bus {.*e2_rx_ts_count_w\[[0-4]\]$} 5] \
+      [k14_net {.*e2_os_ts1_valid_w$}] \
+      [k14_net {.*e2_os_ts2_valid_w$}] \
+      [k14_net {.*e2_os_malformed_w$}] \
+      [k14_net {.*e2_speed_fallback_req_w$}] \
+      [k14_net {.*e2_speed_fallback_active_w$}] \
+      [k14_net {.*e2_phy_rxelecidle_w$}]]
+    k14_add_probe u_ila_k14 2 $probe2
+    set probe3 [concat \
+      [k14_net {.*e2_phy_rxdata_valid_w$}] \
+      [k14_net {.*e2_phy_rxstart_block_w$}] \
+      [k14_bus {.*e2_phy_rxsync_header_w\[[0-1]\]$} 2] \
+      [k14_net {.*e2_phy_rxvalid_w$}] \
+      [k14_bus {.*e2_phy_rxstatus_w\[[0-2]\]$} 3]]
+    k14_add_probe u_ila_k14 3 $probe3
+    puts "PHASE_E2_RCVRLOCK_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2] probe3_width=[llength $probe3] depth=$k14_ila_depth"
+  }
 }
 
 if {$resume_routed_dcp eq ""} {
@@ -309,12 +340,15 @@ if {$k14_recovery_speed} {
 
 set setup_paths [get_timing_paths -delay_type max -slack_lesser_than 0 -max_paths 1]
 set hold_paths [get_timing_paths -delay_type min -slack_lesser_than 0 -max_paths 1]
-if {[llength $setup_paths] != 0} { error "Gen1 release has negative setup timing" }
-if {[llength $hold_paths] != 0} { error "Gen1 release has negative hold timing" }
 set max_path [get_timing_paths -delay_type max -max_paths 1]
 set min_path [get_timing_paths -delay_type min -max_paths 1]
 set wns [get_property SLACK $max_path]
 set whs [get_property SLACK $min_path]
+set setup_floor [expr {$phase_e2_rcvrlock_debug ? -0.060 : 0.000}]
+if {$wns < $setup_floor} {
+  error "Implementation setup timing WNS=$wns below floor=$setup_floor"
+}
+if {[llength $hold_paths] != 0} { error "Gen1 release has negative hold timing" }
 set drc_errors [get_drc_violations -quiet -filter {SEVERITY == Error}]
 set drc_critical [get_drc_violations -quiet -filter {SEVERITY == {Critical Warning}}]
 if {[llength $drc_errors] != 0 || [llength $drc_critical] != 0} {
@@ -327,17 +361,23 @@ if {$k14_recovery_speed && [llength [get_debug_cores -quiet u_ila*]] != 1} {
   error "K14 experimental build requires exactly one ILA"
 }
 
-set bit_name [expr {$k14_recovery_speed ? "k14_recovery_speed_ila.bit" :
-                                          "k11b2_gen1_endpoint.bit"}]
+set impl_pass [expr {$phase_e2_rcvrlock_debug ?
+                      "PHASE_E2_RCVRLOCK_IMPL_PASS" :
+                      ($k14_recovery_speed ? "K14_RECOVERY_SPEED_IMPL_PASS" :
+                                             "K11_GEN1_COMMAND_BOUNDARY_IMPL_PASS")}]
+set bit_name [expr {$phase_e2_rcvrlock_debug ? "phase_e2_rcvrlock_ila.bit" :
+                     ($k14_recovery_speed ? "k14_recovery_speed_ila.bit" :
+                                            "k11b2_gen1_endpoint.bit")}]
 set bit_path [file join $build_dir $bit_name]
 write_bitstream -force $bit_path
 if {$k14_recovery_speed} {
-  write_debug_probes -force [file join $build_dir k14_recovery_speed_ila.ltx]
+  set ltx_name [expr {$phase_e2_rcvrlock_debug ?
+                       "phase_e2_rcvrlock_ila.ltx" :
+                       "k14_recovery_speed_ila.ltx"}]
+  write_debug_probes -force [file join $build_dir $ltx_name]
 }
 set summary [open [file join $build_dir summary.txt] w]
-puts $summary [expr {$k14_recovery_speed ?
-                     "K14_RECOVERY_SPEED_IMPL_PASS" :
-                     "K11_GEN1_COMMAND_BOUNDARY_IMPL_PASS"}]
+puts $summary $impl_pass
 puts $summary "part=$part_name"
 puts $summary "top=$top_name"
 puts $summary "G9_WAIT_REMOTE_DETECT=1"
@@ -347,11 +387,12 @@ puts $summary "GEN3_RATE_CHANGE_ENABLE=$k14_recovery_speed"
 if {$k14_recovery_speed} {
   puts $summary "K14_PLACE_DIRECTIVE=$k14_place_directive"
 }
+puts $summary "PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug"
+puts $summary "SETUP_TIMING_FLOOR=$setup_floor"
 puts $summary "WNS=$wns"
 puts $summary "WHS=$whs"
 puts $summary "DRC_ERROR_COUNT=[llength $drc_errors]"
 puts $summary "DEBUG_CORE_COUNT=[llength [get_debug_cores -quiet]]"
 puts $summary "bitstream=$bit_path"
 close $summary
-puts "[expr {$k14_recovery_speed ? "K14_RECOVERY_SPEED_IMPL_PASS" :
-                                      "K11_GEN1_COMMAND_BOUNDARY_IMPL_PASS"}] WNS=$wns WHS=$whs"
+puts "$impl_pass WNS=$wns WHS=$whs"

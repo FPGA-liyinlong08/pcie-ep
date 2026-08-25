@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**K00～K11 PASS；Phase D Golden Recovery.Speed已签署；Phase E的E0/E1 PASS，E2 RTL/仿真/K14实现复验PASS，实板20次RcvrLock待实施**
+状态：**K00～K11 PASS；Phase D Golden Recovery.Speed已签署；Phase E的E0/E1 PASS，E2 RTL/仿真/实现PASS，实板BLOCKED于Gen3 PIPE无有效接收block**
 
 ## 1. 阶段门
 
