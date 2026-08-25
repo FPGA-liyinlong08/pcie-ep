@@ -9,6 +9,11 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer HOT_RESET_CYCLES      = 250_000,
     parameter integer TX_BUFFER_BYTES       = 160,
     parameter integer K11B2_ILA_DEBUG       = 0,
+    // E1 board-only diagnostic mode.  After the frozen K14 rate transaction
+    // reaches Gen3, keep Recovery.RcvrLock transmitting training traffic and
+    // suppress the semantic RcvrLock exit/timeout.  This parameter never
+    // drives raw PHY commands and is disabled in every release build.
+    parameter integer PHASE_E1_GEN3_HOLD    = 0,
     parameter [7:0]  TX_RATE_ID             = 8'h02,
     // G9仅用于上板诊断：本端Receiver Detect成功并切到P0后，暂不发TS1，
     // 保持Detect assist，等待Root Port的RX activity。默认关闭。
@@ -92,6 +97,8 @@ module pcie_ltssm_mac_gen1 #(
     // Phase E2 semantic status. These signals are downstream of the K14
     // rate transaction and never participate in raw PHY command ownership.
     output wire        gen3_block_locked,
+    output wire        gen3_eieos_valid,
+    output wire        gen3_lock_lost,
     output wire        gen3_rcvrlock_complete,
     output wire        gen3_rcvrlock_failed
 );
@@ -518,6 +525,8 @@ module pcie_ltssm_mac_gen1 #(
     );
 
     assign gen3_block_locked = gen3_block_locked_i;
+    assign gen3_eieos_valid = gen3_eieos_valid_i;
+    assign gen3_lock_lost = gen3_lock_lost_i;
     assign gen3_rcvrlock_complete = gen3_rcvrlock_ctrl_complete;
     assign gen3_rcvrlock_failed = gen3_rcvrlock_ctrl_failed ||
                                   gen3_rcvrlock_timeout_pulse;
@@ -1075,7 +1084,15 @@ module pcie_ltssm_mac_gen1 #(
                             rx_ts_count <= 5'd0;
                         end else if (gen3_mode) begin
                             rx_ts_count <= gen3_rcvrlock_ts1_count;
-                            if (gen3_rcvrlock_ctrl_failed) begin
+                            if (PHASE_E1_GEN3_HOLD != 0) begin
+                                // E1 hardware isolation stops at the PIPE /
+                                // block / Ordered-Set boundary.  Keep sending
+                                // Gen3 Recovery TS traffic and allow the E1
+                                // parser to re-acquire after malformed input;
+                                // E2 completion/fallback policy is not part of
+                                // this diagnostic build.
+                                state_timer <= 32'd0;
+                            end else if (gen3_rcvrlock_ctrl_failed) begin
                                 // Semantic failure asks the existing K14
                                 // coordinator for a Gen1 fallback. Raw rate,
                                 // TXEI and PhyStatus handling remain owned by

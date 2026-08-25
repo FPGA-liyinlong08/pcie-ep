@@ -5,6 +5,7 @@
 module kcu105_pcie_ep_gen1_board_top #(
     parameter integer K11B2_ILA_DEBUG = 0,
     parameter integer K14_RATE_DEBUG = 0,
+    parameter integer PHASE_E1_BOARD_DEBUG = 0,
     parameter integer PHASE_E2_RCVRLOCK_DEBUG = 0,
     parameter integer G9_WAIT_REMOTE_DETECT = 1,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
@@ -37,6 +38,7 @@ module kcu105_pcie_ep_gen1_board_top #(
     kcu105_pcie_ep_gen1_top #(
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
         .K14_RATE_DEBUG(K14_RATE_DEBUG),
+        .PHASE_E1_BOARD_DEBUG(PHASE_E1_BOARD_DEBUG),
         .PHASE_E2_RCVRLOCK_DEBUG(PHASE_E2_RCVRLOCK_DEBUG),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),

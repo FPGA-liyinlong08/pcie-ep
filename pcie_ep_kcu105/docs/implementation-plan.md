@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**K00～K11 PASS；Phase D Golden Recovery.Speed已签署；Phase E的E0/E1 PASS，E2 RTL/仿真/实现PASS，实板BLOCKED于Gen3 PIPE无有效接收block**
+状态：**K00～K11 PASS；Phase D Golden Recovery.Speed已签署；Phase E的E0/E1软件门禁PASS，E1实板已看到EIEOS/block lock/TS1但有一次性malformed，E2 RTL/仿真/实现PASS、待E1硬件签署后复测**
 
 ## 1. 阶段门
 
@@ -61,4 +61,5 @@ Phase E当前阶段文档：
 - `docs/interfaces/phase-e-gen3-block-interfaces.md`
 - `docs/verification/phase-e-gen3-protocol-plan.md`
 - `docs/reports/phase-e0-e1-gen3-block-20260825.md`
+- `docs/reports/phase-e1-board-debug-20260826.md`
 - `docs/reports/phase-e2-rcvrlock-20260825.md`

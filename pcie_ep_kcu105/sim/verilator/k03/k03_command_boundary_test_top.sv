@@ -8,6 +8,7 @@ module k03_command_boundary_test_top #(
     parameter integer DETECT_TIMEOUT_CYCLES = 64,
     parameter integer TRAIN_TIMEOUT_CYCLES = 10000,
     parameter integer HOT_RESET_CYCLES = 8,
+    parameter integer PHASE_E1_GEN3_HOLD = 0,
     parameter integer G9_WAIT_REMOTE_DETECT = 0,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 32
 ) (
@@ -46,12 +47,14 @@ module k03_command_boundary_test_top #(
     output wire [31:0] training_error_count,
     output wire [31:0] timeout_count, output wire [31:0] frame_error_count,
     output wire hot_reset_seen, output wire gen3_block_locked,
+    output wire phase_e1_hold_enabled,
     output wire gen3_rcvrlock_complete,
     output wire gen3_rcvrlock_failed
 );
     wire [2:0] cmd_profile;
     wire cmd_valid, cmd_kind, cmd_ready, cmd_done;
     wire [1:0] cmd_result;
+    assign phase_e1_hold_enabled = (PHASE_E1_GEN3_HOLD != 0);
 
     pcie_phy_command_ctrl u_phy_command_ctrl (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
@@ -78,6 +81,7 @@ module k03_command_boundary_test_top #(
         .DETECT_TIMEOUT_CYCLES(DETECT_TIMEOUT_CYCLES),
         .TRAIN_TIMEOUT_CYCLES(TRAIN_TIMEOUT_CYCLES),
         .HOT_RESET_CYCLES(HOT_RESET_CYCLES),
+        .PHASE_E1_GEN3_HOLD(PHASE_E1_GEN3_HOLD),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES)
     ) u_ltssm_mac (
@@ -117,6 +121,7 @@ module k03_command_boundary_test_top #(
         .os_lane_number(), .os_rate_id(), .os_training_control(),
         .os_tx_complete(), .os_eq_control(), .os_eq_data(),
         .gen3_block_locked(gen3_block_locked),
+        .gen3_eieos_valid(), .gen3_lock_lost(),
         .gen3_rcvrlock_complete(gen3_rcvrlock_complete),
         .gen3_rcvrlock_failed(gen3_rcvrlock_failed)
     );

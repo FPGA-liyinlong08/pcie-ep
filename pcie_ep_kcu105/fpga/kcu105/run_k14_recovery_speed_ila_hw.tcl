@@ -1,13 +1,25 @@
 # K14 endpoint Recovery.Speed ILA program/capture helper.
 set script_dir  [file dirname [file normalize [info script]]]
+set phase_e1_debug [expr {[info exists ::env(PHASE_E1_BOARD_DEBUG)] &&
+                          $::env(PHASE_E1_BOARD_DEBUG) eq "1"}]
 set phase_e2_debug [expr {[info exists ::env(PHASE_E2_RCVRLOCK_DEBUG)] &&
                           $::env(PHASE_E2_RCVRLOCK_DEBUG) eq "1"}]
-set build_name  [expr {$phase_e2_debug ? "build_phase_e2_rcvrlock" :
-                                          "build_k14_recovery_speed"}]
-set file_prefix [expr {$phase_e2_debug ? "phase_e2_rcvrlock" :
-                                          "k14_recovery_speed"}]
-set pass_prefix [expr {$phase_e2_debug ? "PHASE_E2_RCVRLOCK" :
-                                          "K14_RECOVERY"}]
+if {$phase_e1_debug && $phase_e2_debug} {
+  error "Phase E1 and E2 hardware helpers must remain independent"
+}
+if {$phase_e1_debug} {
+  set build_name "build_phase_e1_board"
+  set file_prefix "phase_e1_board"
+  set pass_prefix "PHASE_E1_BOARD"
+} elseif {$phase_e2_debug} {
+  set build_name "build_phase_e2_rcvrlock"
+  set file_prefix "phase_e2_rcvrlock"
+  set pass_prefix "PHASE_E2_RCVRLOCK"
+} else {
+  set build_name "build_k14_recovery_speed"
+  set file_prefix "k14_recovery_speed"
+  set pass_prefix "K14_RECOVERY"
+}
 set build_root  [file join $script_dir $build_name]
 set impl_dir    [file join $build_root impl]
 set capture_dir [file join $build_root capture]

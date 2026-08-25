@@ -1,6 +1,6 @@
 # Phase E：Gen3协议与完整Endpoint计划
 
-状态：**E0/E1 PASS；E2 RTL/仿真/实现PASS；实板BLOCKED于Gen3 PIPE无有效接收block**
+状态：**E0/E1软件门禁PASS；E1实板已看到有效PIPE/EIEOS/block lock/TS1，但首次建锁存在一次性malformed，尚未硬件签署；E2 RTL/仿真/实现PASS、待复测**
 
 ## 目标与入口
 
@@ -37,6 +37,12 @@ canonical Gen1 bitstream。
 完成条件：仿真中至少1000次随机切速均重新获得block lock，TS1/TS2逐字段与参考模型
 一致，Gen1 Packet路径逐周期不变。
 
+实板补充门禁（2026-08-26）：冻结K14切速成功后必须观察到`RxDataValid`、
+`RxStartBlock`、Ordered-Set Sync Header、精确EIEOS、block lock和至少一个TS1/TS2，
+且不得出现`lock_lost`或`malformed`。首轮有效trace已满足所有正向里程碑，但记录到
+一次`malformed`，因此E1实板状态仍为FAIL；增强探针在稳定RcvrLock中观察约117秒
+未能再次触发该脉冲，当前把问题限定为首次建锁窗口的一次性事件，未放宽验收条件。
+
 ## E2：Recovery.RcvrLock
 
 软件与实现状态（2026-08-25）：PASS。生产LTSSM只在精确EIEOS建立block lock后消费
@@ -50,11 +56,11 @@ fallback；E2不直接驱动raw PHY命令。
 - ILA同时观察语义状态、raw rate最终条件、block lock和TS计数。
 
 软件/实现门禁已满足；单独E2 debug build保持K14原`probe0=31`、`probe1=118`逐位
-不变，并追加14-bit语义状态和8-bit PIPE状态。实板trace已证明K14 Golden切速成功并
-进入Gen3 RcvrLock，`RxElecIdle=0`，但`RxDataValid/RxStartBlock/RxValid`始终为0，
-所以没有block lock或TS1。连续20次最终门禁因此未执行、未通过；先转入GT/PCS→PIPE
-接收路径诊断，且不得修改K14 raw owner。只有PIPE恢复有效block后，才恢复同板20次
-RcvrLock验收并检查重复rate transaction、QPLL reloss和owner毛刺。
+不变，并追加14-bit语义状态和8-bit PIPE状态。2026-08-25的E2 trace当时未看到
+`RxDataValid/RxStartBlock/RxValid`；2026-08-26独立E1 hold trace已经证明同板切速后
+可以出现有效PIPE block、EIEOS、block lock和TS1，因此“PIPE恒死”不再是当前结论。
+E2连续20次门禁仍未执行、未通过；先关闭E1首次建锁`malformed`，再以原E2语义路径
+复测，且不得修改K14 raw owner。
 
 ## E3：Recovery.RcvrCfg
 

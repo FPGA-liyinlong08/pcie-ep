@@ -702,6 +702,47 @@ async def gen3_rcvrlock_timeout_requests_semantic_fallback(dut):
 
 
 @cocotb.test()
+async def phase_e1_debug_holds_gen3_rcvrlock_without_raw_rate_override(dut):
+    """E1 debug stays in Gen3 RcvrLock across completion, errors and timeout."""
+    if os.getenv("PHASE_E1_GEN3_HOLD", "0") != "1":
+        return
+    await Timer(1, units="ns")
+    assert int(dut.phase_e1_hold_enabled.value) == 1
+
+    await enter_gen3_rcvrlock_after_k14_speed(dut)
+    await send_gen3_block(dut, GEN3_EIEOS_WORDS)
+    state = GEN3_LANE0_SEED
+    for _ in range(8):
+        state, ts_words = make_gen3_ts1(state)
+        await send_gen3_block(dut, ts_words)
+    await tick(dut, 4)
+    assert int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK
+    assert int(dut.phy_txdata_valid.value) == 1
+    assert int(dut.phy_txstart_block.value) in (0, 1)
+    assert int(dut.recovery_speed_ready.value) == 0
+
+    # A malformed partial block may trip the E2 semantic monitor, but the E1
+    # isolation build must keep the PHY at the already-committed active rate
+    # and continue its Recovery training stream.
+    await writable_phase()
+    dut.phy_rxdata_valid.value = 1
+    dut.phy_rxstart_block.value = 1
+    dut.phy_rxsync_header.value = 0b01
+    dut.phy_rxdata.value = 0x12345678
+    await tick(dut)
+    await writable_phase()
+    dut.phy_rxstart_block.value = 1
+    await tick(dut)
+    await writable_phase()
+    dut.phy_rxdata_valid.value = 0
+    dut.phy_rxstart_block.value = 0
+    await tick(dut, 10020)
+    assert int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK
+    assert int(dut.active_phy_rate.value) == 2
+    assert int(dut.phy_txdata_valid.value) == 1
+
+
+@cocotb.test()
 async def detect_errors_recovery_and_hot_reset(dut):
     await initialize(dut)
     await wait_state(dut, DETECT_ACTIVE)

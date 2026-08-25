@@ -5,12 +5,25 @@ set k14_recovery_speed [expr {[info exists ::env(K14_RECOVERY_SPEED)] &&
 set phase_e2_rcvrlock_debug [expr {
   [info exists ::env(PHASE_E2_RCVRLOCK_DEBUG)] &&
   $::env(PHASE_E2_RCVRLOCK_DEBUG) eq "1"}]
-if {$phase_e2_rcvrlock_debug && !$k14_recovery_speed} {
-  error "Phase E2 debug requires the frozen K14 Recovery.Speed path"
+set phase_e1_board_debug [expr {
+  [info exists ::env(PHASE_E1_BOARD_DEBUG)] &&
+  $::env(PHASE_E1_BOARD_DEBUG) eq "1"}]
+if {($phase_e1_board_debug || $phase_e2_rcvrlock_debug) &&
+    !$k14_recovery_speed} {
+  error "Phase E debug requires the frozen K14 Recovery.Speed path"
 }
-set build_name [expr {$phase_e2_rcvrlock_debug ? "build_phase_e2_rcvrlock" :
-                      ($k14_recovery_speed ? "build_k14_recovery_speed" :
-                                             "build_k11_gen1_release")}]
+if {$phase_e1_board_debug && $phase_e2_rcvrlock_debug} {
+  error "Phase E1 and E2 debug builds must remain independent"
+}
+if {$phase_e1_board_debug} {
+  set build_name "build_phase_e1_board"
+} elseif {$phase_e2_rcvrlock_debug} {
+  set build_name "build_phase_e2_rcvrlock"
+} elseif {$k14_recovery_speed} {
+  set build_name "build_k14_recovery_speed"
+} else {
+  set build_name "build_k11_gen1_release"
+}
 set build_dir [file join $script_dir $build_name impl]
 set phy_module pcie_phy_x1_gen3
 set xci_path [file join $script_dir ip $phy_module ${phy_module}.xci]
@@ -19,6 +32,7 @@ set part_name xcku040-ffva1156-2-e
 set top_name kcu105_pcie_ep_gen1_board_top
 set g9_cycles 6250000
 set k14_place_directive "Default"
+set phase_e1_auto_retrain_cycles [expr {$phase_e1_board_debug ? 1 : 0}]
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
 }
@@ -93,7 +107,9 @@ if {$resume_routed_dcp ne ""} {
       -generic G9_WAIT_REMOTE_DETECT=1 \
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_cycles \
       -generic K14_RATE_DEBUG=1 \
+      -generic PHASE_E1_BOARD_DEBUG=$phase_e1_board_debug \
       -generic PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug \
+      -generic GEN3_AUTO_RETRAIN_CYCLES=$phase_e1_auto_retrain_cycles \
       -generic GEN3_RATE_CHANGE_ENABLE=1
   } else {
     synth_design -top $top_name -part $part_name \
@@ -235,7 +251,35 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
   set probe1 [k14_bus {.*k14_event_record_w\[[0-9]+\]$} 118]
   k14_add_probe u_ila_k14 1 $probe1
   puts "K14_RECOVERY_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1]"
-  if {$phase_e2_rcvrlock_debug} {
+  if {$phase_e1_board_debug} {
+    set probe2 [k14_bus {.*e1_event_record_w\[[0-9]+\]$} 32]
+    k14_add_probe u_ila_k14 2 $probe2
+    set probe3 [concat \
+      [k14_primitive_pin GTHE3_CHANNEL RXCDRLOCK] \
+      [k14_primitive_pin GTHE3_CHANNEL RXRESETDONE] \
+      [k14_primitive_pin GTHE3_CHANNEL PCIERATEIDLE] \
+      [k14_primitive_bus_pin GTHE3_CHANNEL RXDATAVALID 2] \
+      [k14_primitive_bus_pin GTHE3_CHANNEL RXHEADERVALID 2] \
+      [k14_primitive_pin GTHE3_CHANNEL RXVALID]]
+    k14_add_probe u_ila_k14 3 $probe3
+    # A malformed-triggered capture must retain the four raw PIPE words and
+    # their semantic context.  These probes are E1-only and leave the frozen
+    # K14 probe0/probe1 bit ordering untouched.
+    set probe4 [k14_bus {^u_endpoint/phy_rxdata\[[0-9]+\]$} 32]
+    k14_add_probe u_ila_k14 4 $probe4
+    set probe5 [concat \
+      [k14_net {^u_endpoint/os_malformed$}] \
+      [k14_net {^u_endpoint/gen3_block_locked$}] \
+      [k14_net {^u_endpoint/gen3_lock_lost$}] \
+      [k14_net {^u_endpoint/os_ts1_valid$}] \
+      [k14_net {^u_endpoint/os_ts2_valid$}] \
+      [k14_net {^u_endpoint/gen3_eieos_valid$}] \
+      [k14_net {^u_endpoint/phy_rxdata_valid$}] \
+      [k14_net {^u_endpoint/phy_rxstart_block$}] \
+      [k14_bus {^u_endpoint/phy_rxsync_header\[[0-1]\]$} 2]]
+    k14_add_probe u_ila_k14 5 $probe5
+    puts "PHASE_E1_BOARD_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2] probe3_width=[llength $probe3] probe4_width=[llength $probe4] probe5_width=[llength $probe5] depth=$k14_ila_depth"
+  } elseif {$phase_e2_rcvrlock_debug} {
     set probe2 [concat \
       [k14_net {.*e2_gen3_block_locked_w$}] \
       [k14_net {.*e2_rcvrlock_complete_w$}] \
@@ -256,6 +300,20 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
       [k14_bus {.*e2_phy_rxstatus_w\[[0-2]\]$} 3]]
     k14_add_probe u_ila_k14 3 $probe3
     puts "PHASE_E2_RCVRLOCK_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2] probe3_width=[llength $probe3] depth=$k14_ila_depth"
+  }
+
+  # Keep the existing synchronized core reset on fabric routing in E1.  With
+  # the diagnostic one-shot enabled, automatic BUFG insertion can turn its
+  # asynchronous-clear recovery path into the global WNS limiter even though
+  # no functional datapath changed.
+  if {$phase_e1_board_debug} {
+    set e1_core_reset_net [get_nets -hierarchical -quiet -regexp \
+      {^u_endpoint/u_phy_wrapper/u_refclk_reset/u_reset_ctrl/u_core_reset_sync/sync_reg\[3\]$}]
+    if {[llength $e1_core_reset_net] != 1} {
+      error "Phase E1 synchronized core reset net missing/non-unique"
+    }
+    set_property CLOCK_BUFFER_TYPE NONE $e1_core_reset_net
+    puts "PHASE_E1_RESET_BUFFER_GUARD_PASS net=$e1_core_reset_net"
   }
 }
 
@@ -344,7 +402,8 @@ set max_path [get_timing_paths -delay_type max -max_paths 1]
 set min_path [get_timing_paths -delay_type min -max_paths 1]
 set wns [get_property SLACK $max_path]
 set whs [get_property SLACK $min_path]
-set setup_floor [expr {$phase_e2_rcvrlock_debug ? -0.060 : 0.000}]
+set setup_floor [expr {$phase_e1_board_debug ? -0.093 :
+                       ($phase_e2_rcvrlock_debug ? -0.060 : 0.000)}]
 if {$wns < $setup_floor} {
   error "Implementation setup timing WNS=$wns below floor=$setup_floor"
 }
@@ -361,19 +420,29 @@ if {$k14_recovery_speed && [llength [get_debug_cores -quiet u_ila*]] != 1} {
   error "K14 experimental build requires exactly one ILA"
 }
 
-set impl_pass [expr {$phase_e2_rcvrlock_debug ?
-                      "PHASE_E2_RCVRLOCK_IMPL_PASS" :
-                      ($k14_recovery_speed ? "K14_RECOVERY_SPEED_IMPL_PASS" :
-                                             "K11_GEN1_COMMAND_BOUNDARY_IMPL_PASS")}]
-set bit_name [expr {$phase_e2_rcvrlock_debug ? "phase_e2_rcvrlock_ila.bit" :
-                     ($k14_recovery_speed ? "k14_recovery_speed_ila.bit" :
-                                            "k11b2_gen1_endpoint.bit")}]
+if {$phase_e1_board_debug} {
+  set impl_pass "PHASE_E1_BOARD_IMPL_PASS"
+  set bit_name "phase_e1_board_ila.bit"
+} elseif {$phase_e2_rcvrlock_debug} {
+  set impl_pass "PHASE_E2_RCVRLOCK_IMPL_PASS"
+  set bit_name "phase_e2_rcvrlock_ila.bit"
+} elseif {$k14_recovery_speed} {
+  set impl_pass "K14_RECOVERY_SPEED_IMPL_PASS"
+  set bit_name "k14_recovery_speed_ila.bit"
+} else {
+  set impl_pass "K11_GEN1_COMMAND_BOUNDARY_IMPL_PASS"
+  set bit_name "k11b2_gen1_endpoint.bit"
+}
 set bit_path [file join $build_dir $bit_name]
 write_bitstream -force $bit_path
 if {$k14_recovery_speed} {
-  set ltx_name [expr {$phase_e2_rcvrlock_debug ?
-                       "phase_e2_rcvrlock_ila.ltx" :
-                       "k14_recovery_speed_ila.ltx"}]
+  if {$phase_e1_board_debug} {
+    set ltx_name "phase_e1_board_ila.ltx"
+  } elseif {$phase_e2_rcvrlock_debug} {
+    set ltx_name "phase_e2_rcvrlock_ila.ltx"
+  } else {
+    set ltx_name "k14_recovery_speed_ila.ltx"
+  }
   write_debug_probes -force [file join $build_dir $ltx_name]
 }
 set summary [open [file join $build_dir summary.txt] w]
@@ -388,6 +457,8 @@ if {$k14_recovery_speed} {
   puts $summary "K14_PLACE_DIRECTIVE=$k14_place_directive"
 }
 puts $summary "PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug"
+puts $summary "PHASE_E1_BOARD_DEBUG=$phase_e1_board_debug"
+puts $summary "GEN3_AUTO_RETRAIN_CYCLES=$phase_e1_auto_retrain_cycles"
 puts $summary "SETUP_TIMING_FLOOR=$setup_floor"
 puts $summary "WNS=$wns"
 puts $summary "WHS=$whs"

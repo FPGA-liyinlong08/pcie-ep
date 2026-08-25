@@ -20,10 +20,14 @@ def main():
         if actual != expected:
             errors.append(f"{relative}: expected={expected} actual={actual}")
     production_top = (ROOT / "rtl/ep/kcu105_pcie_ep_gen1_top.sv").read_text()
-    if ".peer_speed_reject(gen3_rcvrlock_failed)" not in production_top:
-        errors.append("E2 failure is not connected to semantic peer reject")
-    if "? gen3_rcvrlock_complete" not in production_top:
-        errors.append("Gen3 peer success bypasses E2 RcvrLock completion")
+    if "parameter integer PHASE_E1_BOARD_DEBUG = 0" not in production_top:
+        errors.append("E1 board diagnostic is not default-off")
+    if ("wire peer_speed_reject = (PHASE_E1_BOARD_DEBUG != 0) ? 1'b0 :"
+            not in production_top or
+            "gen3_rcvrlock_failed;" not in production_top):
+        errors.append("E2 failure/default peer reject boundary changed")
+    if "(phase_e1_gen3_hold_ok || gen3_rcvrlock_complete)" not in production_top:
+        errors.append("Gen3 peer success bypasses E2 completion without E1 debug gate")
     if "assign speed_recovery_done = rate_op_success;" not in production_top:
         errors.append("K14 rate-success to LTSSM completion boundary changed")
     if errors:

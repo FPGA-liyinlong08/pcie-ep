@@ -10,6 +10,7 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer HOT_RESET_CYCLES = 250_000,
     parameter integer K11B2_ILA_DEBUG = 0,
     parameter integer K14_RATE_DEBUG = 0,
+    parameter integer PHASE_E1_BOARD_DEBUG = 0,
     parameter integer PHASE_E2_RCVRLOCK_DEBUG = 0,
     parameter integer G9_WAIT_REMOTE_DETECT = 1,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
@@ -78,6 +79,7 @@ module kcu105_pcie_ep_gen1_top #(
     wire ltssm_recovery_speed_ready;
     wire os_ts1_valid, os_ts2_valid, os_malformed, os_tx_complete;
     wire gen3_block_locked;
+    wire gen3_eieos_valid, gen3_lock_lost;
     wire gen3_rcvrlock_complete, gen3_rcvrlock_failed;
     wire [7:0] os_link_number, os_lane_number, os_rate_id;
     wire [7:0] os_training_control, os_eq_control;
@@ -188,9 +190,16 @@ module kcu105_pcie_ep_gen1_top #(
                               (phy_rate_result != 3'd1);
         // E2 declares Gen3 peer success only after EIEOS lock and eight
         // qualified TS1s. Gen1 fallback keeps the established OS rule.
+        wire phase_e1_gen3_hold_ok = (PHASE_E1_BOARD_DEBUG != 0) &&
+                                      (speed_requested_rate == 2'b10) &&
+                                      (phy_active_rate == 2'b10) &&
+                                      (ltssm_state == 6'd11);
         wire peer_speed_ok = (phy_active_rate == speed_requested_rate) &&
-            ((speed_requested_rate == 2'b10) ? gen3_rcvrlock_complete :
-                                               (os_ts1_valid || os_ts2_valid));
+            ((speed_requested_rate == 2'b10) ?
+                (phase_e1_gen3_hold_ok || gen3_rcvrlock_complete) :
+                (os_ts1_valid || os_ts2_valid));
+        wire peer_speed_reject = (PHASE_E1_BOARD_DEBUG != 0) ? 1'b0 :
+                                                                    gen3_rcvrlock_failed;
 
         pcie_recovery_speed_ctrl #(
             .SPEED_TIMEOUT_CYCLES(GEN3_SPEED_TIMEOUT_CYCLES)
@@ -208,7 +217,7 @@ module kcu105_pcie_ep_gen1_top #(
             .active_rate(phy_active_rate), .requested_rate(speed_requested_rate),
             .retrain_accept(speed_retrain_accept), .phy_cdr_lost(1'b0),
             .peer_speed_ok(peer_speed_ok),
-            .peer_speed_reject(gen3_rcvrlock_failed),
+            .peer_speed_reject(peer_speed_reject),
             .state(speed_state), .traffic_quiesce(speed_traffic_quiesce),
             .recovery_active(speed_recovery_active),
             .negotiated_speed(speed_negotiated),
@@ -270,6 +279,43 @@ module kcu105_pcie_ep_gen1_top #(
         assign speed_fallback_req = 1'b0;
         assign speed_requested_rate = 2'b00;
         assign speed_state = 3'd0;
+    end endgenerate
+
+    // E1_BOARD is intentionally separate from E2.  Its compact recorder uses
+    // sticky milestones instead of wide RX/TX data probes so it can retain
+    // the signed K14 31/118 probes and stay inside the diagnostic timing floor.
+    generate if (PHASE_E1_BOARD_DEBUG != 0) begin : g_phase_e1_board_debug
+        reg [19:0] e1_elapsed_q;
+        reg [11:0] e1_seen_q;
+        wire e1_hold_active = (phy_active_rate == 2'b10) &&
+                              (ltssm_state == 6'd11);
+        (* mark_debug = "true" *) wire [31:0] e1_event_record_w = {
+            e1_seen_q, e1_elapsed_q
+        };
+
+        always @(posedge phy_pclk or negedge pipe_rst_n) begin
+            if (!pipe_rst_n || !e1_hold_active) begin
+                e1_elapsed_q <= 20'd0;
+                e1_seen_q <= 12'd0;
+            end else begin
+                if (!(&e1_elapsed_q))
+                    e1_elapsed_q <= e1_elapsed_q + 1'b1;
+                if (!phy_rxelecidle) e1_seen_q[0] <= 1'b1;
+                if (phy_rxvalid) e1_seen_q[1] <= 1'b1;
+                if (phy_rxdata_valid) e1_seen_q[2] <= 1'b1;
+                if (phy_rxstart_block) e1_seen_q[3] <= 1'b1;
+                if (phy_rxstart_block && (phy_rxsync_header == 2'b01))
+                    e1_seen_q[4] <= 1'b1;
+                if (phy_rxstart_block && (phy_rxsync_header == 2'b10))
+                    e1_seen_q[5] <= 1'b1;
+                if (gen3_eieos_valid) e1_seen_q[6] <= 1'b1;
+                if (gen3_block_locked) e1_seen_q[7] <= 1'b1;
+                if (os_ts1_valid) e1_seen_q[8] <= 1'b1;
+                if (os_ts2_valid) e1_seen_q[9] <= 1'b1;
+                if (gen3_lock_lost) e1_seen_q[10] <= 1'b1;
+                if (os_malformed) e1_seen_q[11] <= 1'b1;
+            end
+        end
     end endgenerate
 
     // The E2 hardware build adds semantic probes in a separate generic so
@@ -370,6 +416,7 @@ module kcu105_pcie_ep_gen1_top #(
         .TRAIN_TIMEOUT_CYCLES(TRAIN_TIMEOUT_CYCLES),
         .HOT_RESET_CYCLES(HOT_RESET_CYCLES),
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
+        .PHASE_E1_GEN3_HOLD(PHASE_E1_BOARD_DEBUG),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
         .TX_RATE_ID(8'h02)
@@ -417,6 +464,8 @@ module kcu105_pcie_ep_gen1_top #(
         .os_rate_id(os_rate_id), .os_training_control(os_training_control),
         .os_tx_complete(os_tx_complete), .os_eq_control(os_eq_control),
         .os_eq_data(os_eq_data), .gen3_block_locked(gen3_block_locked),
+        .gen3_eieos_valid(gen3_eieos_valid),
+        .gen3_lock_lost(gen3_lock_lost),
         .gen3_rcvrlock_complete(gen3_rcvrlock_complete),
         .gen3_rcvrlock_failed(gen3_rcvrlock_failed)
     );

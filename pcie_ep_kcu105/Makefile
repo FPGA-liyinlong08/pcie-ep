@@ -293,6 +293,17 @@ phase-e-gen3-block-test:
 phase-e-k14-rate-guard: phy-command-ownership k14-recovery-speed-test
 	python3 scripts/check_phase_e_k14_rate_guard.py
 
+phase-e1-board-hold-test:
+	$(MAKE) -C sim/verilator/k03 SIM_BUILD=sim_build_phase_e1_hold \
+		PHASE_E1_GEN3_HOLD=1 \
+		TESTCASE=phase_e1_debug_holds_gen3_rcvrlock_without_raw_rate_override
+
+phase-e1-board-vivado:
+	./fpga/kcu105/run_phase_e1_board_impl.sh
+
+phase-e1-trace-analyzer-selftest:
+	python3 scripts/check_phase_e1_board_trace_analyzer.py
+
 phase-e2-rcvrlock-test:
 	./sim/verilator/phase_e2_rcvrlock/run_phase_e2_rcvrlock.sh
 
@@ -645,6 +656,13 @@ k14-recovery-speed-hw-upload:
 k14-recovery-speed-hw-repeat:
 	./fpga/kcu105/run_k14_recovery_speed_repeated_hw.sh \
 		$(or $(K14_REPEAT_CYCLES),10)
+
+phase-e1-board-hw-probe:
+	env PHASE_E1_BOARD_DEBUG=1 K14_ILA_TRIGGER_PROBE=k14_ltssm_state_w \
+		"K14_ILA_TRIGGER_COMPARE=eq6'h0b" "K14_ILA_RATE_COMPARE=eq2'h2" $(VIVADO) \
+		-mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) program-capture-wait
 
 phase-e2-rcvrlock-hw-probe:
 	env PHASE_E2_RCVRLOCK_DEBUG=1 $(VIVADO) -mode batch -nojournal -nolog \
