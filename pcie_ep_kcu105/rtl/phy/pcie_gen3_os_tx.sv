@@ -2,8 +2,9 @@
 `default_nettype none
 
 // Gen3 32-bit PIPE ordered-set transmitter. Recovery training starts with an
-// EIEOS and SDS establish Gen3 block lock before the first TS.  Later EIEOS
-// insertion after every 32 TS blocks does not restart the stream with SDS.
+// EIEOS and then sends TS continuously. An EIEOS is inserted after every 32
+// TS blocks; SDS belongs to the later Data Stream transition and must not be
+// injected into Recovery.RcvrLock training traffic.
 // Symbols 1..15 of each TS are scrambled while the 1E/2D block identifier
 // remains clear; the LFSR still advances over it and is re-seeded after EIEOS.
 module pcie_gen3_os_tx (
@@ -34,14 +35,12 @@ module pcie_gen3_os_tx (
     localparam [7:0] OS_TS2 = 8'h2d;
     localparam [1:0] SH_ORDERED_SET = 2'b01;
     localparam [1:0] SEND_EIEOS = 2'd0;
-    localparam [1:0] SEND_SDS   = 2'd1;
-    localparam [1:0] SEND_TS    = 2'd2;
+    localparam [1:0] SEND_TS    = 2'd1;
     localparam [22:0] LANE0_SEED = 23'h1dbfbc;
 
     reg [1:0] word_index;
     reg [1:0] previous_mode;
     reg [1:0] stream_state;
-    reg       sds_after_eieos;
     reg [5:0] ts_interval_count;
     reg [22:0] lfsr_state;
     wire [1:0] active_index = (mode != previous_mode) ? 2'd0 : word_index;
@@ -67,37 +66,22 @@ module pcie_gen3_os_tx (
             word_index <= 2'd0;
             previous_mode <= 2'd0;
             stream_state <= SEND_EIEOS;
-            sds_after_eieos <= 1'b1;
             ts_interval_count <= 6'd0;
             lfsr_state <= LANE0_SEED;
         end else if (!enable || (mode == 2'd0)) begin
             word_index <= 2'd0;
             previous_mode <= mode;
             stream_state <= SEND_EIEOS;
-            sds_after_eieos <= 1'b1;
             ts_interval_count <= 6'd0;
             lfsr_state <= LANE0_SEED;
         end else if (stream_state == SEND_EIEOS) begin
             previous_mode <= mode;
             if (word_index == 2'd3) begin
                 word_index <= 2'd0;
-                stream_state <= sds_after_eieos ? SEND_SDS : SEND_TS;
-                sds_after_eieos <= 1'b0;
-                ts_interval_count <= 6'd0;
-                // EIEOS advances the LFSR but re-initializes it after Symbol 15.
-                lfsr_state <= LANE0_SEED;
-            end else begin
-                word_index <= word_index + 1'b1;
-            end
-        end else if (stream_state == SEND_SDS) begin
-            previous_mode <= mode;
-            // SDS is a clear control sequence.  The official PHY begins the
-            // following TS stream from the lane seed (first word 6794221e),
-            // rather than carrying 128 bits of SDS through the TS scrambler.
-            lfsr_state <= LANE0_SEED;
-            if (word_index == 2'd3) begin
-                word_index <= 2'd0;
                 stream_state <= SEND_TS;
+                ts_interval_count <= 6'd0;
+                // EIEOS is clear and re-initializes the lane scrambler.
+                lfsr_state <= LANE0_SEED;
             end else begin
                 word_index <= word_index + 1'b1;
             end
@@ -110,7 +94,6 @@ module pcie_gen3_os_tx (
             lfsr_state <= lfsr_next;
             if (ts_interval_count == 6'd31) begin
                 stream_state <= SEND_EIEOS;
-                sds_after_eieos <= 1'b0;
                 ts_interval_count <= 6'd0;
             end else begin
                 ts_interval_count <= ts_interval_count + 1'b1;
@@ -129,9 +112,6 @@ module pcie_gen3_os_tx (
         sync_header = start_block ? SH_ORDERED_SET : 2'b00;
         if (stream_state == SEND_EIEOS) begin
             out_data = 32'hff00_ff00;
-        end else if (stream_state == SEND_SDS) begin
-            out_data = (active_index == 2'd3) ? 32'hbcbf_9de1 :
-                                                32'haaaa_aaaa;
         end else begin
             case (active_index)
                 2'd0: plain_data = {

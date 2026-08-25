@@ -195,6 +195,12 @@ module pcie_ltssm_mac_gen1 #(
     wire       gen1_os_link_is_pad, gen1_os_lane_is_pad;
     wire       gen3_os_ts1_valid, gen3_os_ts2_valid, gen3_os_malformed;
     wire       gen3_os_idle_valid;
+    /* verilator lint_off UNUSEDSIGNAL */
+    // Frozen E1 semantic observability; consumed by E2 Recovery.RcvrLock.
+    wire       gen3_block_locked;
+    wire       gen3_lock_acquired, gen3_lock_lost;
+    wire       gen3_eieos_valid, gen3_sds_valid;
+    /* verilator lint_on UNUSEDSIGNAL */
     wire [7:0] gen3_os_link_number, gen3_os_lane_number;
     wire [7:0] gen3_os_n_fts, gen3_os_rate_id, gen3_os_training_control;
     wire [7:0] gen3_os_eq_control;
@@ -427,7 +433,10 @@ module pcie_ltssm_mac_gen1 #(
     pcie_gen1_os_rx u_os_rx (
         .clk              (phy_pclk),
         .rst_n            (pipe_rst_n),
-        .enable           (1'b1),
+        // Gen1/2 and Gen3 parser ownership is mutually exclusive. Keeping
+        // the 8b/10b parser live on 128b/130b words can accumulate false
+        // COM/TS state which leaks into a later fallback transaction.
+        .enable           (!gen3_mode),
         .in_valid         (rx_raw_aligned_valid),
         .in_data          (rx_raw_aligned_data),
         .in_datak         (rx_raw_aligned_datak),
@@ -451,6 +460,11 @@ module pcie_ltssm_mac_gen1 #(
         .ts1_valid(gen3_os_ts1_valid), .ts2_valid(gen3_os_ts2_valid),
         .malformed(gen3_os_malformed),
         .idle_valid(gen3_os_idle_valid),
+        .block_locked(gen3_block_locked),
+        .lock_acquired(gen3_lock_acquired),
+        .lock_lost(gen3_lock_lost),
+        .eieos_valid(gen3_eieos_valid),
+        .sds_valid(gen3_sds_valid),
         .link_number(gen3_os_link_number), .link_is_pad(gen3_os_link_is_pad),
         .lane_number(gen3_os_lane_number), .lane_is_pad(gen3_os_lane_is_pad),
         .n_fts(gen3_os_n_fts), .rate_id(gen3_os_rate_id),

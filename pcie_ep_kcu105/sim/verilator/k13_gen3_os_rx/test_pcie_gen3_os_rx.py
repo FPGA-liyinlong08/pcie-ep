@@ -21,13 +21,12 @@ async def drive_block(dut, words):
     await drive_word(dut, words[0], start=True, header=0b01)
     for word in words[1:]:
         await drive_word(dut, word)
-    block_malformed = int(dut.malformed.value)
     dut.in_valid.value = 0
     dut.start_block.value = 0
     dut.sync_header.value = 0
     dut.in_data.value = 0
     await tick(dut)
-    return block_malformed
+    return int(dut.malformed.value)
 
 
 async def reset(dut):
@@ -61,11 +60,13 @@ async def fixed_sds_control_word_is_accepted(dut):
     block_malformed = await arm_sds(dut, 0xBCBF_9DE1)
     assert block_malformed == 0
     assert int(dut.u_rx.lfsr_ready.value) == 1
+    assert int(dut.sds_valid.value) == 1
 
 
 @cocotb.test()
-async def captured_sds_variation_reproduces_failure(dut):
+async def captured_sds_variation_is_accepted(dut):
     await reset(dut)
     block_malformed = await arm_sds(dut, 0xE646_70E1)
-    assert block_malformed == 1
-    assert int(dut.u_rx.lfsr_ready.value) == 0
+    assert block_malformed == 0
+    assert int(dut.u_rx.lfsr_ready.value) == 1
+    assert int(dut.sds_valid.value) == 1

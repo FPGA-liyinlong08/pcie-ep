@@ -1,5 +1,7 @@
 # Phase E：Gen3协议与完整Endpoint计划
 
+状态：**E0 PASS；E1软件/仿真门禁PASS；E2实板RcvrLock待实施**
+
 ## 目标与入口
 
 Phase D已证明Golden方式Gen1→Gen3 PHY切速可以稳定完成。本阶段从已签署的

@@ -1,6 +1,6 @@
 # KCU105/KU040 standalone PCIe PHY Endpoint 实施顺序
 
-状态：**计划 v1 已冻结；K00～K11 PASS；K11-PHASE-RELEASE-v1 已冻结；K12已完成；K13生产边界接线阶段完成**
+状态：**K00～K11 PASS；Phase D Golden Recovery.Speed已签署；Phase E的E0/E1软件与仿真门禁PASS，E2实板RcvrLock待实施**
 
 ## 1. 阶段门
 
@@ -34,8 +34,8 @@
 | K11-A | Gen1离线全集成（MAC Packet边界以上） | PASS；DLL Active、Cfg、BAR、Demo、Hot Reset、双向CDC、KU040 routed OOC和定向CDC均通过 |
 | K11-B | Gen1真PHY/实板全集成 | PASS / 阶段性release；真实PHY InitFC/枚举/BAR、随机MMIO、LCRC/ACK注错、PERST#恢复、无ILA正式时序及KCU105 reboot/MMIO通过；最终压力门保留K14 |
 | K12 | Recovery.Speed 与 EQ Phase 0～3 | K12-A～E PASS；真实Gen3生产驱动接线转入K13 |
-| K13 | Gen3 全集成 | 在建；标准Retrain、`Recovery.Speed`切速和PhyStatus应答已接入并在实板观测，Gen3 EIEOS/TS边界已修正。官方XDMA已证明同板Root Port支持8GT/s x1；当前应修正TS原始字段/方向解析，完成真实EQ、128b/130b、时序、Gen3枚举和BAR压力 |
-| K14 | 最终加固和发布冻结 | Hot Reset、remove/rescan、长时 MMIO、CDC/DRC/时序和 Linux 最终验收 |
+| K13 | Gen3 全集成实验 | 历史实验/反例；不作为Phase E生产控制路径，也不恢复raw command MUX |
+| K14 | Golden Recovery.Speed加固和发布冻结 | PASS；commit `7b68996`冻结唯一PHY命令owner、canonical Gen1 release及真实PHY切速，作为Phase E入口 |
 
 ## 3. 固定验证分层
 
@@ -49,8 +49,15 @@ Vivado Warning 使用阶段固定 Allowlist。新增 Warning、任何 Critical W
 Error 均失败。最终目标为 Gen3 x1、`1234:e001`、4 KiB BAR0、10 万次随机
 8/16/32-bit MMIO、20 次冷启动、100 次重训，且相关时钟路径 WNS 不小于 0。
 
-K13当前阶段文档：
+K13历史实验文档：
 
 - `docs/architecture/k13-gen3-integration.md`
 - `docs/interfaces/k13-gen3-integration-interfaces.md`
 - `docs/verification/k13-verification-plan.md`
+
+Phase E当前阶段文档：
+
+- `docs/architecture/phase-e-gen3-block.md`
+- `docs/interfaces/phase-e-gen3-block-interfaces.md`
+- `docs/verification/phase-e-gen3-protocol-plan.md`
+- `docs/reports/phase-e0-e1-gen3-block-20260825.md`

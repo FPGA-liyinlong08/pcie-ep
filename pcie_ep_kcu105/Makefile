@@ -25,7 +25,7 @@
 	k11b2-hw-probe k11b2-hw-program k11b2-hw-acceptance k11b2-hw-program-debug \
 	k14-recovery-speed-vivado k14-recovery-speed-hw-program-arm \
 	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
-	k14-recovery-speed-hw-repeat k14-recovery-speed-test \
+	k14-recovery-speed-hw-repeat k14-recovery-speed-test phase-e-gen3-block-test \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
@@ -281,6 +281,9 @@ k14-recovery-speed-test:
 		$(CURDIR)/sim/verilator/k14_recovery_speed/k14_recovery_speed_test.cpp \
 		-Mdir sim/verilator/k14_recovery_speed/sim_build
 	./sim/verilator/k14_recovery_speed/sim_build/Vk14_recovery_speed_test_top
+
+phase-e-gen3-block-test:
+	./sim/verilator/phase_e_gen3_block/run_phase_e_gen3_block.sh
 
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
