@@ -8,6 +8,7 @@ vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
 
 export XILINX_LOCAL_USER_DATA=no
 export K14_RECOVERY_SPEED=1
+export K14_PLACE_DIRECTIVE=ExtraTimingOpt
 mkdir -p "${build_dir}"
 cd "${project_dir}"
 

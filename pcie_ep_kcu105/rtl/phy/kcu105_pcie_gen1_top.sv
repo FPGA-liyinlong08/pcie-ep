@@ -80,6 +80,9 @@ module kcu105_pcie_gen1_top #(
     wire [2:0]  negotiated_width;
     wire [1:0]  negotiated_speed;
     wire        hot_reset_seen;
+    wire        gen3_block_locked_unused;
+    wire        gen3_rcvrlock_complete_unused;
+    wire        gen3_rcvrlock_failed_unused;
     wire        tx_pkt_ready;
     wire        rx_pkt_valid;
     wire [15:0] rx_pkt_data;
@@ -244,7 +247,10 @@ module kcu105_pcie_gen1_top #(
         .training_error_count   (training_error_count),
         .timeout_count          (timeout_count),
         .frame_error_count      (frame_error_count),
-        .hot_reset_seen         (hot_reset_seen)
+        .hot_reset_seen         (hot_reset_seen),
+        .gen3_block_locked      (gen3_block_locked_unused),
+        .gen3_rcvrlock_complete (gen3_rcvrlock_complete_unused),
+        .gen3_rcvrlock_failed   (gen3_rcvrlock_failed_unused)
     );
 
     wire _unused = &{1'b0, phy_coreclk, phy_userclk, phy_mcapclk,
@@ -253,7 +259,9 @@ module kcu105_pcie_gen1_top #(
         phy_rxeq_new_txcoeff, phy_rxeq_adapt_done, phy_rxeq_done,
         tx_pkt_ready, rx_pkt_valid, rx_pkt_data, rx_pkt_keep, rx_pkt_sop,
         rx_pkt_eop, rx_pkt_is_dllp, rx_pkt_error, negotiated_width,
-        negotiated_speed, link_number, rx_ts_count, hot_reset_seen};
+        negotiated_speed, link_number, rx_ts_count, hot_reset_seen,
+        gen3_block_locked_unused, gen3_rcvrlock_complete_unused,
+        gen3_rcvrlock_failed_unused};
 endmodule
 
 `default_nettype wire

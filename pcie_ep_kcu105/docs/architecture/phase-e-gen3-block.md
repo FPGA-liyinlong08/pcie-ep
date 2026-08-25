@@ -1,6 +1,6 @@
 # Phase E1：Gen3 128-bit Block与Ordered Set架构
 
-状态：**E1仿真边界已冻结；E2实板RcvrLock尚未开始**
+状态：**E1已冻结；E2 RTL、仿真与K14实现复验PASS，实板门禁待实施**
 
 ## 1. 生产边界
 
@@ -59,7 +59,25 @@ TS字段沿用已冻结的16-byte语义映射，但由独立Python bit-serial参
 该互斥避免Gen3原始word在Gen1 parser中形成伪COM/TS状态，并避免fallback后消费旧
 半包。
 
-## 6. 非目标
+## 6. E2 Recovery.RcvrLock语义门
 
-E1不宣称Recovery.RcvrLock状态机、RcvrCfg、Equalization、Gen3 Data Stream/TLP、
-Linux Gen3枚举或实板8 GT/s已经通过。这些分别属于E2～E6。
+`pcie_gen3_rcvrlock_ctrl`位于E1 parser与K03 LTSSM之间，只消费解码后的
+`block_locked/lock_lost/TS/malformed`事件。它不观察也不驱动`PHY_RATE`、
+PowerDown、TXEI、Detect Assist、CDR Hold或PhyStatus握手。
+
+Gen3 `Recovery.RcvrLock`冻结为以下顺序：
+
+1. block lock前的TS1不计数；
+2. EIEOS建立lock后累计8个Link/Lane字段匹配的TS1；
+3. 第8个TS1产生单拍`complete`并进入`Recovery.RcvrCfg`；
+4. 失锁、malformed、TS2或字段不匹配产生单拍`failed`；
+5. E2 error或LTSSM timeout都回到`Recovery.Speed`，由K14协调器请求Gen1 fallback；
+6. `complete/failed`进入terminal hold，离开RcvrLock后由`enable=0`清除，避免重复脉冲。
+
+Gen1 RcvrLock的既有TS规则保持不变。生产顶层仅在请求速率为Gen3时把
+`gen3_rcvrlock_complete`作为`peer_speed_ok`；Gen1 fallback仍使用原TS1/TS2条件。
+
+## 7. 非目标
+
+E2不宣称RcvrCfg、Equalization、Gen3 Data Stream/TLP、Linux Gen3枚举或实板8 GT/s
+已经通过。E2实板连续20次RcvrLock门禁也仍待完成；这些分别属于E2硬件门与E3～E6。

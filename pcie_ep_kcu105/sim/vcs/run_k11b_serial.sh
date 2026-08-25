@@ -156,6 +156,7 @@ fi
     "${project_dir}/rtl/phy/pcie_gen1_os_tx.sv" \
     "${project_dir}/rtl/phy/pcie_gen3_scrambler32.sv" \
     "${project_dir}/rtl/phy/pcie_gen3_os_rx.sv" \
+    "${project_dir}/rtl/phy/pcie_gen3_rcvrlock_ctrl.sv" \
     "${project_dir}/rtl/phy/pcie_gen3_os_tx.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_framer.sv" \
     "${project_dir}/rtl/phy/pcie_phy_command_ctrl.sv" \

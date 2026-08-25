@@ -88,7 +88,12 @@ module pcie_ltssm_mac_gen1 #(
     // semantic fields to the K13 controller; callers must not infer an EQ
     // request from a Rate ID capability bit.
     output wire [7:0]  os_eq_control,
-    output wire [23:0] os_eq_data
+    output wire [23:0] os_eq_data,
+    // Phase E2 semantic status. These signals are downstream of the K14
+    // rate transaction and never participate in raw PHY command ownership.
+    output wire        gen3_block_locked,
+    output wire        gen3_rcvrlock_complete,
+    output wire        gen3_rcvrlock_failed
 );
     localparam [5:0] DETECT_QUIET         = 6'd0;
     localparam [5:0] DETECT_ACTIVE        = 6'd1;
@@ -195,12 +200,17 @@ module pcie_ltssm_mac_gen1 #(
     wire       gen1_os_link_is_pad, gen1_os_lane_is_pad;
     wire       gen3_os_ts1_valid, gen3_os_ts2_valid, gen3_os_malformed;
     wire       gen3_os_idle_valid;
+    wire       gen3_block_locked_i;
+    wire       gen3_lock_lost_i;
     /* verilator lint_off UNUSEDSIGNAL */
-    // Frozen E1 semantic observability; consumed by E2 Recovery.RcvrLock.
-    wire       gen3_block_locked;
-    wire       gen3_lock_acquired, gen3_lock_lost;
-    wire       gen3_eieos_valid, gen3_sds_valid;
+    // Frozen E1 observability points; the K14 ILA schema intentionally stays
+    // unchanged while E2 consumes only lock_lost and decoded TS events.
+    wire       gen3_lock_acquired_i;
+    wire       gen3_eieos_valid_i, gen3_sds_valid_i;
     /* verilator lint_on UNUSEDSIGNAL */
+    wire       gen3_rcvrlock_ctrl_complete, gen3_rcvrlock_ctrl_failed;
+    wire [4:0] gen3_rcvrlock_ts1_count;
+    reg        gen3_rcvrlock_timeout_pulse;
     wire [7:0] gen3_os_link_number, gen3_os_lane_number;
     wire [7:0] gen3_os_n_fts, gen3_os_rate_id, gen3_os_training_control;
     wire [7:0] gen3_os_eq_control;
@@ -460,11 +470,11 @@ module pcie_ltssm_mac_gen1 #(
         .ts1_valid(gen3_os_ts1_valid), .ts2_valid(gen3_os_ts2_valid),
         .malformed(gen3_os_malformed),
         .idle_valid(gen3_os_idle_valid),
-        .block_locked(gen3_block_locked),
-        .lock_acquired(gen3_lock_acquired),
-        .lock_lost(gen3_lock_lost),
-        .eieos_valid(gen3_eieos_valid),
-        .sds_valid(gen3_sds_valid),
+        .block_locked(gen3_block_locked_i),
+        .lock_acquired(gen3_lock_acquired_i),
+        .lock_lost(gen3_lock_lost_i),
+        .eieos_valid(gen3_eieos_valid_i),
+        .sds_valid(gen3_sds_valid_i),
         .link_number(gen3_os_link_number), .link_is_pad(gen3_os_link_is_pad),
         .lane_number(gen3_os_lane_number), .lane_is_pad(gen3_os_lane_is_pad),
         .n_fts(gen3_os_n_fts), .rate_id(gen3_os_rate_id),
@@ -485,6 +495,32 @@ module pcie_ltssm_mac_gen1 #(
                                              gen1_os_training_control;
     assign os_eq_control = gen3_mode ? gen3_os_eq_control : 8'd0;
     assign os_eq_data = gen3_mode ? gen3_os_eq_data : 24'd0;
+
+    wire gen3_rcvrlock_enable = gen3_mode &&
+                                (ltssm_state == RECOVERY_RCVRLOCK);
+    wire gen3_rcvrlock_fields_match =
+        !gen3_os_link_is_pad && !gen3_os_lane_is_pad &&
+        (gen3_os_link_number == link_number) &&
+        (gen3_os_lane_number == 8'd0);
+
+    pcie_gen3_rcvrlock_ctrl #(.TS_REQUIRED(5'd8)) u_gen3_rcvrlock_ctrl (
+        .clk(phy_pclk), .rst_n(pipe_rst_n),
+        .enable(gen3_rcvrlock_enable),
+        .block_locked(gen3_block_locked_i),
+        .lock_lost(gen3_lock_lost_i),
+        .ts1_valid(gen3_os_ts1_valid),
+        .ts1_fields_match(gen3_rcvrlock_fields_match),
+        .ts2_valid(gen3_os_ts2_valid),
+        .malformed(gen3_os_malformed),
+        .complete(gen3_rcvrlock_ctrl_complete),
+        .failed(gen3_rcvrlock_ctrl_failed),
+        .ts1_count(gen3_rcvrlock_ts1_count)
+    );
+
+    assign gen3_block_locked = gen3_block_locked_i;
+    assign gen3_rcvrlock_complete = gen3_rcvrlock_ctrl_complete;
+    assign gen3_rcvrlock_failed = gen3_rcvrlock_ctrl_failed ||
+                                  gen3_rcvrlock_timeout_pulse;
 
     pcie_gen1_os_tx u_os_tx (
         .clk              (phy_pclk),
@@ -675,8 +711,10 @@ module pcie_ltssm_mac_gen1 #(
             recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= 1'b0;
             gen3_eq_ts1_response_hold <= 1'b0;
+            gen3_rcvrlock_timeout_pulse <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
+            gen3_rcvrlock_timeout_pulse <= 1'b0;
             if (speed_retrain_active && !speed_retrain_active_q)
                 recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= speed_retrain_active;
@@ -1035,19 +1073,44 @@ module pcie_ltssm_mac_gen1 #(
                             ltssm_state <= RECOVERY_SPEED;
                             state_timer <= 32'd0;
                             rx_ts_count <= 5'd0;
-                        end else if (os_ts1_valid && !os_link_is_pad && !os_lane_is_pad &&
-                            (os_link_number == link_number) && (os_lane_number == 0)) begin
-                            if (rx_ts_count == TS_REQUIRED-1'b1) begin
+                        end else if (gen3_mode) begin
+                            rx_ts_count <= gen3_rcvrlock_ts1_count;
+                            if (gen3_rcvrlock_ctrl_failed) begin
+                                // Semantic failure asks the existing K14
+                                // coordinator for a Gen1 fallback. Raw rate,
+                                // TXEI and PhyStatus handling remain owned by
+                                // pcie_phy_command_ctrl.
+                                ltssm_state <= RECOVERY_SPEED;
+                                state_timer <= 32'd0;
+                                rx_ts_count <= 5'd0;
+                            end else if (gen3_rcvrlock_ctrl_complete) begin
                                 ltssm_state <= RECOVERY_RCVRCFG;
                                 state_timer <= 32'd0;
                                 rx_ts_count <= 5'd0;
-                            end else rx_ts_count <= rx_ts_count + 1'b1;
-                        end
-                        if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
-                            ltssm_state <= DETECT_QUIET;
-                            state_timer <= 32'd0;
-                            rx_ts_count <= 5'd0;
-                            timeout_count <= sat_inc32(timeout_count);
+                            end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
+                                gen3_rcvrlock_timeout_pulse <= 1'b1;
+                                ltssm_state <= RECOVERY_SPEED;
+                                state_timer <= 32'd0;
+                                rx_ts_count <= 5'd0;
+                                timeout_count <= sat_inc32(timeout_count);
+                            end
+                        end else begin
+                            if (os_ts1_valid && !os_link_is_pad &&
+                                !os_lane_is_pad &&
+                                (os_link_number == link_number) &&
+                                (os_lane_number == 0)) begin
+                                if (rx_ts_count == TS_REQUIRED-1'b1) begin
+                                    ltssm_state <= RECOVERY_RCVRCFG;
+                                    state_timer <= 32'd0;
+                                    rx_ts_count <= 5'd0;
+                                end else rx_ts_count <= rx_ts_count + 1'b1;
+                            end
+                            if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
+                                ltssm_state <= DETECT_QUIET;
+                                state_timer <= 32'd0;
+                                rx_ts_count <= 5'd0;
+                                timeout_count <= sat_inc32(timeout_count);
+                            end
                         end
                     end
                     RECOVERY_RCVRCFG: begin

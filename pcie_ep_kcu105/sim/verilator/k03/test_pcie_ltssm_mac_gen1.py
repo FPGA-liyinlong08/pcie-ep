@@ -13,6 +13,8 @@ RANDOM_PACKETS = int(os.getenv("K03_RANDOM_PACKETS", "2000"))
 COM, PAD, TS1, TS2, IDL = 0xBC, 0xF7, 0x4A, 0x45, 0x00
 STP, SDP, END, EDB = 0xFB, 0x5C, 0xFD, 0xFE
 SKP = 0x1C
+GEN3_LANE0_SEED = 0x1DBFBC
+GEN3_EIEOS_WORDS = [0xFF00FF00] * 4
 
 DETECT_QUIET = 0
 DETECT_ACTIVE = 1
@@ -77,6 +79,7 @@ def drive_defaults(dut):
     dut.phy_rxstart_block.value = 0
     dut.phy_rxsync_header.value = 0
     dut.active_phy_rate.value = 0
+    dut.recovery_target_rate.value = 0
     dut.phy_rxvalid.value = 0
     dut.phy_phystatus.value = 0
     dut.phy_rxelecidle.value = 1
@@ -138,6 +141,75 @@ async def pulse_phystatus(dut, status):
     await tick(dut)
     await writable_phase()
     dut.phy_phystatus.value = 0
+
+
+def gen3_scramble_word(state, data, bypass_byte=0):
+    result = data
+    for bit_index in range(32):
+        feedback = (state >> 22) & 1
+        if not ((bypass_byte >> (bit_index // 8)) & 1):
+            result ^= feedback << bit_index
+        state = ((state << 1) & 0x7FFFFF) | feedback
+        for tap in (21, 16, 8, 5, 2):
+            state ^= feedback << tap
+    return state, result & 0xFFFFFFFF
+
+
+def make_gen3_ts1(state, link=0, lane=0):
+    plain = [
+        (0xFF << 24) | (lane << 16) | (link << 8) | 0x1E,
+        0x0000000E,
+        0x4A4A0000,
+        0x4A4A4A4A,
+    ]
+    encoded = []
+    for index, word in enumerate(plain):
+        state, value = gen3_scramble_word(
+            state, word, bypass_byte=1 if index == 0 else 0)
+        encoded.append(value)
+    return state, encoded
+
+
+async def send_gen3_block(dut, words, header=0b01):
+    await writable_phase()
+    dut.phy_rxvalid.value = 1
+    dut.phy_rxdata_valid.value = 1
+    for index, word in enumerate(words):
+        dut.phy_rxdata.value = word
+        dut.phy_rxstart_block.value = int(index == 0)
+        dut.phy_rxsync_header.value = header if index == 0 else 0
+        await tick(dut)
+        await writable_phase()
+    dut.phy_rxdata_valid.value = 0
+    dut.phy_rxstart_block.value = 0
+    dut.phy_rxsync_header.value = 0
+    await tick(dut)
+
+
+async def enter_gen3_rcvrlock_after_k14_speed(dut):
+    await initialize(dut)
+    await train_to_l0(dut, validate_tx=False)
+    await writable_phase()
+    dut.recovery_target_rate.value = 2
+    dut.speed_retrain_active.value = 1
+    dut.force_recovery.value = 1
+    await wait_state(dut, RECOVERY_RCVRLOCK)
+    await send_ts(dut, 1, 8, link=0, lane=0)
+    await wait_state(dut, RECOVERY_RCVRCFG)
+    await send_ts(dut, 2, 8, link=0, lane=0)
+    await wait_state(dut, RECOVERY_SPEED)
+    assert int(dut.recovery_speed_ready.value) == 1
+    assert int(dut.phy_txdata_valid.value) == 0
+
+    # Model the already-proven K14 semantic completion without bypassing its
+    # boundary: committed active rate and done arrive together.
+    await writable_phase()
+    dut.active_phy_rate.value = 2
+    dut.recovery_speed_done.value = 1
+    await tick(dut)
+    await writable_phase()
+    dut.recovery_speed_done.value = 0
+    await wait_state(dut, RECOVERY_RCVRLOCK)
 
 
 async def complete_receiver_detect(dut):
@@ -560,6 +632,73 @@ async def retrain_uses_ltssm_recovery_speed_boundary(dut):
     dut.speed_retrain_active.value = 0
     await send_idle(dut, 8)
     await wait_state(dut, L0)
+
+
+@cocotb.test()
+async def gen3_rcvrlock_waits_for_eieos_and_eight_ts1(dut):
+    """K14完成切速后，E2只按block-lock语义关闭RcvrLock。"""
+    await enter_gen3_rcvrlock_after_k14_speed(dut)
+
+    state, ts_words = make_gen3_ts1(GEN3_LANE0_SEED)
+    await send_gen3_block(dut, ts_words)
+    await tick(dut)
+    assert int(dut.gen3_block_locked.value) == 0
+    assert int(dut.rx_ts_count.value) == 0
+    assert int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK
+
+    await send_gen3_block(dut, GEN3_EIEOS_WORDS)
+    await tick(dut)
+    assert int(dut.gen3_block_locked.value) == 1
+
+    state = GEN3_LANE0_SEED
+    for index in range(8):
+        state, ts_words = make_gen3_ts1(state)
+        await send_gen3_block(dut, ts_words)
+        if index < 7:
+            assert int(dut.ltssm_state.value) == RECOVERY_RCVRLOCK
+    await wait_state(dut, RECOVERY_RCVRCFG, timeout=32)
+
+
+@cocotb.test()
+async def gen3_rcvrlock_error_requests_semantic_fallback(dut):
+    """失锁不得改写raw PHY命令；LTSSM只回到Recovery.Speed授权点。"""
+    await enter_gen3_rcvrlock_after_k14_speed(dut)
+    await send_gen3_block(dut, GEN3_EIEOS_WORDS)
+    await tick(dut)
+    assert int(dut.gen3_block_locked.value) == 1
+
+    # A new StartBlock before the prior block completes creates boundary
+    # loss in E1 and must become the E2 semantic fallback request.
+    await writable_phase()
+    dut.phy_rxdata_valid.value = 1
+    dut.phy_rxstart_block.value = 1
+    dut.phy_rxsync_header.value = 0b01
+    dut.phy_rxdata.value = 0xFF00FF00
+    await tick(dut)
+    await writable_phase()
+    dut.phy_rxstart_block.value = 1
+    dut.phy_rxdata.value = 0x12345678
+    await tick(dut)
+    await writable_phase()
+    dut.phy_rxdata_valid.value = 0
+    dut.phy_rxstart_block.value = 0
+    await wait_state(dut, RECOVERY_SPEED, timeout=32)
+    assert int(dut.recovery_speed_ready.value) == 1
+    # The K14 owner remains responsible for the actual fallback rate request;
+    # this harness deliberately has no raw-rate shortcut.
+    assert int(dut.phy_rate.value) == 0
+
+
+@cocotb.test()
+async def gen3_rcvrlock_timeout_requests_semantic_fallback(dut):
+    """RcvrLock超时先请求fallback，不得直接带着Gen3 rate回Detect。"""
+    await enter_gen3_rcvrlock_after_k14_speed(dut)
+    timeout_before = int(dut.timeout_count.value)
+    await wait_state(dut, RECOVERY_SPEED, timeout=10100)
+    assert int(dut.timeout_count.value) == timeout_before + 1
+    assert int(dut.recovery_speed_ready.value) == 1
+    assert int(dut.active_phy_rate.value) == 2
+    assert int(dut.phy_rate.value) == 0
 
 
 @cocotb.test()

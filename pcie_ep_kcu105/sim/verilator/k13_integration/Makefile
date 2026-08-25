@@ -20,6 +20,7 @@ VERILOG_SOURCES := \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_os_tx.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen3_scrambler32.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen3_os_rx.sv \
+	$(PROJECT_DIR)/rtl/phy/pcie_gen3_rcvrlock_ctrl.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen3_os_tx.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_gen1_framer.sv \
 	$(PROJECT_DIR)/rtl/phy/pcie_ltssm_mac_gen1.sv \

@@ -1,6 +1,6 @@
 # Phase E：Gen3协议与完整Endpoint计划
 
-状态：**E0 PASS；E1软件/仿真门禁PASS；E2实板RcvrLock待实施**
+状态：**E0/E1 PASS；E2 RTL、仿真与K14实现复验PASS；E2实板20次门禁待实施**
 
 ## 目标与入口
 
@@ -39,13 +39,19 @@ canonical Gen1 bitstream。
 
 ## E2：Recovery.RcvrLock
 
+软件与实现状态（2026-08-25）：PASS。生产LTSSM只在精确EIEOS建立block lock后消费
+TS1，第8个字段匹配的TS1进入`Recovery.RcvrCfg`。失锁、malformed、提前TS2、字段
+不匹配或timeout均回到既有`Recovery.Speed`语义授权点，由K14 owner执行Gen1
+fallback；E2不直接驱动raw PHY命令。
+
 - rate transaction成功后只进入Gen3 `Recovery.RcvrLock`；
 - 明确EIEOS、block lock、TS1连续计数、timeout和回退条件；
 - PERST、Hot Reset、CDR loss和malformed block必须确定性回到Gen1安全路径；
 - ILA同时观察语义状态、raw rate最终条件、block lock和TS计数。
 
-完成条件：同板连续20次到达Gen3 RcvrLock终点，无重复rate transaction、QPLL reloss或
-raw owner毛刺。
+软件/实现门禁已满足；阶段最终完成条件仍是同板连续20次到达Gen3 RcvrLock终点，
+无重复rate transaction、QPLL reloss或raw owner毛刺。K14原ILA探针结构保持不变，
+E2语义探针和20次实板采集留给单独的E2 debug build。
 
 ## E3：Recovery.RcvrCfg
 

@@ -26,6 +26,7 @@
 	k14-recovery-speed-vivado k14-recovery-speed-hw-program-arm \
 	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
 	k14-recovery-speed-hw-repeat k14-recovery-speed-test phase-e-gen3-block-test \
+	phase-e-k14-rate-guard phase-e2-rcvrlock-test \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
@@ -232,6 +233,7 @@ k03-lint:
 		rtl/phy/pcie_gen1_os_tx.sv \
 		rtl/phy/pcie_gen3_scrambler32.sv \
 		rtl/phy/pcie_gen3_os_rx.sv \
+		rtl/phy/pcie_gen3_rcvrlock_ctrl.sv \
 		rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv \
 		rtl/phy/pcie_phy_command_ctrl.sv \
@@ -250,6 +252,7 @@ k03-lint:
 		rtl/phy/pcie_gen1_os_tx.sv \
 		rtl/phy/pcie_gen3_scrambler32.sv \
 		rtl/phy/pcie_gen3_os_rx.sv \
+		rtl/phy/pcie_gen3_rcvrlock_ctrl.sv \
 		rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv \
 		rtl/phy/pcie_phy_command_ctrl.sv \
@@ -285,6 +288,12 @@ k14-recovery-speed-test:
 phase-e-gen3-block-test:
 	./sim/verilator/phase_e_gen3_block/run_phase_e_gen3_block.sh
 
+phase-e-k14-rate-guard: phy-command-ownership k14-recovery-speed-test
+	python3 scripts/check_phase_e_k14_rate_guard.py
+
+phase-e2-rcvrlock-test:
+	./sim/verilator/phase_e2_rcvrlock/run_phase_e2_rcvrlock.sh
+
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
 
@@ -309,7 +318,8 @@ k11b2-lint:
 		rtl/phy/kcu105_refclk_reset.sv rtl/phy/kcu105_pcie_phy_wrapper.sv \
 		rtl/phy/pcie_gen12_scrambler.sv rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
-		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
+		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv \
+		rtl/phy/pcie_gen3_rcvrlock_ctrl.sv rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_phy_command_ctrl.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv \
 		rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \

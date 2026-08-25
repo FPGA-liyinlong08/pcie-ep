@@ -76,6 +76,8 @@ module kcu105_pcie_ep_gen1_top #(
     wire [1:0] core_target_link_speed;
     wire ltssm_recovery_speed_ready;
     wire os_ts1_valid, os_ts2_valid, os_malformed, os_tx_complete;
+    wire gen3_block_locked;
+    wire gen3_rcvrlock_complete, gen3_rcvrlock_failed;
     wire [7:0] os_link_number, os_lane_number, os_rate_id;
     wire [7:0] os_training_control, os_eq_control;
     wire [23:0] os_eq_data;
@@ -183,8 +185,11 @@ module kcu105_pcie_ep_gen1_top #(
         wire rate_op_failed = phy_rate_done &&
                               (phy_rate_result != 3'd0) &&
                               (phy_rate_result != 3'd1);
+        // E2 declares Gen3 peer success only after EIEOS lock and eight
+        // qualified TS1s. Gen1 fallback keeps the established OS rule.
         wire peer_speed_ok = (phy_active_rate == speed_requested_rate) &&
-                             (os_ts1_valid || os_ts2_valid);
+            ((speed_requested_rate == 2'b10) ? gen3_rcvrlock_complete :
+                                               (os_ts1_valid || os_ts2_valid));
 
         pcie_recovery_speed_ctrl #(
             .SPEED_TIMEOUT_CYCLES(GEN3_SPEED_TIMEOUT_CYCLES)
@@ -201,7 +206,8 @@ module kcu105_pcie_ep_gen1_top #(
             .rate_op_done(rate_op_success), .rate_op_failed(rate_op_failed),
             .active_rate(phy_active_rate), .requested_rate(speed_requested_rate),
             .retrain_accept(speed_retrain_accept), .phy_cdr_lost(1'b0),
-            .peer_speed_ok(peer_speed_ok), .peer_speed_reject(1'b0),
+            .peer_speed_ok(peer_speed_ok),
+            .peer_speed_reject(gen3_rcvrlock_failed),
             .state(speed_state), .traffic_quiesce(speed_traffic_quiesce),
             .recovery_active(speed_recovery_active),
             .negotiated_speed(speed_negotiated),
@@ -380,7 +386,9 @@ module kcu105_pcie_ep_gen1_top #(
         .os_link_number(os_link_number), .os_lane_number(os_lane_number),
         .os_rate_id(os_rate_id), .os_training_control(os_training_control),
         .os_tx_complete(os_tx_complete), .os_eq_control(os_eq_control),
-        .os_eq_data(os_eq_data)
+        .os_eq_data(os_eq_data), .gen3_block_locked(gen3_block_locked),
+        .gen3_rcvrlock_complete(gen3_rcvrlock_complete),
+        .gen3_rcvrlock_failed(gen3_rcvrlock_failed)
     );
 
     k11a_offline_top #(.K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)) u_protocol_core (

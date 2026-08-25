@@ -17,6 +17,7 @@ module k03_command_boundary_test_top #(
     input wire [1:0] phy_rxsync_header, input wire phy_rxvalid,
     input wire phy_phystatus, input wire phy_rxelecidle,
     input wire [2:0] phy_rxstatus, input wire [1:0] active_phy_rate,
+    input wire [1:0] recovery_target_rate,
     output wire [31:0] phy_txdata, output wire [1:0] phy_txdatak,
     output wire phy_txdata_valid, output wire phy_txstart_block,
     output wire [1:0] phy_txsync_header,
@@ -44,7 +45,9 @@ module k03_command_boundary_test_top #(
     output wire [7:0] link_number, output wire [4:0] rx_ts_count,
     output wire [31:0] training_error_count,
     output wire [31:0] timeout_count, output wire [31:0] frame_error_count,
-    output wire hot_reset_seen
+    output wire hot_reset_seen, output wire gen3_block_locked,
+    output wire gen3_rcvrlock_complete,
+    output wire gen3_rcvrlock_failed
 );
     wire [2:0] cmd_profile;
     wire cmd_valid, cmd_kind, cmd_ready, cmd_done;
@@ -86,7 +89,8 @@ module k03_command_boundary_test_top #(
         .phy_cmd_profile(cmd_profile), .phy_cmd_valid(cmd_valid),
         .phy_cmd_kind(cmd_kind), .phy_cmd_ready(cmd_ready),
         .phy_cmd_done(cmd_done), .phy_cmd_result(cmd_result),
-        .active_phy_rate(active_phy_rate), .recovery_target_rate(2'b00),
+        .active_phy_rate(active_phy_rate),
+        .recovery_target_rate(recovery_target_rate),
         .recovery_fallback_active(1'b0), .gen3_tx_eq_control(8'h01),
         .gen3_tx_eq_data(24'h8a0c28), .gen3_protocol_eq_complete(1'b0),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),
@@ -111,7 +115,10 @@ module k03_command_boundary_test_top #(
         .frame_error_count(frame_error_count), .hot_reset_seen(hot_reset_seen),
         .os_ts1_valid(), .os_ts2_valid(), .os_malformed(), .os_link_number(),
         .os_lane_number(), .os_rate_id(), .os_training_control(),
-        .os_tx_complete(), .os_eq_control(), .os_eq_data()
+        .os_tx_complete(), .os_eq_control(), .os_eq_data(),
+        .gen3_block_locked(gen3_block_locked),
+        .gen3_rcvrlock_complete(gen3_rcvrlock_complete),
+        .gen3_rcvrlock_failed(gen3_rcvrlock_failed)
     );
 endmodule
 

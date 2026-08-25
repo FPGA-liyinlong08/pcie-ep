@@ -46,3 +46,22 @@ Recovery中误发Data Stream边界。
 - Gen1→Gen3 rate transaction提交后，Gen3 parser从未锁定状态等待新EIEOS；
 - Gen3→Gen1 fallback先禁用Gen3 parser，再启用Gen1 parser；两者不得同拍消费；
 - `RxDataValid=0`不是错误、timeout或CDR loss证据。
+
+## 5. E2 Recovery.RcvrLock接口
+
+| 信号 | 方向 | 契约 |
+|---|---|---|
+| `enable` | 输入 | 仅Gen3且LTSSM处于`Recovery.RcvrLock`时为1；拉低清计数和terminal hold |
+| `block_locked` | 输入 | E1精确EIEOS锁定状态；为0时TS1不可消费且计数归零 |
+| `lock_lost` | 输入 | 单拍结构失锁，产生`failed` |
+| `ts1_valid` | 输入 | E1完整解扰并确认TS1标识后的单拍事件 |
+| `ts1_fields_match` | 输入 | Link Number等于当前链路且Lane Number为0；PAD或不匹配失败 |
+| `ts2_valid` | 输入 | RcvrLock中的提前TS2，产生`failed` |
+| `malformed` | 输入 | 非法header、boundary error或坏OS，产生`failed` |
+| `complete` | 输出 | 第8个合格TS1上的单拍脉冲；只授权LTSSM进入RcvrCfg |
+| `failed` | 输出 | 语义失败的单拍脉冲；只请求既有K14协调器fallback |
+| `ts1_count` | 输出 | 已接收的合格TS1数，范围0～7；完成/失败时归零 |
+
+`complete/failed`都不是raw PHY command。生产顶层保持
+`speed_recovery_done = rate_op_success`不变，并将E2结果分别映射到K14 speed
+controller的`peer_speed_ok/peer_speed_reject`语义输入。

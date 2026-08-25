@@ -11,8 +11,12 @@ set afifo_path /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afif
 set part_name xcku040-ffva1156-2-e
 set top_name kcu105_pcie_ep_gen1_board_top
 set g9_cycles 6250000
+set k14_place_directive "Default"
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
+}
+if {[info exists ::env(K14_PLACE_DIRECTIVE)]} {
+  set k14_place_directive $::env(K14_PLACE_DIRECTIVE)
 }
 if {$g9_cycles < 1} { error "G9_WAIT_REMOTE_DETECT_CYCLES must be positive" }
 if {![file exists $xci_path]} { error "K02 PHY XCI missing: $xci_path" }
@@ -59,7 +63,8 @@ if {$resume_routed_dcp ne ""} {
   rtl/phy/kcu105_pcie_phy_wrapper.sv rtl/phy/pcie_gen12_scrambler.sv \
   rtl/phy/pcie_gen1_rx_symbol_aligner.sv rtl/phy/pcie_gen1_os_rx.sv \
   rtl/phy/pcie_gen1_os_tx.sv rtl/phy/pcie_gen3_scrambler32.sv \
-  rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
+  rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_rcvrlock_ctrl.sv \
+  rtl/phy/pcie_gen3_os_tx.sv \
   rtl/phy/pcie_gen1_framer.sv rtl/phy/k02_phy_event_recorder.sv \
   rtl/phy/pcie_phy_command_ctrl.sv rtl/phy/pcie_recovery_speed_ctrl.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
@@ -232,7 +237,11 @@ if {$resume_routed_dcp eq ""} {
 
   write_checkpoint -force [file join $build_dir k11_gen1_synth.dcp]
   opt_design
-  place_design
+  if {$k14_recovery_speed} {
+    place_design -directive $k14_place_directive
+  } else {
+    place_design
+  }
   phys_opt_design -directive AggressiveExplore
   route_design -directive AggressiveExplore
   phys_opt_design -directive AggressiveExplore
@@ -335,6 +344,9 @@ puts $summary "G9_WAIT_REMOTE_DETECT=1"
 puts $summary "G9_WAIT_REMOTE_DETECT_CYCLES=$g9_cycles"
 puts $summary "PHY_COMMAND_CTRL_COUNT=1"
 puts $summary "GEN3_RATE_CHANGE_ENABLE=$k14_recovery_speed"
+if {$k14_recovery_speed} {
+  puts $summary "K14_PLACE_DIRECTIVE=$k14_place_directive"
+}
 puts $summary "WNS=$wns"
 puts $summary "WHS=$whs"
 puts $summary "DRC_ERROR_COUNT=[llength $drc_errors]"
