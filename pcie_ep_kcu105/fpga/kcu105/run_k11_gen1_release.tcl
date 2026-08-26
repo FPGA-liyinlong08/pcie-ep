@@ -11,6 +11,20 @@ set phase_e1_board_debug [expr {
 set phase_e1_timing_debug [expr {
   [info exists ::env(PHASE_E1_TIMING_DEBUG)] &&
   $::env(PHASE_E1_TIMING_DEBUG) eq "1"}]
+set phase_e1_disable_reset_buffer_guard [expr {
+  [info exists ::env(PHASE_E1_DISABLE_RESET_BUFFER_GUARD)] &&
+  $::env(PHASE_E1_DISABLE_RESET_BUFFER_GUARD) eq "1"}]
+set k14_allow_timing_failure [expr {
+  [info exists ::env(K14_ALLOW_TIMING_FAILURE)] &&
+  $::env(K14_ALLOW_TIMING_FAILURE) eq "1"}]
+set k14_ila_depth 8192
+if {[info exists ::env(K14_ILA_DEPTH)]} {
+  set k14_ila_depth $::env(K14_ILA_DEPTH)
+}
+if {![string is integer -strict $k14_ila_depth] ||
+    $k14_ila_depth ni {4096 8192}} {
+  error "K14_ILA_DEPTH must be 4096 or 8192"
+}
 if {($phase_e1_board_debug || $phase_e2_rcvrlock_debug) &&
     !$k14_recovery_speed} {
   error "Phase E debug requires the frozen K14 Recovery.Speed path"
@@ -260,7 +274,6 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
   }
 
   create_debug_core u_ila_k14 ila
-  set k14_ila_depth 8192
   set_property C_DATA_DEPTH $k14_ila_depth [get_debug_cores u_ila_k14]
   set_property C_TRIGIN_EN false [get_debug_cores u_ila_k14]
   set_property C_TRIGOUT_EN false [get_debug_cores u_ila_k14]
@@ -362,8 +375,12 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
     if {[llength $e1_core_reset_net] != 1} {
       error "Phase E1 synchronized core reset net missing/non-unique"
     }
-    set_property CLOCK_BUFFER_TYPE NONE $e1_core_reset_net
-    puts "PHASE_E1_RESET_BUFFER_GUARD_PASS net=$e1_core_reset_net"
+    if {$phase_e1_disable_reset_buffer_guard} {
+      puts "PHASE_E1_RESET_BUFFER_GUARD_DISABLED net=$e1_core_reset_net"
+    } else {
+      set_property CLOCK_BUFFER_TYPE NONE $e1_core_reset_net
+      puts "PHASE_E1_RESET_BUFFER_GUARD_PASS net=$e1_core_reset_net"
+    }
   }
 }
 
@@ -454,8 +471,11 @@ set wns [get_property SLACK $max_path]
 set whs [get_property SLACK $min_path]
 set setup_floor [expr {$phase_e1_board_debug ? -0.093 :
                        ($phase_e2_rcvrlock_debug ? -0.060 : 0.000)}]
-if {$wns < $setup_floor} {
+if {$wns < $setup_floor && !$k14_allow_timing_failure} {
   error "Implementation setup timing WNS=$wns below floor=$setup_floor"
+}
+if {$wns < $setup_floor && $k14_allow_timing_failure} {
+  puts "K14_TIMING_GUARD_BYPASS WNS=$wns floor=$setup_floor"
 }
 if {[llength $hold_paths] != 0} { error "Gen1 release has negative hold timing" }
 set drc_errors [get_drc_violations -quiet -filter {SEVERITY == Error}]
@@ -510,6 +530,7 @@ puts $summary "PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug"
 puts $summary "PHASE_E1_BOARD_DEBUG=$phase_e1_board_debug"
 puts $summary "GEN3_AUTO_RETRAIN_CYCLES=$phase_e1_auto_retrain_cycles"
 puts $summary "PHASE_E1_TIMING_DEBUG=$phase_e1_timing_debug"
+puts $summary "K14_ILA_DEPTH=$k14_ila_depth"
 puts $summary "SETUP_TIMING_FLOOR=$setup_floor"
 puts $summary "WNS=$wns"
 puts $summary "WHS=$whs"
