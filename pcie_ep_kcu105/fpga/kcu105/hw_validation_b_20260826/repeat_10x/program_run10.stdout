@@ -1,0 +1,94 @@
+
+****** Vivado v2021.2 (64-bit)
+  **** SW Build 3367213 on Tue Oct 19 02:47:39 MDT 2021
+  **** IP Build 3369179 on Thu Oct 21 08:25:16 MDT 2021
+    ** Copyright 1986-2021 Xilinx, Inc. All Rights Reserved.
+
+source /home/wx/Documents/PCIe/pcie_ep_kcu105/scripts/program_ku040.tcl
+# namespace eval ::ku040 {
+#     proc run {server_url bit_path action {label KU040}} {
+#         if {$action ni {probe program}} {
+#             error "$label Hardware action必须为 probe 或 program"
+#         }
+#         if {$action eq "program" && ![file exists $bit_path]} {
+#             error "$label bitstream不存在：$bit_path"
+#         }
+# 
+#         set target_open 0
+#         set manager_open 0
+#         set status [catch {
+#             open_hw_manager
+#             set manager_open 1
+#             connect_hw_server -url $server_url -allow_non_jtag
+#             open_hw_target
+#             set target_open 1
+# 
+#             set devices [get_hw_devices]
+#             if {[llength $devices] == 0} {
+#                 error "$label 没有发现 JTAG Hardware Device"
+#             }
+#             puts "${label}_HW_DEVICE_COUNT=[llength $devices]"
+#             foreach device $devices {
+#                 puts "${label}_HW_DEVICE name=$device part=[get_property PART $device]"
+#             }
+# 
+#             set ku040_devices [get_hw_devices -filter {PART =~ "xcku040*"}]
+#             if {[llength $ku040_devices] != 1} {
+#                 error "$label 期望唯一 xcku040，实际数量 [llength $ku040_devices]"
+#             }
+#             set ku040 [lindex $ku040_devices 0]
+# 
+#             if {$action eq "program"} {
+#                 set_property PROGRAM.FILE [file normalize $bit_path] $ku040
+#                 program_hw_devices $ku040
+#                 refresh_hw_device $ku040
+#                 puts "${label}_HW_PROGRAM_PASS device=$ku040 bitstream=[file normalize $bit_path]"
+#             } else {
+#                 puts "${label}_HW_PROBE_PASS device=$ku040 part=[get_property PART $ku040]"
+#             }
+#         } result options]
+# 
+#         if {$target_open} {
+#             catch {close_hw_target}
+#         }
+#         if {$manager_open} {
+#             catch {disconnect_hw_server}
+#             catch {close_hw_manager}
+#         }
+#         if {$status} {
+#             return -options $options $result
+#         }
+#         return $result
+#     }
+# }
+# if {![info exists ::KU040_SOURCE_ONLY]} {
+#     set server_url localhost:3122
+#     set bit_path ""
+#     set action probe
+#     if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
+#     if {[llength $argv] >= 2} { set bit_path [lindex $argv 1] }
+#     if {[llength $argv] >= 3} { set action [lindex $argv 2] }
+#     if {$action eq "program" && $bit_path eq ""} {
+#         error "program动作必须提供bitstream路径"
+#     }
+#     ::ku040::run $server_url $bit_path $action KU040
+# }
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:127.0.0.1:3121
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:3042
+INFO: [Labtools 27-3414] Connected to existing cs_server.
+INFO: [Labtoolstcl 44-466] Opening hw_target 127.0.0.1:3121/xilinx_tcf/Digilent/210308AC5C97
+KU040_HW_DEVICE_COUNT=1
+KU040_HW_DEVICE name=xcku040_0 part=xcku040
+INFO: [Labtools 27-3164] End of startup status: HIGH
+program_hw_devices: Time (s): cpu = 00:00:09 ; elapsed = 00:00:09 . Memory (MB): peak = 2805.945 ; gain = 0.000 ; free physical = 14314 ; free virtual = 113104
+INFO: [Labtools 27-2302] Device xcku040 (JTAG device index = 0) is programmed with a design that has 1 ILA core(s).
+WARNING: [Labtools 27-1347] Unable to find Debug Probes file []. Please update hw_device property [PROBES.FILE]
+ Update of hw_probe objects, will be skipped.
+WARNING: [Labtools 27-1974] Mismatch between the design programmed into the device xcku040_0 and the probes file(s) .
+The device design has 1 ILA core(s) and 0 VIO core(s). 0 ILA core(s) and 0 VIO core(s) are matched in the probes file(s).
+Resolution: 
+1. Reprogram device with the correct programming file and associated probes file(s) OR
+2. Goto device properties and associate the correct probes file(s) with the programming file already programmed in the device.
+KU040_HW_PROGRAM_PASS device=xcku040_0 bitstream=/home/wx/Documents/PCIe/pcie_ep_kcu105/fpga/kcu105/build_phase_e1_function_only/impl/phase_e1_function_only_ila.bit
+INFO: [Labtoolstcl 44-464] Closing hw_target 127.0.0.1:3121/xilinx_tcf/Digilent/210308AC5C97
+INFO: [Common 17-206] Exiting Vivado at Wed Aug 26 21:17:55 2026...

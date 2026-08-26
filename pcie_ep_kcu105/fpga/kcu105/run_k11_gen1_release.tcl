@@ -8,6 +8,9 @@ set phase_e2_rcvrlock_debug [expr {
 set phase_e1_board_debug [expr {
   [info exists ::env(PHASE_E1_BOARD_DEBUG)] &&
   $::env(PHASE_E1_BOARD_DEBUG) eq "1"}]
+set phase_e1_function_only [expr {
+  [info exists ::env(PHASE_E1_FUNCTION_ONLY)] &&
+  $::env(PHASE_E1_FUNCTION_ONLY) eq "1"}]
 set phase_e1_timing_debug [expr {
   [info exists ::env(PHASE_E1_TIMING_DEBUG)] &&
   $::env(PHASE_E1_TIMING_DEBUG) eq "1"}]
@@ -29,6 +32,12 @@ if {($phase_e1_board_debug || $phase_e2_rcvrlock_debug) &&
     !$k14_recovery_speed} {
   error "Phase E debug requires the frozen K14 Recovery.Speed path"
 }
+if {$phase_e1_function_only && !$k14_recovery_speed} {
+  error "Phase E1 function-only build requires the frozen K14 Recovery.Speed path"
+}
+if {$phase_e1_function_only && ($phase_e1_board_debug || $phase_e2_rcvrlock_debug)} {
+  error "Phase E1 function-only build must not combine with E1/E2 instrumentation"
+}
 if {$phase_e1_board_debug && $phase_e2_rcvrlock_debug} {
   error "Phase E1 and E2 debug builds must remain independent"
 }
@@ -40,6 +49,8 @@ if {$phase_e1_board_debug} {
   # an explicitly named diagnostic variant so its bit/LTX cannot overwrite
   # the baseline artifacts.
   set build_name "build_phase_e1_board"
+} elseif {$phase_e1_function_only} {
+  set build_name "build_phase_e1_function_only"
 } elseif {$phase_e2_rcvrlock_debug} {
   set build_name "build_phase_e2_rcvrlock"
 } elseif {$k14_recovery_speed} {
@@ -65,8 +76,9 @@ if {![string is integer -strict $phase_e1_auto_retrain_cycles] ||
     $phase_e1_auto_retrain_cycles ni {0 1}} {
   error "PHASE_E1_AUTO_RETRAIN_CYCLES must be 0 or 1"
 }
-if {!$phase_e1_board_debug && $phase_e1_auto_retrain_cycles != 0} {
-  error "AUTO retrain override is only valid for PHASE_E1_BOARD_DEBUG"
+if {!$phase_e1_board_debug && !$phase_e1_function_only &&
+    $phase_e1_auto_retrain_cycles != 0} {
+  error "AUTO retrain override is only valid for an E1 functional build"
 }
 if {$phase_e1_board_debug && $phase_e1_auto_retrain_cycles == 1} {
   set build_name "build_phase_e1_board_auto1"
@@ -153,6 +165,7 @@ if {$resume_routed_dcp ne ""} {
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_cycles \
       -generic K14_RATE_DEBUG=1 \
       -generic PHASE_E1_BOARD_DEBUG=$phase_e1_board_debug \
+      -generic PHASE_E1_FUNCTION_ONLY=$phase_e1_function_only \
       -generic PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug \
       -generic GEN3_AUTO_RETRAIN_CYCLES=$phase_e1_auto_retrain_cycles \
       -generic PHASE_E1_TIMING_DEBUG=$phase_e1_timing_debug \
@@ -493,6 +506,9 @@ if {$k14_recovery_speed && [llength [get_debug_cores -quiet u_ila*]] != 1} {
 if {$phase_e1_board_debug} {
   set impl_pass "PHASE_E1_BOARD_IMPL_PASS"
   set bit_name "phase_e1_board_ila.bit"
+} elseif {$phase_e1_function_only} {
+  set impl_pass "PHASE_E1_FUNCTION_ONLY_IMPL_PASS"
+  set bit_name "phase_e1_function_only_ila.bit"
 } elseif {$phase_e2_rcvrlock_debug} {
   set impl_pass "PHASE_E2_RCVRLOCK_IMPL_PASS"
   set bit_name "phase_e2_rcvrlock_ila.bit"
@@ -528,6 +544,7 @@ if {$k14_recovery_speed} {
 }
 puts $summary "PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug"
 puts $summary "PHASE_E1_BOARD_DEBUG=$phase_e1_board_debug"
+puts $summary "PHASE_E1_FUNCTION_ONLY=$phase_e1_function_only"
 puts $summary "GEN3_AUTO_RETRAIN_CYCLES=$phase_e1_auto_retrain_cycles"
 puts $summary "PHASE_E1_TIMING_DEBUG=$phase_e1_timing_debug"
 puts $summary "K14_ILA_DEPTH=$k14_ila_depth"
