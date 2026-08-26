@@ -4,11 +4,24 @@ set phase_e1_debug [expr {[info exists ::env(PHASE_E1_BOARD_DEBUG)] &&
                           $::env(PHASE_E1_BOARD_DEBUG) eq "1"}]
 set phase_e2_debug [expr {[info exists ::env(PHASE_E2_RCVRLOCK_DEBUG)] &&
                           $::env(PHASE_E2_RCVRLOCK_DEBUG) eq "1"}]
+set phase_e1_auto_retrain_cycles 0
+if {[info exists ::env(PHASE_E1_AUTO_RETRAIN_CYCLES)]} {
+  set phase_e1_auto_retrain_cycles $::env(PHASE_E1_AUTO_RETRAIN_CYCLES)
+}
+if {![string is integer -strict $phase_e1_auto_retrain_cycles] ||
+    $phase_e1_auto_retrain_cycles ni {0 1}} {
+  error "PHASE_E1_AUTO_RETRAIN_CYCLES must be 0 or 1"
+}
+if {!$phase_e1_debug && $phase_e1_auto_retrain_cycles != 0} {
+  error "AUTO retrain override is only valid for PHASE_E1_BOARD_DEBUG"
+}
 if {$phase_e1_debug && $phase_e2_debug} {
   error "Phase E1 and E2 hardware helpers must remain independent"
 }
 if {$phase_e1_debug} {
-  set build_name "build_phase_e1_board"
+  set build_name [expr {$phase_e1_auto_retrain_cycles == 1 ?
+                        "build_phase_e1_board_auto1" :
+                        "build_phase_e1_board"}]
   set file_prefix "phase_e1_board"
   set pass_prefix "PHASE_E1_BOARD"
 } elseif {$phase_e2_debug} {
@@ -28,8 +41,20 @@ set ltx_path    [file join $impl_dir ${file_prefix}_ila.ltx]
 
 set server_url 127.0.0.1:3122
 set action status
+set post_program_settle_ms 0
+if {[info exists ::env(K14_POST_PROGRAM_SETTLE_MS)]} {
+  set post_program_settle_ms $::env(K14_POST_PROGRAM_SETTLE_MS)
+}
+if {![string is integer -strict $post_program_settle_ms] ||
+    $post_program_settle_ms < 0} {
+  error "K14_POST_PROGRAM_SETTLE_MS must be a non-negative integer"
+}
 if {[llength $argv] >= 1} { set server_url [lindex $argv 0] }
 if {[llength $argv] >= 2} { set action [lindex $argv 1] }
+if {[info exists ::env(K14_HW_SERVER_URL)] &&
+    $::env(K14_HW_SERVER_URL) ne ""} {
+  set server_url $::env(K14_HW_SERVER_URL)
+}
 if {$action ni {program-arm program-capture-wait arm-only arm-capture-wait capture-wait upload status}} {
   error "K14 Recovery.Speed ILA invalid action: $action"
 }
@@ -51,6 +76,9 @@ set_property FULL_PROBES.FILE $ltx_path $device
 if {$action eq "program-arm" || $action eq "program-capture-wait"} {
   set_property PROGRAM.FILE $bit_path $device
   program_hw_devices $device
+  if {$post_program_settle_ms > 0} {
+    after $post_program_settle_ms
+  }
 }
 refresh_hw_device $device
 set ilas [get_hw_ilas -of_objects $device]

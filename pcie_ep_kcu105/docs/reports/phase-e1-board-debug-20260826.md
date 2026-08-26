@@ -1,7 +1,7 @@
 # Phase E1 实板隔离调试阶段报告
 
 日期：2026-08-26
-状态：**阶段记录完成；E1软件/仿真PASS，手动 Retrain bit 时序签署条件PASS；实板触发证据尚未完成，K14保持冻结**
+状态：**AUTO=1 三次实板捕获均重锁通过；AUTO=0 Root-Port-only 对照已重跑并复现失败，K14保持冻结**
 
 ## 1. 本轮目标与边界
 
@@ -112,8 +112,52 @@ malformed-only trigger, then clean os_ts1_valid trigger
 因此本次仍不能把 20/20 重复计为通过。
 
 同时修正 `scripts/remote_pcie_host.sh` 的 PCIe capability 偏移：Link Control 使用
-`CAP_EXP+0c`，Link Control 2 使用 `CAP_EXP+30`；此前的 `+10/+30` 分别不是这两个
-寄存器，已避免后续硬件测试产生假阴性。
+`CAP_EXP+10`，Link Control 2 使用 `CAP_EXP+30`；此前的 `+0c/+30` 组合把 Link Cap
+误当成了 Link Control。为保持 Root-Port-directed retrain 隔离性，脚本已移除
+Endpoint 侧 `CAP_EXP+10` Retrain Link 写入，只保留 Root Port 的 Gen1 normalize、
+Gen3 target-speed 设置和 Root Port Retrain；并对 `CAP_EXP+30` 做 Gen3 readback 校验。
+
+### 4.4 `GEN3_AUTO_RETRAIN_CYCLES` 单变量 A/B
+
+为隔离自动切速与 Root-Port-directed Recovery 的上下文差异，重新生成了独立的
+AUTO=1 诊断 bit。除该 generic 外，RTL、XCI、E1/K14 debug、ILA probes、约束和
+`K14_PLACE_DIRECTIVE=Explore` 均保持一致；本次只让 endpoint 的 auto retrain 自己
+发生，没有调用 `retrain-gen3`。下载后等待 2 s，再读取从复位开始工作的 sticky
+`k14_event_record_w`，ILA 仅以 `k14_phy_rate_w==2` 作辅助触发。
+
+AUTO=1 bit 实现摘要：
+
+```text
+PHASE_E1_BOARD_IMPL_PASS
+GEN3_AUTO_RETRAIN_CYCLES=1
+K14_PLACE_DIRECTIVE=Explore
+WNS=+0.006 ns  WHS=+0.004 ns  DRC_ERROR_COUNT=0
+probe widths=31/118/32/8/32/10, depth=8192
+bit SHA256=05188e4b66aeace900bd0e119bbb8dc58c451ed1118a6d42f47888c0b6090d84
+```
+
+三次 AUTO=1 捕获均为 fresh recorder、完整 `valid=0x3b`，并通过现有 trace analyzer：
+
+| 捕获文件 | QPLL fall | QPLL rise | PhyStatus | 最终状态 |
+| --- | ---: | ---: | ---: | --- |
+| `build_phase_e1_board_auto1/capture/20260826_122957_phase_e1_board.csv` | 10.044 us | 87.716 us | 127.520 us | rate2/lock1/RATEGEN3=1/USERGEN3RDY=1 |
+| `build_phase_e1_board_auto1/capture/20260826_123053_phase_e1_board.csv` | 10.044 us | 88.020 us | 125.452 us | rate2/lock1/RATEGEN3=1/USERGEN3RDY=1 |
+| `build_phase_e1_board_auto1/capture/20260826_123124_phase_e1_board.csv` | 10.044 us | 88.120 us | 124.424 us | rate2/lock1/RATEGEN3=1/USERGEN3RDY=1 |
+
+新的 AUTO=0 Root-Port-only 对照为
+`build_phase_e1_board/capture/20260826_125735_phase_e1_board.csv`：流程只写 Root Port
+`CAP_EXP+30/+10`，并确认 `ROOT_PORT_GEN3_REQUEST_READBACK_PASS value=0003`，没有
+写 Endpoint Retrain 位。该 trace 观察到 QPLL fall=10.044 us，但 `qpll_rise`、
+`PhyStatus` 均未观察到，最终 `qpll_lock=0`、`RATEGEN3=0`、`USERGEN3RDY=0`
+（`valid=0x11`）。旧文件 `20260826_114618` 仍保留为历史方向性证据，但不再作为
+严格对照。
+
+因此干净 A/B 现在支持如下结论：`GEN3_AUTO_RETRAIN_CYCLES=0` 没有改动 K14 raw
+command bundle 或 Golden gap；在 Root-Port-directed Recovery 上下文中，切速时序仍
+导致 QPLL 不重锁，而 endpoint 自主 AUTO=1 路径可稳定重锁。下一轮优先检查 Endpoint
+收到 Root Port Recovery TS 后进入 `Recovery.Speed` 的时序，尤其是 RP 是否已停止
+Gen1 signaling。该 A/B 仍不等同于最终 E1 签署：旧 AUTO=1 trace 的 `malformed=1`
+尚需单独处理，20/20 门禁尚未执行。
 
 ## 5. 软件与静态门禁
 
@@ -147,10 +191,12 @@ rtl/phy/pcie_recovery_speed_ctrl.sv
 
 ## 7. 阶段结论与下一步
 
-本轮已完成 E1 手动 Retrain 实现、时序签署和 Gen1 L0 保持验证；E1 仍未完成最终
-硬件签署。Root Port/插槽 Gen3 能力已由 `LnkCap=32GT/s x16` 确认，当前待解决的是
-链路从 Gen1 到 Gen3 的实际训练与 PIPE 证据；20/20 独立重复未执行，E2 不得进入。
+本轮已完成 E1 手动 Retrain 实现、时序签署、Gen1 L0 保持验证，以及干净的 AUTO=1/
+AUTO=0 Root-Port-only 单变量 A/B。AUTO=1 三次均完成 QPLL relock，AUTO=0 严格对照
+复现 QPLL lock failure；E1 仍未完成最终硬件签署，`malformed=1` 和 20/20 独立重复
+仍待处理，E2 不得进入。
 
-下一步在当前已确认具备 Gen3 能力的 Root Port 上，重新 ARM ILA 并执行手动
-`Retrain Link`，完成 malformed 首次捕获、clean TS1 捕获及 20/20 门禁；在此之前
-保持 E1 阻塞，不得进入 E2。
+下一步基于已闭合的 A/B 检查 Endpoint 收到 Root Port Recovery TS 后进入
+`Recovery.Speed` 的具体时序（特别是 RP 是否已停止 Gen1 signaling），再决定是否
+需要 RTL 修复。确认修复后仍需重新完成 malformed 首次捕获、clean TS1 捕获及 20/20
+门禁。

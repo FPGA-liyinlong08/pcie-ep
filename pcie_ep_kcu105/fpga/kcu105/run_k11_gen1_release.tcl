@@ -16,6 +16,9 @@ if {$phase_e1_board_debug && $phase_e2_rcvrlock_debug} {
   error "Phase E1 and E2 debug builds must remain independent"
 }
 if {$phase_e1_board_debug} {
+  # The normal E1 build remains the RP-directed AUTO=0 baseline.  AUTO=1 is
+  # an explicitly named diagnostic variant so its bit/LTX cannot overwrite
+  # the baseline artifacts.
   set build_name "build_phase_e1_board"
 } elseif {$phase_e2_rcvrlock_debug} {
   set build_name "build_phase_e2_rcvrlock"
@@ -24,7 +27,6 @@ if {$phase_e1_board_debug} {
 } else {
   set build_name "build_k11_gen1_release"
 }
-set build_dir [file join $script_dir $build_name impl]
 set phy_module pcie_phy_x1_gen3
 set xci_path [file join $script_dir ip $phy_module ${phy_module}.xci]
 set afifo_path /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
@@ -32,9 +34,24 @@ set part_name xcku040-ffva1156-2-e
 set top_name kcu105_pcie_ep_gen1_board_top
 set g9_cycles 6250000
 set k14_place_directive "Default"
-# E1 signoff is manually controlled: the board must remain in Gen1 L0 until
-# the ILA is armed and the Root Port explicitly requests Gen3 retrain.
+# E1 signoff is manually controlled by default: the board must remain in
+# Gen1 L0 until the ILA is armed and the Root Port explicitly requests Gen3
+# retrain.  The AUTO=1 value is reserved for the controlled diagnostic A/B.
 set phase_e1_auto_retrain_cycles 0
+if {[info exists ::env(PHASE_E1_AUTO_RETRAIN_CYCLES)]} {
+  set phase_e1_auto_retrain_cycles $::env(PHASE_E1_AUTO_RETRAIN_CYCLES)
+}
+if {![string is integer -strict $phase_e1_auto_retrain_cycles] ||
+    $phase_e1_auto_retrain_cycles ni {0 1}} {
+  error "PHASE_E1_AUTO_RETRAIN_CYCLES must be 0 or 1"
+}
+if {!$phase_e1_board_debug && $phase_e1_auto_retrain_cycles != 0} {
+  error "AUTO retrain override is only valid for PHASE_E1_BOARD_DEBUG"
+}
+if {$phase_e1_board_debug && $phase_e1_auto_retrain_cycles == 1} {
+  set build_name "build_phase_e1_board_auto1"
+}
+set build_dir [file join $script_dir $build_name impl]
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
 }

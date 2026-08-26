@@ -82,11 +82,12 @@ read_lspci() {
 }
 
 retrain_gen3() {
-    # PCIe capability offsets: Link Control is +0x0c and Link Control 2 is
-    # +0x30.  Keep the endpoint at Gen1 before requesting explicit retrain.
+    # PCIe capability offsets: Link Control is +0x10 and Link Control 2 is
+    # +0x30.  Normalize and retrain from the Root Port only so this remains a
+    # Root-Port-directed experiment; do not set the endpoint Retrain Link bit.
     ssh_run "set -e; \
         sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w=0001:000f; \
-        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+0c.w=0020:0020; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w=0020:0020; \
         stable=0; \
         for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
             speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
@@ -104,16 +105,24 @@ retrain_gen3() {
         if [ \"\$stable\" -lt 3 ]; then \
             echo 'REMOTE_GEN1_NORMALIZE_FAIL' >&2; exit 1; \
         fi; \
-        sudo -n setpci -s '$remote_bdf' CAP_EXP+0c.w=0020:0020; \
         sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w=0003:000f; \
-        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+0c.w=0020:0020; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w=0020:0020; \
+        root_port_lnkctl=\$(sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w); \
+        root_port_lnkctl2=\$(sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w); \
+        printf 'ROOT_PORT_LNKCTL=%s\\n' \"\$root_port_lnkctl\"; \
+        printf 'ROOT_PORT_LNKCTL2=%s\\n' \"\$root_port_lnkctl2\"; \
+        root_port_lnkctl2_dec=\$(printf '%d' \"0x\$root_port_lnkctl2\"); \
+        if [ \$((root_port_lnkctl2_dec & 15)) -ne 3 ]; then \
+            printf 'ROOT_PORT_GEN3_REQUEST_READBACK_FAIL value=%s\\n' \"\$root_port_lnkctl2\" >&2; exit 1; \
+        fi; \
+        printf 'ROOT_PORT_GEN3_REQUEST_READBACK_PASS value=%s\\n' \"\$root_port_lnkctl2\"; \
         for n in 1 2 3 4 5 6 7 8 9 10; do \
             speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
             width=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_width 2>/dev/null || echo unavailable); \
             printf 'REMOTE_RETRAIN_POLL=%s speed=%s width=%s\\n' \"\$n\" \"\$speed\" \"\$width\"; \
             sleep 0.2; \
         done; \
-        sudo -n lspci -s '$remote_rp_bdf' -vv | sed -n '/LnkCtl2:/,/LnkSta2:/p'; \
+        sudo -n lspci -s '$remote_rp_bdf' -vv; \
         sudo -n lspci -s '$remote_bdf' -vv | sed -n '/LnkCtl2:/,/LnkSta2:/p'"
 }
 

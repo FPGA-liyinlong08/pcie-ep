@@ -3,7 +3,13 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
-build_dir="${script_dir}/build_phase_e1_board/impl"
+auto_retrain_cycles="${PHASE_E1_AUTO_RETRAIN_CYCLES:-0}"
+case "${auto_retrain_cycles}" in
+  0) build_name="build_phase_e1_board" ;;
+  1) build_name="build_phase_e1_board_auto1" ;;
+  *) echo "PHASE_E1_AUTO_RETRAIN_CYCLES must be 0 or 1" >&2; exit 2 ;;
+esac
+build_dir="${script_dir}/${build_name}/impl"
 vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
 
 export XILINX_LOCAL_USER_DATA=no
@@ -12,6 +18,7 @@ export K14_RECOVERY_SPEED=1
 # implementation experiment to select another legal place_design directive.
 export K14_PLACE_DIRECTIVE="${K14_PLACE_DIRECTIVE:-ExtraTimingOpt}"
 export PHASE_E1_BOARD_DEBUG=1
+export PHASE_E1_AUTO_RETRAIN_CYCLES="${auto_retrain_cycles}"
 unset PHASE_E2_RCVRLOCK_DEBUG
 mkdir -p "${build_dir}"
 cd "${project_dir}"
@@ -21,7 +28,7 @@ cd "${project_dir}"
   -nojournal -log "${build_dir}/vivado.log"
 
 grep -q '^PHASE_E1_BOARD_IMPL_PASS$' "${build_dir}/summary.txt"
-grep -q '^GEN3_AUTO_RETRAIN_CYCLES=0$' "${build_dir}/summary.txt"
+grep -q "^GEN3_AUTO_RETRAIN_CYCLES=${auto_retrain_cycles}$" "${build_dir}/summary.txt"
 awk -F= '/^WNS=/{found=1; if ($2 < -0.093) exit 1} END{if (!found) exit 1}' \
   "${build_dir}/summary.txt"
 if [[ -n "${K14_RESUME_ROUTED_DCP:-}" ]]; then
