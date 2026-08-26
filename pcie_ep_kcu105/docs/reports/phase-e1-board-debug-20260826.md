@@ -104,15 +104,15 @@ malformed-only trigger, then clean os_ts1_valid trigger
 ./scripts/remote_pcie_host.sh retrain-gen3
 ```
 
-本次运行中，远端 `00:01.0` Root Port 报告 `LnkCap: Speed 5GT/s`，每次轮询均为
-`2.5 GT/s PCIe, width=1`，`Train-`；malformed 与 clean TS1 ILA 均未触发
-（状态 `CORE_STATUS=IDLE`, `SAMPLE_COUNT=0`）。这只能说明本次枚举到的上游端口
-读数为 5GT/s，不能推出 KCU105 插槽不支持 Gen3；项目历史记录已证明同一 KCU105、
-同一插槽和主机曾用官方 XDMA 达到 `8GT/s x1`。两者存在环境/端口能力读数冲突，
-因此本次不能生成 E1 clean trace，也不能把 20/20 重复计为通过。
+本次用户提供的原始 `lspci -s 00:01.0 -vvx` 显示 Root Port
+`LnkCap: Speed 32GT/s, Width x16`，并且 `LnkCtl2: Target Link Speed: 8GT/s`；
+这确认插槽/上游端口具备 Gen3 能力。当前 `LnkSta=2.5GT/s x1`、`Train-` 只表示
+链路仍停在 Gen1，不能视为端口能力限制。此前一次工具输出的 `5GT/s` 读数已判定为
+异常/不可信，不再作为 E1 阻塞依据。malformed 与 clean TS1 尚未完成有效触发，
+因此本次仍不能把 20/20 重复计为通过。
 
 同时修正 `scripts/remote_pcie_host.sh` 的 PCIe capability 偏移：Link Control 使用
-`CAP_EXP+0c`，Link Control 2 使用 `CAP_EXP+2c`；此前的 `+10/+30` 分别不是这两个
+`CAP_EXP+0c`，Link Control 2 使用 `CAP_EXP+30`；此前的 `+10/+30` 分别不是这两个
 寄存器，已避免后续硬件测试产生假阴性。
 
 ## 5. 软件与静态门禁
@@ -148,11 +148,9 @@ rtl/phy/pcie_recovery_speed_ctrl.sv
 ## 7. 阶段结论与下一步
 
 本轮已完成 E1 手动 Retrain 实现、时序签署和 Gen1 L0 保持验证；E1 仍未完成最终
-硬件签署。当前 Root Port 的 5GT/s 读数与历史官方 XDMA Gen3 证据矛盾，硬件环境
-需要先用已知良好 XDMA bit 重新确认端口/BDF/BIOS 能力；20/20 独立重复未执行，
-E2 不得进入。
+硬件签署。Root Port/插槽 Gen3 能力已由 `LnkCap=32GT/s x16` 确认，当前待解决的是
+链路从 Gen1 到 Gen3 的实际训练与 PIPE 证据；20/20 独立重复未执行，E2 不得进入。
 
-下一步先下载历史已知良好的官方 XDMA Gen3 x1 bit，读取同一 Root Port 的
-`LnkCap/LnkSta`，确认当前 `00:01.0` 是否为正确上游端口及是否存在 BIOS/拓扑差异；
-确认后再执行 malformed 首次捕获、clean TS1 捕获及 20/20 门禁。在此之前保持 E1
-阻塞，不得进入 E2。
+下一步在当前已确认具备 Gen3 能力的 Root Port 上，重新 ARM ILA 并执行手动
+`Retrain Link`，完成 malformed 首次捕获、clean TS1 捕获及 20/20 门禁；在此之前
+保持 E1 阻塞，不得进入 E2。
