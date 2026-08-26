@@ -12,7 +12,8 @@ module kcu105_pcie_ep_gen1_board_top #(
     parameter integer DETECT_QUIET_CYCLES = 1_500_000,
     parameter integer GEN3_RATE_CHANGE_ENABLE = 0,
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0
+    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
+    parameter integer PHASE_E1_TIMING_DEBUG = 0
 ) (
     input  wire       pcie_refclk_p,
     input  wire       pcie_refclk_n,
@@ -45,7 +46,8 @@ module kcu105_pcie_ep_gen1_board_top #(
         .DETECT_QUIET_CYCLES(DETECT_QUIET_CYCLES),
         .GEN3_RATE_CHANGE_ENABLE(GEN3_RATE_CHANGE_ENABLE),
         .GEN3_SPEED_TIMEOUT_CYCLES(GEN3_SPEED_TIMEOUT_CYCLES),
-        .GEN3_AUTO_RETRAIN_CYCLES(GEN3_AUTO_RETRAIN_CYCLES)
+        .GEN3_AUTO_RETRAIN_CYCLES(GEN3_AUTO_RETRAIN_CYCLES),
+        .PHASE_E1_TIMING_DEBUG(PHASE_E1_TIMING_DEBUG)
     ) u_endpoint (
         .pcie_refclk_p(pcie_refclk_p),
         .pcie_refclk_n(pcie_refclk_n),

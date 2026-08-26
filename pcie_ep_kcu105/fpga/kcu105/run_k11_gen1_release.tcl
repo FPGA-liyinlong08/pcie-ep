@@ -8,12 +8,18 @@ set phase_e2_rcvrlock_debug [expr {
 set phase_e1_board_debug [expr {
   [info exists ::env(PHASE_E1_BOARD_DEBUG)] &&
   $::env(PHASE_E1_BOARD_DEBUG) eq "1"}]
+set phase_e1_timing_debug [expr {
+  [info exists ::env(PHASE_E1_TIMING_DEBUG)] &&
+  $::env(PHASE_E1_TIMING_DEBUG) eq "1"}]
 if {($phase_e1_board_debug || $phase_e2_rcvrlock_debug) &&
     !$k14_recovery_speed} {
   error "Phase E debug requires the frozen K14 Recovery.Speed path"
 }
 if {$phase_e1_board_debug && $phase_e2_rcvrlock_debug} {
   error "Phase E1 and E2 debug builds must remain independent"
+}
+if {$phase_e1_timing_debug && !$phase_e1_board_debug} {
+  error "Phase E1 timing recorder requires PHASE_E1_BOARD_DEBUG"
 }
 if {$phase_e1_board_debug} {
   # The normal E1 build remains the RP-directed AUTO=0 baseline.  AUTO=1 is
@@ -50,6 +56,11 @@ if {!$phase_e1_board_debug && $phase_e1_auto_retrain_cycles != 0} {
 }
 if {$phase_e1_board_debug && $phase_e1_auto_retrain_cycles == 1} {
   set build_name "build_phase_e1_board_auto1"
+}
+if {$phase_e1_timing_debug} {
+  set build_name [expr {$phase_e1_auto_retrain_cycles == 1 ?
+                        "build_phase_e1_timing_auto1" :
+                        "build_phase_e1_timing"}]
 }
 set build_dir [file join $script_dir $build_name impl]
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
@@ -106,6 +117,7 @@ if {$resume_routed_dcp ne ""} {
   rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_rcvrlock_ctrl.sv \
   rtl/phy/pcie_gen3_os_tx.sv \
   rtl/phy/pcie_gen1_framer.sv rtl/phy/k02_phy_event_recorder.sv \
+  rtl/phy/pcie_recovery_timing_recorder.sv \
   rtl/phy/pcie_phy_command_ctrl.sv rtl/phy/pcie_recovery_speed_ctrl.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
   rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
@@ -129,6 +141,7 @@ if {$resume_routed_dcp ne ""} {
       -generic PHASE_E1_BOARD_DEBUG=$phase_e1_board_debug \
       -generic PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug \
       -generic GEN3_AUTO_RETRAIN_CYCLES=$phase_e1_auto_retrain_cycles \
+      -generic PHASE_E1_TIMING_DEBUG=$phase_e1_timing_debug \
       -generic GEN3_RATE_CHANGE_ENABLE=1
   } else {
     synth_design -top $top_name -part $part_name \
@@ -237,6 +250,14 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
   set qpll1reset_net [k14_primitive_pin GTHE3_COMMON QPLL1RESET]
   k14_connect_recorder {.*u_k14_event_recorder/qpll1lock$} $qpll1lock_net
   k14_connect_recorder {.*u_k14_event_recorder/qpll1reset$} $qpll1reset_net
+  if {$phase_e1_timing_debug} {
+    set rate_reset_nets [k14_primitive_bus_pin GTHE3_CHANNEL PCIERATEQPLLRESET 2]
+    k14_connect_recorder {.*u_phase_e1_timing_recorder/pcierateqpllreset$} \
+      [lindex $rate_reset_nets 0]
+    set rate_idle_net [k14_primitive_pin GTHE3_CHANNEL PCIERATEIDLE]
+    k14_connect_recorder {.*u_phase_e1_timing_recorder/pcierateidle$} \
+      $rate_idle_net
+  }
 
   create_debug_core u_ila_k14 ila
   set k14_ila_depth 8192
@@ -297,7 +318,17 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
       [k14_net {^u_endpoint/phy_rxstart_block$}] \
       [k14_bus {^u_endpoint/phy_rxsync_header\[[0-1]\]$} 2]]
     k14_add_probe u_ila_k14 5 $probe5
-    puts "PHASE_E1_BOARD_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2] probe3_width=[llength $probe3] probe4_width=[llength $probe4] probe5_width=[llength $probe5] depth=$k14_ila_depth"
+    set probe6 {}
+    set probe7 {}
+    if {$phase_e1_timing_debug} {
+      set probe6 [k14_bus {.*phase_e1_timing_record_w\[[0-9]+\]$} 64]
+      k14_add_probe u_ila_k14 6 $probe6
+      set probe7 [k14_net {.*phase_e1_timing_dump_active_w$}]
+      k14_add_probe u_ila_k14 7 $probe7
+    }
+    set probe6_width [expr {$phase_e1_timing_debug ? [llength $probe6] : 0}]
+    set probe7_width [expr {$phase_e1_timing_debug ? [llength $probe7] : 0}]
+    puts "PHASE_E1_BOARD_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2] probe3_width=[llength $probe3] probe4_width=[llength $probe4] probe5_width=[llength $probe5] probe6_width=$probe6_width probe7_width=$probe7_width depth=$k14_ila_depth"
   } elseif {$phase_e2_rcvrlock_debug} {
     set probe2 [concat \
       [k14_net {.*e2_gen3_block_locked_w$}] \
@@ -478,6 +509,7 @@ if {$k14_recovery_speed} {
 puts $summary "PHASE_E2_RCVRLOCK_DEBUG=$phase_e2_rcvrlock_debug"
 puts $summary "PHASE_E1_BOARD_DEBUG=$phase_e1_board_debug"
 puts $summary "GEN3_AUTO_RETRAIN_CYCLES=$phase_e1_auto_retrain_cycles"
+puts $summary "PHASE_E1_TIMING_DEBUG=$phase_e1_timing_debug"
 puts $summary "SETUP_TIMING_FLOOR=$setup_floor"
 puts $summary "WNS=$wns"
 puts $summary "WHS=$whs"

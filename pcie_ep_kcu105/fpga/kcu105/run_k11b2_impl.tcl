@@ -494,7 +494,8 @@ set sv_files [list \
   rtl/tl/pcie_tlp_codec.sv rtl/tl/pcie_cfg_space.sv \
   rtl/tl/pcie_bar_axil_master.sv rtl/tl/demo_axil_slave.sv \
   sim/verilator/k09_integration/k09_tlp_test_top.sv \
-  rtl/ep/k11a_offline_top.sv rtl/ep/kcu105_pcie_ep_gen1_top.sv \
+  rtl/ep/k11a_offline_top.sv rtl/phy/pcie_recovery_timing_recorder.sv \
+  rtl/ep/kcu105_pcie_ep_gen1_top.sv \
   rtl/ep/kcu105_pcie_ep_gen1_board_top.sv]
 foreach f $sv_files { read_verilog -sv [file join $project_dir $f] }
 read_xdc [file join $script_dir k03_gen1_ltssm_mac.xdc]

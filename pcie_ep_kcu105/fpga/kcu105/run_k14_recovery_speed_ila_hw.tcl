@@ -15,6 +15,11 @@ if {![string is integer -strict $phase_e1_auto_retrain_cycles] ||
 if {!$phase_e1_debug && $phase_e1_auto_retrain_cycles != 0} {
   error "AUTO retrain override is only valid for PHASE_E1_BOARD_DEBUG"
 }
+set phase_e1_timing_debug [expr {[info exists ::env(PHASE_E1_TIMING_DEBUG)] &&
+                                 $::env(PHASE_E1_TIMING_DEBUG) eq "1"}]
+if {$phase_e1_timing_debug && !$phase_e1_debug} {
+  error "Phase E1 timing recorder requires PHASE_E1_BOARD_DEBUG"
+}
 if {$phase_e1_debug && $phase_e2_debug} {
   error "Phase E1 and E2 hardware helpers must remain independent"
 }
@@ -22,6 +27,11 @@ if {$phase_e1_debug} {
   set build_name [expr {$phase_e1_auto_retrain_cycles == 1 ?
                         "build_phase_e1_board_auto1" :
                         "build_phase_e1_board"}]
+  if {$phase_e1_timing_debug} {
+    set build_name [expr {$phase_e1_auto_retrain_cycles == 1 ?
+                          "build_phase_e1_timing_auto1" :
+                          "build_phase_e1_timing"}]
+  }
   set file_prefix "phase_e1_board"
   set pass_prefix "PHASE_E1_BOARD"
 } elseif {$phase_e2_debug} {

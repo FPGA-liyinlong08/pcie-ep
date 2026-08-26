@@ -27,6 +27,8 @@
 	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
 	k14-recovery-speed-hw-repeat k14-recovery-speed-test phase-e-gen3-block-test \
 	phase-e-k14-rate-guard phase-e1-auto1-board-vivado phase-e1-auto1-board-hw-capture \
+	phase-e1-timing-auto0-board-vivado phase-e1-timing-auto1-board-vivado \
+	phase-e1-timing-auto0-board-hw-capture phase-e1-timing-auto1-board-hw-capture \
 	phase-e2-rcvrlock-test phase-e2-rcvrlock-vivado \
 	phase-e2-trace-analyzer-selftest phase-e2-rcvrlock-hw-probe \
 	phase-e2-rcvrlock-hw-repeat \
@@ -306,6 +308,14 @@ phase-e1-auto1-board-vivado:
 	PHASE_E1_AUTO_RETRAIN_CYCLES=1 K14_PLACE_DIRECTIVE=Explore \
 		./fpga/kcu105/run_phase_e1_board_impl.sh
 
+phase-e1-timing-auto0-board-vivado:
+	PHASE_E1_TIMING_DEBUG=1 PHASE_E1_AUTO_RETRAIN_CYCLES=0 \
+		K14_PLACE_DIRECTIVE=Explore ./fpga/kcu105/run_phase_e1_board_impl.sh
+
+phase-e1-timing-auto1-board-vivado:
+	PHASE_E1_TIMING_DEBUG=1 PHASE_E1_AUTO_RETRAIN_CYCLES=1 \
+		K14_PLACE_DIRECTIVE=Explore ./fpga/kcu105/run_phase_e1_board_impl.sh
+
 phase-e1-trace-analyzer-selftest:
 	python3 scripts/check_phase_e1_board_trace_analyzer.py
 
@@ -354,7 +364,8 @@ k11b2-lint:
 		rtl/tl/pcie_tlp_codec.sv rtl/tl/pcie_cfg_space.sv \
 		rtl/tl/pcie_bar_axil_master.sv rtl/tl/demo_axil_slave.sv \
 		sim/verilator/k09_integration/k09_tlp_test_top.sv \
-		rtl/ep/k11a_offline_top.sv rtl/ep/kcu105_pcie_ep_gen1_top.sv
+		rtl/ep/k11a_offline_top.sv rtl/phy/pcie_recovery_timing_recorder.sv \
+		rtl/ep/kcu105_pcie_ep_gen1_top.sv
 
 k11b2-vcs-serial:
 	./sim/vcs/run_k11b2_serial.sh
@@ -676,6 +687,28 @@ phase-e1-auto1-board-hw-capture:
 		K14_PLACE_DIRECTIVE=Explore K14_POST_PROGRAM_SETTLE_MS=2000 \
 		K14_ILA_TRIGGER_PROBE=k14_phy_rate_w \
 		K14_ILA_TRIGGER_COMPARE="eq2'h2" K14_ILA_TRIGGER_POS=2048 \
+		K14_HW_SERVER_URL=$${K14_HW_SERVER_URL:-localhost:3122} \
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) program-capture-wait
+
+phase-e1-timing-auto1-board-hw-capture:
+	env PHASE_E1_BOARD_DEBUG=1 PHASE_E1_TIMING_DEBUG=1 \
+		PHASE_E1_AUTO_RETRAIN_CYCLES=1 K14_PLACE_DIRECTIVE=Explore \
+		K14_POST_PROGRAM_SETTLE_MS=2000 \
+		K14_ILA_TRIGGER_PROBE=phase_e1_timing_dump_active_w \
+		K14_ILA_TRIGGER_COMPARE="eq1'b1" K14_ILA_TRIGGER_POS=2048 \
+		K14_HW_SERVER_URL=$${K14_HW_SERVER_URL:-localhost:3122} \
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) program-capture-wait
+
+phase-e1-timing-auto0-board-hw-capture:
+	env PHASE_E1_BOARD_DEBUG=1 PHASE_E1_TIMING_DEBUG=1 \
+		PHASE_E1_AUTO_RETRAIN_CYCLES=0 K14_PLACE_DIRECTIVE=Explore \
+		K14_POST_PROGRAM_SETTLE_MS=2000 \
+		K14_ILA_TRIGGER_PROBE=phase_e1_timing_dump_active_w \
+		K14_ILA_TRIGGER_COMPARE="eq1'b1" K14_ILA_TRIGGER_POS=2048 \
 		K14_HW_SERVER_URL=$${K14_HW_SERVER_URL:-localhost:3122} \
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \

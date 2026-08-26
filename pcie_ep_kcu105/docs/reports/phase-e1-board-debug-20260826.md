@@ -159,7 +159,30 @@ command bundle 或 Golden gap；在 Root-Port-directed Recovery 上下文中，�
 Gen1 signaling。该 A/B 仍不等同于最终 E1 签署：旧 AUTO=1 trace 的 `malformed=1`
 尚需单独处理，20/20 门禁尚未执行。
 
-## 5. 软件与静态门禁
+## 5. Root-Port-directed Recovery 时序取证实现
+
+为避免把诊断逻辑误混入 K14/E1/E2 功能路径，本轮新增了默认关闭的
+`PHASE_E1_TIMING_DEBUG` recorder。它只观察 `partner_retrain_valid`、
+`speed_retrain_accept`、LTSSM/RcvrLock/RcvrCfg、`ltssm_speed_ready`、K14
+`RATE_RELEASE/GOLDEN_GAP/PHY_RATE`，以及最后的 Gen1 TS、RxElecIdle、
+PCIERATEQPLLRESET/IDLE、QPLL lock 和 PhyStatus 边沿。
+
+记录器内部仍保存 20-bit 时间戳，但通过 64-bit、20 行的 compact stream
+送入 ILA；`phase_e1_timing_dump_active_w` 只在一次事务快照输出时触发，
+因此不会再把 440-bit sticky 总线挂到关键路径。AUTO=0 没有 PHY 完成事件时
+由超时快照结束，AUTO=1 则在 PhyStatus 或保护超时后结束。解析命令为：
+
+```text
+python3 scripts/analyze_phase_e1_timing_trace.py <capture.csv>
+```
+
+对应构建和硬件入口分别是
+`make phase-e1-timing-auto0-board-vivado`、
+`make phase-e1-timing-auto1-board-vivado` 和
+`make phase-e1-timing-auto1-board-hw-capture`。当前仅完成 recorder 集成及
+静态/lint 检查；尚未把新的 AUTO=1/AUTO=0 时序 CSV 作为根因结论写入报告。
+
+## 6. 软件与静态门禁
 
 提交前复验结果：
 
@@ -177,7 +200,7 @@ PHASE_E1 hold cocotb: TESTS=1 PASS=1 FAIL=0, 151.113 us
 E1 hold用例明确检查：进入Gen3 RcvrLock后，即使出现E2 completion、malformed或timeout，
 诊断build也保持在RcvrLock；同时raw rate输出仍由原K14路径产生，而非E1覆盖。
 
-## 6. K14冻结证明
+## 7. K14冻结证明
 
 ```text
 rtl/phy/pcie_phy_command_ctrl.sv
@@ -189,7 +212,7 @@ rtl/phy/pcie_recovery_speed_ctrl.sv
 两份哈希与K14冻结值一致；K14原ILA 31/118探针也保持不变。本轮所有新增行为均由
 默认关闭的E1 generic限定。
 
-## 7. 阶段结论与下一步
+## 8. 阶段结论与下一步
 
 本轮已完成 E1 手动 Retrain 实现、时序签署、Gen1 L0 保持验证，以及干净的 AUTO=1/
 AUTO=0 Root-Port-only 单变量 A/B。AUTO=1 三次均完成 QPLL relock，AUTO=0 严格对照

@@ -17,7 +17,8 @@ module kcu105_pcie_ep_gen1_top #(
     // Phase D experimental path.  Zero is the signed Phase C Gen1 release.
     parameter integer GEN3_RATE_CHANGE_ENABLE = 0,
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0
+    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
+    parameter integer PHASE_E1_TIMING_DEBUG = 0
 ) (
     input wire pcie_refclk_p, input wire pcie_refclk_n,
     input wire pcie_perst_n, input wire pcie_rxp, input wire pcie_rxn,
@@ -262,6 +263,32 @@ module kcu105_pcie_ep_gen1_top #(
                 .seq_state(k14_event_state_w),
                 .record_bus(k14_event_record_w)
             );
+
+            if (PHASE_E1_TIMING_DEBUG != 0) begin : g_timing_debug
+                (* KEEP = "TRUE" *) wire timing_pcierateqpllreset_record_in;
+                (* KEEP = "TRUE" *) wire timing_pcierateidle_record_in;
+                (* mark_debug = "true" *) wire [63:0] phase_e1_timing_record_w;
+                (* mark_debug = "true" *) wire phase_e1_timing_dump_active_w;
+                pcie_recovery_timing_recorder u_phase_e1_timing_recorder (
+                    .clk(phy_pclk), .rst(!pipe_rst_n),
+                    .semantic_retrain_valid(semantic_retrain_valid),
+                    .partner_retrain_valid(partner_retrain_valid),
+                    .speed_retrain_accept(speed_retrain_accept),
+                    .ltssm_state(ltssm_state),
+                    .ltssm_speed_ready(ltssm_recovery_speed_ready),
+                    .speed_state(speed_state), .rate_state(phy_rate_state),
+                    .phy_rate(phy_rate), .os_ts1_valid(os_ts1_valid),
+                    .os_ts2_valid(os_ts2_valid),
+                    .phy_rxelecidle(phy_rxelecidle),
+                    .phy_rxvalid(phy_rxvalid),
+                    .qpll1lock(qpll1lock_record_in),
+                    .pcierateqpllreset(timing_pcierateqpllreset_record_in),
+                    .pcierateidle(timing_pcierateidle_record_in),
+                    .phy_phystatus(phy_phystatus),
+                    .record_bus(phase_e1_timing_record_w),
+                    .dump_active(phase_e1_timing_dump_active_w)
+                );
+            end
         end
 
         wire _unused_gen3 = &{1'b0, mailbox_busy, mailbox_overflow_sticky,

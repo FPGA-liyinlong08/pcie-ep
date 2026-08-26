@@ -178,6 +178,7 @@ fi
     "${project_dir}/rtl/tl/demo_axil_slave.sv" \
     "${project_dir}/sim/verilator/k09_integration/k09_tlp_test_top.sv" \
     "${project_dir}/rtl/ep/k11a_offline_top.sv" \
+    "${project_dir}/rtl/phy/pcie_recovery_timing_recorder.sv" \
     "${project_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" \
     $(if [[ "${k12e_mode}" == "1" ]]; then echo "${script_dir}/k12e_phy_monitor.sv"; fi) \
     "${vivado_home}/data/verilog/src/glbl.v" \

@@ -90,6 +90,7 @@ set rtl_files [list \
   [file join $project_dir rtl/tl/demo_axil_slave.sv] \
   [file join $project_dir sim/verilator/k09_integration/k09_tlp_test_top.sv] \
   [file join $project_dir rtl/ep/k11a_offline_top.sv] \
+  [file join $project_dir rtl/phy/pcie_recovery_timing_recorder.sv] \
   [file join $project_dir rtl/ep/kcu105_pcie_ep_gen1_top.sv] \
   [file join $project_dir rtl/ep/kcu105_pcie_ep_gen1_board_top.sv]]
 

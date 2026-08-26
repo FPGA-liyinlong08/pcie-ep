@@ -4,10 +4,16 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
 auto_retrain_cycles="${PHASE_E1_AUTO_RETRAIN_CYCLES:-0}"
+timing_debug="${PHASE_E1_TIMING_DEBUG:-0}"
 case "${auto_retrain_cycles}" in
   0) build_name="build_phase_e1_board" ;;
   1) build_name="build_phase_e1_board_auto1" ;;
   *) echo "PHASE_E1_AUTO_RETRAIN_CYCLES must be 0 or 1" >&2; exit 2 ;;
+esac
+case "${timing_debug}" in
+  0) ;;
+  1) build_name="${build_name/build_phase_e1_board/build_phase_e1_timing}" ;;
+  *) echo "PHASE_E1_TIMING_DEBUG must be 0 or 1" >&2; exit 2 ;;
 esac
 build_dir="${script_dir}/${build_name}/impl"
 vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
@@ -19,6 +25,7 @@ export K14_RECOVERY_SPEED=1
 export K14_PLACE_DIRECTIVE="${K14_PLACE_DIRECTIVE:-ExtraTimingOpt}"
 export PHASE_E1_BOARD_DEBUG=1
 export PHASE_E1_AUTO_RETRAIN_CYCLES="${auto_retrain_cycles}"
+export PHASE_E1_TIMING_DEBUG="${timing_debug}"
 unset PHASE_E2_RCVRLOCK_DEBUG
 mkdir -p "${build_dir}"
 cd "${project_dir}"
@@ -29,13 +36,19 @@ cd "${project_dir}"
 
 grep -q '^PHASE_E1_BOARD_IMPL_PASS$' "${build_dir}/summary.txt"
 grep -q "^GEN3_AUTO_RETRAIN_CYCLES=${auto_retrain_cycles}$" "${build_dir}/summary.txt"
+grep -q "^PHASE_E1_TIMING_DEBUG=${timing_debug}$" "${build_dir}/summary.txt"
 awk -F= '/^WNS=/{found=1; if ($2 < -0.093) exit 1} END{if (!found) exit 1}' \
   "${build_dir}/summary.txt"
 if [[ -n "${K14_RESUME_ROUTED_DCP:-}" ]]; then
   grep -q '^K14_RESUME_ROUTED_PASS ' "${build_dir}/vivado.log"
 else
-  grep -q 'PHASE_E1_BOARD_ILA_INSERT_PASS probe0_width=31 probe1_width=118 probe2_width=32 probe3_width=8 probe4_width=32 probe5_width=10 depth=8192' \
-    "${build_dir}/vivado.log"
+  if [[ "${timing_debug}" == 1 ]]; then
+    grep -q 'PHASE_E1_BOARD_ILA_INSERT_PASS probe0_width=31 probe1_width=118 probe2_width=32 probe3_width=8 probe4_width=32 probe5_width=10 probe6_width=64 probe7_width=1 depth=8192' \
+      "${build_dir}/vivado.log"
+  else
+    grep -q 'PHASE_E1_BOARD_ILA_INSERT_PASS probe0_width=31 probe1_width=118 probe2_width=32 probe3_width=8 probe4_width=32 probe5_width=10 probe6_width=0 probe7_width=0 depth=8192' \
+      "${build_dir}/vivado.log"
+  fi
   grep -q '^PHASE_E1_RESET_BUFFER_GUARD_PASS ' "${build_dir}/vivado.log"
 fi
 if grep -q '^ERROR:' "${build_dir}/vivado.log"; then
