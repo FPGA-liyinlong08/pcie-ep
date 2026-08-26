@@ -1,7 +1,7 @@
 # Phase E1 实板隔离调试阶段报告
 
 日期：2026-08-26
-状态：**阶段记录完成；E1软件/仿真PASS，手动 Retrain bit 时序签署条件PASS；实板验收被当前 Root Port 不支持 Gen3 阻塞，K14保持冻结**
+状态：**阶段记录完成；E1软件/仿真PASS，手动 Retrain bit 时序签署条件PASS；实板触发证据尚未完成，K14保持冻结**
 
 ## 1. 本轮目标与边界
 
@@ -104,10 +104,12 @@ malformed-only trigger, then clean os_ts1_valid trigger
 ./scripts/remote_pcie_host.sh retrain-gen3
 ```
 
-远端 Root Port 报告 `LnkCap: Speed 5GT/s`，每次轮询均为
+本次运行中，远端 `00:01.0` Root Port 报告 `LnkCap: Speed 5GT/s`，每次轮询均为
 `2.5 GT/s PCIe, width=1`，`Train-`；malformed 与 clean TS1 ILA 均未触发
-（状态 `CORE_STATUS=IDLE`, `SAMPLE_COUNT=0`）。因此当前主机平台无法请求/完成
-Gen3，不能用该平台生成 E1 clean trace，也不能把 20/20 重复计为通过。
+（状态 `CORE_STATUS=IDLE`, `SAMPLE_COUNT=0`）。这只能说明本次枚举到的上游端口
+读数为 5GT/s，不能推出 KCU105 插槽不支持 Gen3；项目历史记录已证明同一 KCU105、
+同一插槽和主机曾用官方 XDMA 达到 `8GT/s x1`。两者存在环境/端口能力读数冲突，
+因此本次不能生成 E1 clean trace，也不能把 20/20 重复计为通过。
 
 同时修正 `scripts/remote_pcie_host.sh` 的 PCIe capability 偏移：Link Control 使用
 `CAP_EXP+0c`，Link Control 2 使用 `CAP_EXP+2c`；此前的 `+10/+30` 分别不是这两个
@@ -146,9 +148,11 @@ rtl/phy/pcie_recovery_speed_ctrl.sv
 ## 7. 阶段结论与下一步
 
 本轮已完成 E1 手动 Retrain 实现、时序签署和 Gen1 L0 保持验证；E1 仍未完成最终
-硬件签署，原因是当前 Root Port 能力只有 5GT/s，无法产生 Gen3 clean TS1 trace。
-因此 20/20 独立重复未执行，E2 不得进入。
+硬件签署。当前 Root Port 的 5GT/s 读数与历史官方 XDMA Gen3 证据矛盾，硬件环境
+需要先用已知良好 XDMA bit 重新确认端口/BDF/BIOS 能力；20/20 独立重复未执行，
+E2 不得进入。
 
-下一步需要接入 Gen3-capable Root Port/主机（或提供等效 PCIe Gen3 retrain 环境），
-重新执行 malformed 首次捕获、clean TS1 捕获及 20/20 门禁；在此之前保持 E1 阻塞，
-不得进入 E2。
+下一步先下载历史已知良好的官方 XDMA Gen3 x1 bit，读取同一 Root Port 的
+`LnkCap/LnkSta`，确认当前 `00:01.0` 是否为正确上游端口及是否存在 BIOS/拓扑差异；
+确认后再执行 malformed 首次捕获、clean TS1 捕获及 20/20 门禁。在此之前保持 E1
+阻塞，不得进入 E2。
