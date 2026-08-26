@@ -1,0 +1,36 @@
+===== ROOT PORT =====
+		LnkCap:	Port #2, Speed 5GT/s, Width x16, ASPM not supported
+		LnkCtl:	ASPM Disabled; RCB 64 bytes Disabled- CommClk-
+		LnkSta:	Speed 2.5GT/s (downgraded), Width x0 (downgraded)
+		LnkCtl2: Target Link Speed: 2.5GT/s, EnterCompliance- SpeedDis-
+		LnkSta2: Current De-emphasis Level: -3.5dB, EqualizationComplete-, EqualizationPhase1-
+===== RAW LINK STATUS =====
+1801
+===== ENDPOINT =====
+===== TOPOLOGY =====
+-[0000:00]-+-00.0
+           +-01.0-[01]--
+           +-02.0
+           +-06.0-[02]----00.0
+           +-0a.0
+           +-14.0
+           +-14.2
+           +-15.0
+           +-15.1
+           +-15.2
+           +-16.0
+           +-17.0
+           +-1a.0-[03]--
+           +-1b.0-[04]--
+           +-1c.0-[05]--
+           +-1c.2-[06]----00.0
+           +-1d.0-[07]--
+           +-1f.0
+           +-1f.3
+           +-1f.4
+           \-1f.5
+===== RP SYSFS =====
+2.5 GT/s PCIe
+0
+===== EP SYSFS =====
+RESULT=FAIL
