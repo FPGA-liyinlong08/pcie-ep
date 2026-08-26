@@ -8,7 +8,9 @@ vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
 
 export XILINX_LOCAL_USER_DATA=no
 export K14_RECOVERY_SPEED=1
-export K14_PLACE_DIRECTIVE=ExtraTimingOpt
+# Keep ExtraTimingOpt as the deterministic default, while allowing a bounded
+# implementation experiment to select another legal place_design directive.
+export K14_PLACE_DIRECTIVE="${K14_PLACE_DIRECTIVE:-ExtraTimingOpt}"
 export PHASE_E1_BOARD_DEBUG=1
 unset PHASE_E2_RCVRLOCK_DEBUG
 mkdir -p "${build_dir}"
@@ -19,7 +21,7 @@ cd "${project_dir}"
   -nojournal -log "${build_dir}/vivado.log"
 
 grep -q '^PHASE_E1_BOARD_IMPL_PASS$' "${build_dir}/summary.txt"
-grep -q '^GEN3_AUTO_RETRAIN_CYCLES=1$' "${build_dir}/summary.txt"
+grep -q '^GEN3_AUTO_RETRAIN_CYCLES=0$' "${build_dir}/summary.txt"
 awk -F= '/^WNS=/{found=1; if ($2 < -0.093) exit 1} END{if (!found) exit 1}' \
   "${build_dir}/summary.txt"
 if [[ -n "${K14_RESUME_ROUTED_DCP:-}" ]]; then

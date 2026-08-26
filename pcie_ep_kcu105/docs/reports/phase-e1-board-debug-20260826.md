@@ -1,7 +1,7 @@
 # Phase E1 实板隔离调试阶段报告
 
 日期：2026-08-26
-状态：**阶段记录完成；E1软件/仿真PASS，E1实板FAIL于一次性`malformed`；K14保持冻结**
+状态：**阶段记录完成；E1软件/仿真PASS，手动 Retrain bit 时序签署条件PASS；实板验收被当前 Root Port 不支持 Gen3 阻塞，K14保持冻结**
 
 ## 1. 本轮目标与边界
 
@@ -35,27 +35,27 @@ raw PHY命令仍只有K14 owner。
 
 ## 3. 诊断实现与保护
 
-- E1 build在Gen1 L0建立后产生一次语义retrain请求，避免热下载bit后一直停留在L0；
+- E1 最终 build 关闭自动 retrain；仅由 Root Port 手动请求切速，避免热下载后自动改变速率；
 - 32-bit sticky记录保存PIPE、header、EIEOS、lock、TS和错误里程碑；
 - 保留K14原`probe0=31`和`probe1=118`逐位顺序；
 - 第二版只追加32-bit原始`phy_rxdata`和10-bit实时语义探针，可在
   `os_malformed=1`时抓触发前后block；
 - E1同步core-reset网保持fabric routing，避免Vivado自动BUFG插入把异步恢复路径变成
   诊断版WNS限制；该约束不进入release build；
-- E1诊断WNS门限经确认设为`-0.093 ns`；E2仍为`-0.060 ns`，release仍要求非负。
+- E1 诊断门限仍为`-0.093 ns`；最终硬件签署要求 WNS/WHS 均非负，E2 仍为`-0.060 ns`。
 
 实现结果：
 
 ```text
 PHASE_E1_BOARD_IMPL_PASS
-K14_PLACE_DIRECTIVE=ExtraTimingOpt
-GEN3_AUTO_RETRAIN_CYCLES=1
+K14_PLACE_DIRECTIVE=Explore
+GEN3_AUTO_RETRAIN_CYCLES=0
 SETUP_TIMING_FLOOR=-0.093
-WNS=+0.030 ns
+WNS=+0.033 ns
 WHS=+0.004 ns
 DRC_ERROR_COUNT=0
 probe widths=31/118/32/8/32/10, depth=8192
-bit SHA256=681ebab7e4419416a60982a97240b2c1e4ade91429a0acb07900cd780e39a4a4
+bit SHA256=6682d212bac80f6e5edadd0f6c9e3e0bac8b0c6c40d6d63a3fd94f7ef559c589
 ```
 
 实际实现为正setup/hold裕量，没有使用允许的负裕量。
@@ -64,18 +64,17 @@ bit SHA256=681ebab7e4419416a60982a97240b2c1e4ade91429a0acb07900cd780e39a4a4
 
 ### 4.1 无自动retrain的基线快照
 
-文件：`fpga/kcu105/build_phase_e1_board/capture/20260826_063023_phase_e1_board.csv`
+文件：`fpga/kcu105/build_phase_e1_board/capture/20260826_103744_phase_e1_board.csv`
 
 ```text
 golden=0 elapsed=0 seen=0x000
+8192 samples: ltssm=ST_L0, k14_phy_rate_w=0, os_malformed=0
 gt_cdr=1 gt_resetdone=1 gt_rateidle=1 gt_datavalid=3
-ltssm=Gen1 L0 active_rate=Gen1
 ```
 
-结论：热下载后GT已经ready，但没有任何事件请求重训；这不是PIPE故障证据。随后加入
-默认关闭、E1 build专用的一次语义retrain。
+结论：下载后连续采样保持 Gen1 L0/rate=0，没有自动切速；手动控制契约成立。
 
-### 4.2 自动retrain与E1 hold有效trace
+### 4.2 旧自动retrain诊断trace（非最终签署证据）
 
 文件：`fpga/kcu105/build_phase_e1_board/capture/20260826_070811_phase_e1_board.csv`
 
@@ -94,19 +93,25 @@ pass=0
 `malformed=1`。因为ILA在下载后才arm，此记录已经饱和，无法从该CSV判断错误发生在
 首次EIEOS之前还是lock之后。
 
-### 4.3 `malformed`精确触发复测
+### 4.3 最终手动 retrain 复测
 
-增强诊断bit在2026-08-26 07:21:58完成arm，条件为：
+最终 bit 在 10:37～10:46 期间完成以下操作：
 
 ```text
-active_rate=Gen3 AND os_malformed=1
-trigger_position=2048
+program + ARM ILA before retrain
+trigger_position=4096
+malformed-only trigger, then clean os_ts1_valid trigger
+./scripts/remote_pcie_host.sh retrain-gen3
 ```
 
-观察到07:23:55，约117秒内没有再次触发，手动结束等待，因此没有生成新的CSV。
-这不证明首次脉冲无害，但说明它不是稳定RcvrLock阶段持续重复的错误；当前更可信的
-定位是切速/首次block-lock窗口的一次性事件。由于没有原始触发block证据，本提交不
-修改SKP、TS或scrambler解析逻辑。
+远端 Root Port 报告 `LnkCap: Speed 5GT/s`，每次轮询均为
+`2.5 GT/s PCIe, width=1`，`Train-`；malformed 与 clean TS1 ILA 均未触发
+（状态 `CORE_STATUS=IDLE`, `SAMPLE_COUNT=0`）。因此当前主机平台无法请求/完成
+Gen3，不能用该平台生成 E1 clean trace，也不能把 20/20 重复计为通过。
+
+同时修正 `scripts/remote_pcie_host.sh` 的 PCIe capability 偏移：Link Control 使用
+`CAP_EXP+0c`，Link Control 2 使用 `CAP_EXP+2c`；此前的 `+10/+30` 分别不是这两个
+寄存器，已避免后续硬件测试产生假阴性。
 
 ## 5. 软件与静态门禁
 
@@ -116,6 +121,7 @@ trigger_position=2048
 PHASE_E_K14_RATE_GUARD_PASS
 PHY_COMMAND_OWNERSHIP_PASS
 K14_RECOVERY_SPEED_SEMANTIC_PASS
+PHASE_E_GEN3_BLOCK_PASS (1000 randomized rate changes)
 K03 lint PASS
 K11-B2 lint PASS
 PHASE_E1_TRACE_ANALYZER_SELFTEST_PASS
@@ -139,10 +145,10 @@ rtl/phy/pcie_recovery_speed_ctrl.sv
 
 ## 7. 阶段结论与下一步
 
-本轮已把阻塞从“Gen3 PIPE完全无有效接收”缩小为“首次建锁窗口出现一次
-`malformed`”。E1仍未硬件签署，E2也不据此宣告实板通过。
+本轮已完成 E1 手动 Retrain 实现、时序签署和 Gen1 L0 保持验证；E1 仍未完成最终
+硬件签署，原因是当前 Root Port 能力只有 5GT/s，无法产生 Gen3 clean TS1 trace。
+因此 20/20 独立重复未执行，E2 不得进入。
 
-下一步应先获得可重复的首次窗口抓取：让ILA在retrain之前arm，或提供可控的第二次
-retrain，然后以原始四word block区分boundary error、非法Sync Header、坏TS和合法但
-尚未支持的OS。根因修复后重新执行E1首次trace和20次重复门禁，再恢复E2同板20次
-`Recovery.RcvrLock`验收。
+下一步需要接入 Gen3-capable Root Port/主机（或提供等效 PCIe Gen3 retrain 环境），
+重新执行 malformed 首次捕获、clean TS1 捕获及 20/20 门禁；在此之前保持 E1 阻塞，
+不得进入 E2。

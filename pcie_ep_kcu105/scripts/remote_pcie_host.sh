@@ -82,9 +82,11 @@ read_lspci() {
 }
 
 retrain_gen3() {
+    # PCIe capability offsets: Link Control is +0x0c and Link Control 2 is
+    # +0x2c.  Keep the endpoint at Gen1 before requesting explicit retrain.
     ssh_run "set -e; \
-        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w=0001:000f; \
-        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w=0020:0020; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+2c.w=0001:000f; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+0c.w=0020:0020; \
         stable=0; \
         for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
             speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
@@ -102,9 +104,9 @@ retrain_gen3() {
         if [ \"\$stable\" -lt 3 ]; then \
             echo 'REMOTE_GEN1_NORMALIZE_FAIL' >&2; exit 1; \
         fi; \
-        sudo -n setpci -s '$remote_bdf' CAP_EXP+10.w=0020:0020; \
-        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w=0003:000f; \
-        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w=0020:0020; \
+        sudo -n setpci -s '$remote_bdf' CAP_EXP+0c.w=0020:0020; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+2c.w=0003:000f; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+0c.w=0020:0020; \
         for n in 1 2 3 4 5 6 7 8 9 10; do \
             speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
             width=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_width 2>/dev/null || echo unavailable); \

@@ -32,7 +32,9 @@ set part_name xcku040-ffva1156-2-e
 set top_name kcu105_pcie_ep_gen1_board_top
 set g9_cycles 6250000
 set k14_place_directive "Default"
-set phase_e1_auto_retrain_cycles [expr {$phase_e1_board_debug ? 1 : 0}]
+# E1 signoff is manually controlled: the board must remain in Gen1 L0 until
+# the ILA is armed and the Root Port explicitly requests Gen3 retrain.
+set phase_e1_auto_retrain_cycles 0
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
 }

@@ -658,11 +658,13 @@ k14-recovery-speed-hw-repeat:
 		$(or $(K14_REPEAT_CYCLES),10)
 
 phase-e1-board-hw-probe:
-	env PHASE_E1_BOARD_DEBUG=1 K14_ILA_TRIGGER_PROBE=k14_ltssm_state_w \
-		"K14_ILA_TRIGGER_COMPARE=eq6'h0b" "K14_ILA_RATE_COMPARE=eq2'h2" $(VIVADO) \
+	@echo "E1: program and ARM ILA, then run ./scripts/remote_pcie_host.sh retrain-gen3"
+	env PHASE_E1_BOARD_DEBUG=1 K14_ILA_TRIGGER_PROBE=$(or $(K14_ILA_TRIGGER_PROBE),os_malformed) \
+		"K14_ILA_TRIGGER_COMPARE=$(or $(K14_ILA_TRIGGER_COMPARE),eq1'b1)" \
+		"K14_ILA_RATE_COMPARE=$(or $(K14_ILA_RATE_COMPARE),eq2'h2)" $(VIVADO) \
 		-mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
-		-tclargs $(KU040_SERVER) program-capture-wait
+		-tclargs $(KU040_SERVER) program-arm
 
 phase-e2-rcvrlock-hw-probe:
 	env PHASE_E2_RCVRLOCK_DEBUG=1 $(VIVADO) -mode batch -nojournal -nolog \
