@@ -43,9 +43,29 @@ for ((cycle = 1; cycle <= cycles; cycle++)); do
     analysis_log="${capture_dir}/${stamp}_${test_label}_cycle${cycle}_analysis.log"
 
     if [[ "${test_name}" == reboot ]]; then
-        trigger_probe="k14_ltssm_state_w"
-        trigger_compare="eq6'h00"
-        rate_compare=
+        trigger_probe="k14_event_state_w"
+        case "${K14_C_TRIGGER:-success}" in
+            success)
+                # Match Test A exactly: capture only a completed Gen3 PHY op.
+                trigger_compare="eq4'h8"
+                rate_compare="eq2'h2"
+                ;;
+            recovery)
+                trigger_probe="k14_ltssm_state_w"
+                # Decimal LTSSM state 18 (Recovery.Speed) is 0x12.
+                trigger_compare="eq6'h12"
+                rate_compare=
+                ;;
+            detect)
+                trigger_probe="k14_ltssm_state_w"
+                trigger_compare="eq6'h00"
+                rate_compare=
+                ;;
+            *)
+                echo "错误：K14_C_TRIGGER 必须是 success、recovery 或 detect" >&2
+                exit 2
+                ;;
+        esac
     else
         trigger_probe="k14_event_state_w"
         trigger_compare="${K14_ILA_TRIGGER_COMPARE:-eq4'h8}"

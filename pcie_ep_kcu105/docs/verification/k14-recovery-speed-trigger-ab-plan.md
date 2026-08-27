@@ -64,13 +64,16 @@ make k14-recovery-speed-test-c-hw K14_REPEAT_CYCLES=1
 操作顺序为：
 
 ```text
-烧写 K14 bitstream → ARM ILA（触发 LTSSM Detect.Quiet）
+烧写 K14 bitstream → ARM ILA（默认触发条件与 Test A 完全一致）
   → 远端 sudo reboot → 等待 SSH 和 Endpoint 恢复
-  → 仅抓取 reboot 后的 LTSSM/PHY 信号
+  → 仅抓取 reboot 后的 Recovery/PHY 信号
 ```
 
-Test C 不执行任何 `setpci`，也不主动请求 Gen3；它只验证 reboot 后的 PHY/LTSSM
-复位和重新训练现场。Test C 的捕获不使用 Golden rate analyzer 判定。
+Test C 不执行任何 `setpci`，也不主动请求 Gen3；它只增加 reboot 变量。默认触发为
+`event_state=8 AND PHY_RATE=2`，与 Test A 完全一致，因此只有成功切速才会生成捕获。
+如需诊断未完成事务，可使用 `K14_C_TRIGGER=recovery`（Recovery.Speed=18）或
+`K14_C_TRIGGER=detect`（Detect.Quiet=0），但这两种诊断结果不能与 Test A 的成功
+捕获直接做 PASS/FAIL 等价比较。
 
 ## 入口与判定隔离
 
@@ -100,3 +103,8 @@ Test C 不执行任何 `setpci`，也不主动请求 Gen3；它只验证 reboot 
   等待 SSH 经历断开并恢复（约 32 s），随后 Endpoint 重新枚举为 `1234:e001`、
   Gen1 x1、`DLActive+`；全程没有执行 `setpci`。捕获为
   `build_k14_recovery_speed/capture/20260827_115801_k14_recovery_speed.csv`。
+- Test C 已按 Test A 的同一成功触发重新执行 1 次：ILA 日志确认
+  `event_state=8 AND PHY_RATE=2`，但 reboot 后 30 s 内未出现该事件，因而没有生成
+  capture CSV；远端最终仍为 `1234:e001`、Gen1 x1、`DLActive+`。该结果是“同触发条件下
+  未发生 Gen3 PHY 完成事务”，不是触发器不一致。若需观察中间态，仍可显式使用
+  `K14_C_TRIGGER=recovery` 或 `K14_C_TRIGGER=detect`，但只能作为诊断抓取。
