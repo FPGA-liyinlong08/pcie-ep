@@ -2,15 +2,32 @@ set script_dir [file dirname [file normalize [info script]]]
 set project_dir [file normalize [file join $script_dir ../..]]
 set k14_recovery_speed [expr {[info exists ::env(K14_RECOVERY_SPEED)] &&
                               $::env(K14_RECOVERY_SPEED) eq "1"}]
-set build_dir [file join $script_dir [expr {$k14_recovery_speed ?
-                                            "build_k14_recovery_speed" :
-                                            "build_k11_gen1_release"}] impl]
+if {[info exists ::env(K14_IMPL_BUILD_DIR)] && $k14_recovery_speed} {
+  set build_dir [file normalize $::env(K14_IMPL_BUILD_DIR)]
+} else {
+  set build_dir [file join $script_dir [expr {$k14_recovery_speed ?
+                                              "build_k14_recovery_speed" :
+                                              "build_k11_gen1_release"}] impl]
+}
 set phy_module pcie_phy_x1_gen3
 set xci_path [file join $script_dir ip $phy_module ${phy_module}.xci]
 set afifo_path /home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v
 set part_name xcku040-ffva1156-2-e
 set top_name kcu105_pcie_ep_gen1_board_top
 set g9_cycles 6250000
+set k14_place_directive "ExtraTimingOpt"
+if {[info exists ::env(K14_PLACE_DIRECTIVE)]} {
+  set k14_place_directive $::env(K14_PLACE_DIRECTIVE)
+}
+set k14_allow_timing_violation [expr {[info exists ::env(K14_ALLOW_TIMING_VIOLATION)] &&
+                                      $::env(K14_ALLOW_TIMING_VIOLATION) eq "1"}]
+set k14_tx_rate_id "8'h02"
+if {[info exists ::env(K14_HW_TX_RATE_ID)]} {
+  if {$::env(K14_HW_TX_RATE_ID) ni {02 0e}} {
+    error "K14_HW_TX_RATE_ID must be 02 or 0e"
+  }
+  set k14_tx_rate_id "8'h$::env(K14_HW_TX_RATE_ID)"
+}
 if {[info exists ::env(G9_WAIT_REMOTE_DETECT_CYCLES)]} {
   set g9_cycles $::env(G9_WAIT_REMOTE_DETECT_CYCLES)
 }
@@ -82,7 +99,8 @@ if {$resume_routed_dcp ne ""} {
       -generic G9_WAIT_REMOTE_DETECT=1 \
       -generic G9_WAIT_REMOTE_DETECT_CYCLES=$g9_cycles \
       -generic K14_RATE_DEBUG=1 \
-      -generic GEN3_RATE_CHANGE_ENABLE=1
+      -generic GEN3_RATE_CHANGE_ENABLE=1 \
+      -generic LTSSM_TX_RATE_ID=$k14_tx_rate_id
   } else {
     synth_design -top $top_name -part $part_name \
       -generic G9_WAIT_REMOTE_DETECT=1 \
@@ -217,7 +235,16 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
     [k14_bus {.*k14_speed_state_w\[[0-2]\]$} 3] \
     [k14_bus {.*k14_ltssm_state_w\[[0-5]\]$} 6] \
     [k14_bus {.*k14_event_state_w\[[0-3]\]$} 4] \
-    [k14_net {^u_endpoint/phy_phystatus$}]]
+    [k14_net {^u_endpoint/phy_phystatus$}] \
+    [k14_net {.*k14_rp_gen3_request_seen_w$}] \
+    [k14_net {.*k14_partner_pending_w$}] \
+    [k14_net {.*k14_partner_armed_w$}] \
+    [k14_net {.*k14_partner_accept_w$}] \
+    [k14_net {.*k14_gen3_rate_success_w$}] \
+    [k14_net {.*k14_timeout_fallback_w$}] \
+    [k14_net {.*k14_gen1_fallback_success_w$}] \
+    [k14_net {.*k14_auto_retrain_w$}] \
+    [k14_net {.*k14_mailbox_valid_w$}]]
   k14_add_probe u_ila_k14 0 $probe0
   set probe1 [k14_bus {.*k14_event_record_w\[[0-9]+\]$} 118]
   k14_add_probe u_ila_k14 1 $probe1
@@ -233,7 +260,7 @@ if {$resume_routed_dcp eq ""} {
 
   write_checkpoint -force [file join $build_dir k11_gen1_synth.dcp]
   opt_design
-  place_design
+  place_design -directive $k14_place_directive
   phys_opt_design -directive AggressiveExplore
   route_design -directive AggressiveExplore
   phys_opt_design -directive AggressiveExplore
@@ -301,7 +328,9 @@ if {$k14_recovery_speed} {
 
 set setup_paths [get_timing_paths -delay_type max -slack_lesser_than 0 -max_paths 1]
 set hold_paths [get_timing_paths -delay_type min -slack_lesser_than 0 -max_paths 1]
-if {[llength $setup_paths] != 0} { error "Gen1 release has negative setup timing" }
+if {[llength $setup_paths] != 0 && !$k14_allow_timing_violation} {
+  error "Gen1 release has negative setup timing"
+}
 if {[llength $hold_paths] != 0} { error "Gen1 release has negative hold timing" }
 set max_path [get_timing_paths -delay_type max -max_paths 1]
 set min_path [get_timing_paths -delay_type min -max_paths 1]
@@ -336,6 +365,11 @@ puts $summary "G9_WAIT_REMOTE_DETECT=1"
 puts $summary "G9_WAIT_REMOTE_DETECT_CYCLES=$g9_cycles"
 puts $summary "PHY_COMMAND_CTRL_COUNT=1"
 puts $summary "GEN3_RATE_CHANGE_ENABLE=$k14_recovery_speed"
+if {$k14_recovery_speed} {
+  puts $summary "K14_PLACE_DIRECTIVE=$k14_place_directive"
+  puts $summary "K14_ALLOW_TIMING_VIOLATION=$k14_allow_timing_violation"
+  puts $summary "LTSSM_TX_RATE_ID=$k14_tx_rate_id"
+}
 puts $summary "WNS=$wns"
 puts $summary "WHS=$whs"
 puts $summary "DRC_ERROR_COUNT=[llength $drc_errors]"

@@ -5,6 +5,15 @@ set impl_dir    [file join $build_root impl]
 set capture_dir [file join $build_root capture]
 set bit_path    [file join $impl_dir k14_recovery_speed_ila.bit]
 set ltx_path    [file join $impl_dir k14_recovery_speed_ila.ltx]
+if {[info exists ::env(K14_BIT_PATH_OVERRIDE)]} {
+  set bit_path [file normalize $::env(K14_BIT_PATH_OVERRIDE)]
+}
+if {[info exists ::env(K14_LTX_PATH_OVERRIDE)]} {
+  set ltx_path [file normalize $::env(K14_LTX_PATH_OVERRIDE)]
+}
+if {[info exists ::env(K14_CAPTURE_DIR)]} {
+  set capture_dir [file normalize $::env(K14_CAPTURE_DIR)]
+}
 
 set server_url 127.0.0.1:3122
 set action status
