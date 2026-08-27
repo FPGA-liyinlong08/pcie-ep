@@ -25,7 +25,9 @@
 	k11b2-hw-probe k11b2-hw-program k11b2-hw-acceptance k11b2-hw-program-debug \
 	k14-recovery-speed-vivado k14-recovery-speed-hw-program-arm \
 	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
-	k14-recovery-speed-hw-repeat k14-recovery-speed-test phase-e-gen3-block-test \
+	k14-recovery-speed-hw-repeat k14-recovery-speed-test \
+	k14-recovery-speed-test-a-hw k14-recovery-speed-test-b-hw \
+	phase-e-gen3-block-test \
 	phase-e-k14-rate-guard phase-e1-auto1-board-vivado phase-e1-auto1-board-hw-capture \
 	phase-e1-timing-auto0-board-vivado phase-e1-timing-auto1-board-vivado \
 	phase-e1-timing-auto0-board-hw-capture phase-e1-timing-auto1-board-hw-capture \
@@ -672,6 +674,17 @@ k14-recovery-speed-hw-upload:
 k14-recovery-speed-hw-repeat:
 	./fpga/kcu105/run_k14_recovery_speed_repeated_hw.sh \
 		$(or $(K14_REPEAT_CYCLES),10)
+
+# Keep the historical D4 trigger and the newer Root-Port-only trigger as
+# separate hardware experiments.  Both use the same signed K14 ILA bitstream;
+# only the remote retrain sequence differs.
+k14-recovery-speed-test-a-hw:
+	./fpga/kcu105/run_k14_recovery_speed_test_a_d4_hw.sh \
+		$(or $(K14_REPEAT_CYCLES),1)
+
+k14-recovery-speed-test-b-hw:
+	./fpga/kcu105/run_k14_recovery_speed_test_b_rp_only_hw.sh \
+		$(or $(K14_REPEAT_CYCLES),1)
 
 phase-e1-board-hw-probe:
 	@echo "E1: program and ARM ILA, then run ./scripts/remote_pcie_host.sh retrain-gen3"

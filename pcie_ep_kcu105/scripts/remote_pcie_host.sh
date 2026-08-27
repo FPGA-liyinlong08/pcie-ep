@@ -16,7 +16,7 @@ poll_interval="${PCIE_SSH_POLL_INTERVAL:-2}"
 
 usage() {
     cat <<'EOF'
-用法：remote_pcie_host.sh [选项] <check|reboot|wait|lspci|cycle|retrain-gen3>
+用法：remote_pcie_host.sh [选项] <check|reboot|wait|lspci|cycle|retrain-gen3|retrain-gen3-rp-only|retrain-gen3-d4>
 
 动作：
   check   检查 SSH、主机名和 PCIe 设备
@@ -24,7 +24,9 @@ usage() {
   wait    等待远端 SSH 恢复
   lspci   读取 PCIe BDF 的详细状态
   cycle   reboot 后等待 SSH 恢复并读取 lspci
-  retrain-gen3  在 Root Port 设置 8 GT/s Target Link Speed 并发起 Retrain Link
+  retrain-gen3  retrain-gen3-rp-only 的兼容别名
+  retrain-gen3-rp-only  仅由 Root Port 设置 8 GT/s 并发起 Retrain Link
+  retrain-gen3-d4  严格复现历史 D4：Endpoint Retrain 后再由 Root Port 请求 Gen3
 
 选项：
   --host HOST       远端 IP/主机名
@@ -48,7 +50,7 @@ while [[ $# -gt 0 ]]; do
         --rp-bdf) remote_rp_bdf="$2"; shift 2 ;;
         --timeout) reboot_timeout="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
-        check|reboot|wait|lspci|cycle|retrain-gen3) action="$1"; shift; break ;;
+        check|reboot|wait|lspci|cycle|retrain-gen3|retrain-gen3-rp-only|retrain-gen3-d4) action="$1"; shift; break ;;
         *) echo "错误：未知参数 $1" >&2; usage >&2; exit 2 ;;
     esac
 done
@@ -81,7 +83,7 @@ read_lspci() {
     ssh_run "sudo -n lspci -s '$remote_bdf' -vvv 2>/dev/null || lspci -s '$remote_bdf' -vvv"
 }
 
-retrain_gen3() {
+retrain_gen3_rp_only() {
     # PCIe capability offsets: Link Control is +0x10 and Link Control 2 is
     # +0x30.  Normalize and retrain from the Root Port only so this remains a
     # Root-Port-directed experiment; do not set the endpoint Retrain Link bit.
@@ -120,6 +122,58 @@ retrain_gen3() {
             speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
             width=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_width 2>/dev/null || echo unavailable); \
             printf 'REMOTE_RETRAIN_POLL=%s speed=%s width=%s\\n' \"\$n\" \"\$speed\" \"\$width\"; \
+            sleep 0.2; \
+        done; \
+        sudo -n lspci -s '$remote_rp_bdf' -vv; \
+        sudo -n lspci -s '$remote_bdf' -vv | sed -n '/LnkCtl2:/,/LnkSta2:/p'"
+}
+
+retrain_gen3_d4() {
+    # Strict historical D4 order:
+    #   Gen1 normalize -> 3 stable samples -> Endpoint Retrain bit ->
+    #   Root Port Target Link Speed=Gen3 + Retrain.
+    # K08 reset/default Target Link Speed is already Gen3; the historical
+    # sequence intentionally does not write Endpoint Link Control 2 here.
+    # The endpoint write is intentional here; this is an A/B test and must not
+    # be silently replaced by the newer Root-Port-only procedure.
+    ssh_run "set -e; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w=0001:000f; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w=0020:0020; \
+        stable=0; \
+        for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do \
+            speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
+            width=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_width 2>/dev/null || echo unavailable); \
+            link=\$(sudo -n lspci -s '$remote_bdf' -vv 2>/dev/null | sed -n '/LnkSta:/,+1p'); \
+            if [ \"\$speed\" = '2.5 GT/s PCIe' ] && [ \"\$width\" = '1' ] && \
+               printf '%s' \"\$link\" | grep -q 'DLActive+'; then \
+                stable=\$((stable + 1)); \
+            else \
+                stable=0; \
+            fi; \
+            printf 'D4_GEN1_STABLE_POLL=%s stable=%s speed=%s width=%s\n' \"\$n\" \"\$stable\" \"\$speed\" \"\$width\"; \
+            if [ \"\$stable\" -ge 3 ]; then break; fi; \
+            sleep 0.2; \
+        done; \
+        if [ \"\$stable\" -lt 3 ]; then \
+            echo 'D4_GEN1_NORMALIZE_FAIL' >&2; exit 1; \
+        fi; \
+        sudo -n setpci -s '$remote_bdf' CAP_EXP+10.w=0020:0020; \
+        printf 'D4_ENDPOINT_RETRAIN_WRITE_PASS bdf=%s\n' '$remote_bdf'; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w=0003:000f; \
+        sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w=0020:0020; \
+        root_port_lnkctl=\$(sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+10.w); \
+        root_port_lnkctl2=\$(sudo -n setpci -s '$remote_rp_bdf' CAP_EXP+30.w); \
+        printf 'D4_ROOT_PORT_LNKCTL=%s\n' \"\$root_port_lnkctl\"; \
+        printf 'D4_ROOT_PORT_LNKCTL2=%s\n' \"\$root_port_lnkctl2\"; \
+        root_port_lnkctl2_dec=\$(printf '%d' \"0x\$root_port_lnkctl2\"); \
+        if [ \$((root_port_lnkctl2_dec & 15)) -ne 3 ]; then \
+            echo 'D4_ROOT_PORT_GEN3_REQUEST_READBACK_FAIL' >&2; exit 1; \
+        fi; \
+        printf 'D4_ROOT_PORT_GEN3_REQUEST_READBACK_PASS value=%s\n' \"\$root_port_lnkctl2\"; \
+        for n in 1 2 3 4 5 6 7 8 9 10; do \
+            speed=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_speed 2>/dev/null || echo unavailable); \
+            width=\$(cat /sys/bus/pci/devices/0000:$remote_bdf/current_link_width 2>/dev/null || echo unavailable); \
+            printf 'D4_RETRAIN_POLL=%s speed=%s width=%s\n' \"\$n\" \"\$speed\" \"\$width\"; \
             sleep 0.2; \
         done; \
         sudo -n lspci -s '$remote_rp_bdf' -vv; \
@@ -191,7 +245,10 @@ case "$action" in
         wait_for_ssh 1
         read_lspci
         ;;
-    retrain-gen3)
-        retrain_gen3
+    retrain-gen3|retrain-gen3-rp-only)
+        retrain_gen3_rp_only
+        ;;
+    retrain-gen3-d4)
+        retrain_gen3_d4
         ;;
 esac

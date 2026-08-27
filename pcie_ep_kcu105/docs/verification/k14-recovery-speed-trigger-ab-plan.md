@@ -1,0 +1,79 @@
+# K14 Recovery.Speed 触发方式 A/B 测试
+
+本测试将历史 D4 的 Endpoint 触发和后续 Root-Port-only 触发严格分开，不能用
+Root-Port-only 结果代替历史 D4 重跑结论。
+
+## Test A：严格复现历史 D4
+
+执行入口：
+
+```text
+make k14-recovery-speed-test-a-hw K14_REPEAT_CYCLES=1
+```
+
+远端操作顺序：
+
+```text
+Root Port Target=Gen1 + Retrain
+  -> 连续 3 次确认 2.5 GT/s、x1、DLLActive
+  -> Endpoint Link Control.Retrain Link=1
+  -> Root Port Target Link Speed=Gen3
+  -> Root Port Link Control.Retrain Link=1
+```
+
+该路径要求日志出现 `D4_ENDPOINT_RETRAIN_WRITE_PASS`，并由 ILA/CSV确认：
+
+```text
+PHY_RATE=2
+QPLL1LOCK=1
+PCIERATEGEN3=1
+PCIEUSERGEN3RDY=1
+PHYSTATUS 上升沿
+```
+
+## Test B：K14 Root-Port-only 对照
+
+执行入口：
+
+```text
+make k14-recovery-speed-test-b-hw K14_REPEAT_CYCLES=1
+```
+
+远端操作顺序：
+
+```text
+Root Port Target=Gen1 + Retrain
+  -> 连续 3 次确认 2.5 GT/s、x1、DLLActive
+  -> 不写 Endpoint Retrain bit
+  -> Root Port Target Link Speed=Gen3
+  -> Root Port Link Control.Retrain Link=1
+```
+
+该路径重点检查 Endpoint 的
+`partner_retrain_valid = os_ts1_valid && os_rate_id[7]` 是否被接受，并确认同样的
+Recovery.Speed/PHY rate transaction 是否完成。
+
+## 入口与判定隔离
+
+- `scripts/remote_pcie_host.sh retrain-gen3-d4`：Test A。
+- `scripts/remote_pcie_host.sh retrain-gen3-rp-only`：Test B。
+- `retrain-gen3` 保留为 Test B 的兼容别名。
+- 两个测试共用 K14 ILA bitstream和 `analyze_k02_golden_trace.py`，但日志、CSV前缀及
+  PASS标记独立。
+- 本测试只签署 PHY 切速；EIEOS、128b/130b、EQ 和 Gen3 L0 仍属于 Phase E。
+
+## 本轮实测记录（2026-08-27）
+
+- Test A 已在 `HW_SERVER_URL=127.0.0.1:3121` 下完成 1 次严格复现并 PASS：
+  `D4_ENDPOINT_RETRAIN_WRITE_PASS`，`PHY_RATE=2`，QPLL lock、PHYSTATUS 和
+  `PCIEUSERGEN3RDY` 全部满足，CSV 为
+  `build_k14_recovery_speed/capture/20260827_110857_k14_recovery_speed.csv`。
+- Test B 已完成远端 Root-Port-only 操作，但 K14 success/fail 终态 ILA 均未捕获；
+  远端仍保持 Gen1。当前结论是 **B 尚未通过**，不能宣称 partner_retrain_valid
+  路径已经进入 Recovery.Speed。下一步应使用 `PHASE_E1_TIMING_DEBUG=1` 的 timing
+  recorder 直接检查 T0（partner_retrain_valid）和 T1/T2/T4 边界，再决定是请求未被
+  接受还是 PHY 操作失败。
+- 已使用现成 timing recorder 做一次 B 诊断：`phase_e1_timing_dump_active_w` 未触发，
+  没有生成 timing CSV；结合 K14 success/fail ILA 均无事件，当前证据更接近
+  `partner_retrain_valid` 未形成，而不是 PHY 已切速后失败。该判断仍需增加直接
+  `partner_retrain_valid` probe 或修复 recorder 的无请求超时快照后再签署。
