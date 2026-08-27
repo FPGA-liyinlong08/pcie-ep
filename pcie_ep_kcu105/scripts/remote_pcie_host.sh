@@ -16,12 +16,13 @@ poll_interval="${PCIE_SSH_POLL_INTERVAL:-2}"
 
 usage() {
     cat <<'EOF'
-用法：remote_pcie_host.sh [选项] <check|reboot|wait|lspci|cycle|retrain-gen3|retrain-gen3-rp-only|retrain-gen3-d4>
+用法：remote_pcie_host.sh [选项] <check|reboot|wait|wait-reboot|lspci|cycle|retrain-gen3|retrain-gen3-rp-only|retrain-gen3-d4>
 
 动作：
   check   检查 SSH、主机名和 PCIe 设备
   reboot  通过 sudo -n reboot 重启远端主机
   wait    等待远端 SSH 恢复
+  wait-reboot  等待 SSH 先断开再恢复（reboot 后使用）
   lspci   读取 PCIe BDF 的详细状态
   cycle   reboot 后等待 SSH 恢复并读取 lspci
   retrain-gen3  retrain-gen3-rp-only 的兼容别名
@@ -50,7 +51,7 @@ while [[ $# -gt 0 ]]; do
         --rp-bdf) remote_rp_bdf="$2"; shift 2 ;;
         --timeout) reboot_timeout="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
-        check|reboot|wait|lspci|cycle|retrain-gen3|retrain-gen3-rp-only|retrain-gen3-d4) action="$1"; shift; break ;;
+        check|reboot|wait|wait-reboot|lspci|cycle|retrain-gen3|retrain-gen3-rp-only|retrain-gen3-d4) action="$1"; shift; break ;;
         *) echo "错误：未知参数 $1" >&2; usage >&2; exit 2 ;;
     esac
 done
@@ -236,6 +237,9 @@ case "$action" in
         ;;
     wait)
         wait_for_ssh
+        ;;
+    wait-reboot)
+        wait_for_ssh 1
         ;;
     lspci)
         read_lspci

@@ -18,8 +18,12 @@ case "${test_name}" in
         remote_action=retrain-gen3-rp-only
         test_label=TEST_B_RP_ONLY
         ;;
+    reboot)
+        remote_action=
+        test_label=TEST_C_REBOOT
+        ;;
     *)
-        echo "用法：$0 <d4|rp-only> [cycles]" >&2
+        echo "用法：$0 <d4|rp-only|reboot> [cycles]" >&2
         exit 2
         ;;
 esac
@@ -35,11 +39,22 @@ for ((cycle = 1; cycle <= cycles; cycle++)); do
     stamp="$(date +%Y%m%d_%H%M%S)"
     vivado_log="${capture_dir}/${stamp}_${test_label}_cycle${cycle}_vivado.log"
     remote_log="${capture_dir}/${stamp}_${test_label}_cycle${cycle}_remote.log"
+    reboot_log="${capture_dir}/${stamp}_${test_label}_cycle${cycle}_reboot.log"
     analysis_log="${capture_dir}/${stamp}_${test_label}_cycle${cycle}_analysis.log"
 
+    if [[ "${test_name}" == reboot ]]; then
+        trigger_probe="k14_ltssm_state_w"
+        trigger_compare="eq6'h00"
+        rate_compare=
+    else
+        trigger_probe="k14_event_state_w"
+        trigger_compare="${K14_ILA_TRIGGER_COMPARE:-eq4'h8}"
+        rate_compare="${K14_ILA_RATE_COMPARE-eq2'h2}"
+    fi
     env K14_POST_PROGRAM_SETTLE_MS="${K14_POST_PROGRAM_SETTLE_MS:-2000}" \
-        K14_ILA_TRIGGER_COMPARE="${K14_ILA_TRIGGER_COMPARE:-eq4'h8}" \
-        K14_ILA_RATE_COMPARE="${K14_ILA_RATE_COMPARE-eq2'h2}" \
+        K14_ILA_TRIGGER_PROBE="${K14_ILA_TRIGGER_PROBE:-${trigger_probe}}" \
+        K14_ILA_TRIGGER_COMPARE="${K14_ILA_TRIGGER_COMPARE:-${trigger_compare}}" \
+        K14_ILA_RATE_COMPARE="${K14_ILA_RATE_COMPARE-${rate_compare}}" \
         K14_ILA_TRIGGER_POS="${K14_ILA_TRIGGER_POS:-2048}" \
         timeout 75 "${vivado_bin}" -mode batch \
         -source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
@@ -68,7 +83,14 @@ for ((cycle = 1; cycle <= cycles; cycle++)); do
         exit 1
     fi
 
-    ./scripts/remote_pcie_host.sh "${remote_action}" | tee "${remote_log}"
+    if [[ "${test_name}" == reboot ]]; then
+        ./scripts/remote_pcie_host.sh reboot | tee "${reboot_log}"
+        ./scripts/remote_pcie_host.sh wait-reboot | tee -a "${reboot_log}"
+        ./scripts/remote_pcie_host.sh check | tee -a "${reboot_log}"
+    fi
+    if [[ -n "${remote_action}" ]]; then
+        ./scripts/remote_pcie_host.sh "${remote_action}" | tee "${remote_log}"
+    fi
     if ! wait "${vivado_pid}"; then
         tail -n 80 "${vivado_log}" >&2
         echo "错误：${test_label} 第 ${cycle} 轮 ILA capture 失败" >&2
@@ -81,8 +103,13 @@ for ((cycle = 1; cycle <= cycles; cycle++)); do
         echo "错误：${test_label} 第 ${cycle} 轮未生成 capture CSV" >&2
         exit 1
     fi
-    python3 scripts/analyze_k02_golden_trace.py "${csv_path}" | \
-        tee "${analysis_log}"
+    if [[ "${test_name}" == reboot ]]; then
+        printf 'K14_TEST_C_REBOOT_CAPTURE_PASS csv=%s\n' "${csv_path}" | \
+            tee "${analysis_log}"
+    else
+        python3 scripts/analyze_k02_golden_trace.py "${csv_path}" | \
+            tee "${analysis_log}"
+    fi
     echo "K14_${test_label}_CYCLE_PASS cycle=${cycle} csv=${csv_path}"
 done
 

@@ -53,6 +53,25 @@ Root Port Target=Gen1 + Retrain
 `partner_retrain_valid = os_ts1_valid && os_rate_id[7]` 是否被接受，并确认同样的
 Recovery.Speed/PHY rate transaction 是否完成。
 
+## Test C：烧写后远端 reboot 观察
+
+执行入口：
+
+```text
+make k14-recovery-speed-test-c-hw K14_REPEAT_CYCLES=1
+```
+
+操作顺序为：
+
+```text
+烧写 K14 bitstream → ARM ILA（触发 LTSSM Detect.Quiet）
+  → 远端 sudo reboot → 等待 SSH 和 Endpoint 恢复
+  → 仅抓取 reboot 后的 LTSSM/PHY 信号
+```
+
+Test C 不执行任何 `setpci`，也不主动请求 Gen3；它只验证 reboot 后的 PHY/LTSSM
+复位和重新训练现场。Test C 的捕获不使用 Golden rate analyzer 判定。
+
 ## 入口与判定隔离
 
 - `scripts/remote_pcie_host.sh retrain-gen3-d4`：Test A。
@@ -77,3 +96,7 @@ Recovery.Speed/PHY rate transaction 是否完成。
   没有生成 timing CSV；结合 K14 success/fail ILA 均无事件，当前证据更接近
   `partner_retrain_valid` 未形成，而不是 PHY 已切速后失败。该判断仍需增加直接
   `partner_retrain_valid` probe 或修复 recorder 的无请求超时快照后再签署。
+- Test C 已完成 1 次纯 reboot 观察并 PASS：烧写/ARM 后执行远端 `sudo reboot`，
+  等待 SSH 经历断开并恢复（约 32 s），随后 Endpoint 重新枚举为 `1234:e001`、
+  Gen1 x1、`DLActive+`；全程没有执行 `setpci`。捕获为
+  `build_k14_recovery_speed/capture/20260827_115801_k14_recovery_speed.csv`。
