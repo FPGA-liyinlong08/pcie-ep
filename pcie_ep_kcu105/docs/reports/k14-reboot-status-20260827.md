@@ -6,7 +6,7 @@
 
 ## Git 状态
 
-当前 `HEAD` 仍为基线提交。K14 RTL、VCS、Verilator、Makefile 和报告改动已经暂存，但此前提交因 `.git` 只读而失败。`.Xil/Vivado-3310202-wx-linux/` 是未跟踪的 Vivado 临时目录，不纳入提交。
+当前分支已提交到 `d276a43`（`Add K14 reboot Gen3 verification status`）。本轮 warm-reset 时序与观测日志修改尚未提交；`.Xil/Vivado-3310202-wx-linux/` 是 Vivado 临时目录，不纳入提交。
 
 ## VCS 模型
 
@@ -82,12 +82,21 @@ K14_REBOOT_EPOCH_PASS epoch=0
 
 日志见 [k14_reboot_simulate.log](../../sim/vcs/build/k14_reboot_simulate.log)。
 
-第二次 PERST 已释放，但尚未得到 `K14_REBOOT_EPOCH_PASS epoch=1`。第二轮 RP 进入反复 Detect/Configuration 重试，仿真被手动停止。因此“reset 后重新接收且每 epoch 仅一次 excursion”目前只在第一个 epoch 被证明，第二个 epoch 尚未闭环。
+第二次 PERST 已释放，epoch1 现已完整闭环。第二轮同样观察到 RP 自动 `Rate ID=8'h8e` Speed Change TS1、K14 partner accept、Gen3 PHY/PhyStatus/QPLL、自然 timeout fallback、Gen1 PhyStatus，并输出 `K14_REBOOT_EPOCH_PASS epoch=1`。
+
+本轮先将 K14 PERST 保持从 5 us 延长到 100 us；随后将 harness 改为独立的 RP `sys_rst_n` 与 Endpoint `PERST#`：两者同时拉低 100 us，先释放 Endpoint，额外等待 100 us 后释放 RP。该改动仍不注入 TS、配置写或 retrain 请求。独立复位时序已在真实 Xilinx RP/Endpoint PHY VCS 中通过两 epoch 验证。
+
+最终日志中的关键结果：
+
+```text
+K14_REBOOT_EPOCH_PASS epoch=0 wait=35511
+K14_REBOOT_EPOCH_PASS epoch=1 wait=35342
+K14_REBOOT_VCS_PASS epochs=2
+```
 
 默认生产配置仍为 `Rate ID=02`，所以 `make k14-reboot-vcs` 在无人工配置、无 `setpci`、无 retrain task、无 force 条件下仍会以 `RP_AUTO_GEN3_REQUEST_MISSING` 停止；这反映的是初始能力声明边界，不是 K14 接收器漏包。
 
 ## 下一步
 
-1. 恢复 `.git` 可写并提交当前暂存内容。
-2. 专门处理第二个 PERST epoch 的 warm-reset 条件，确认 PHY/RP reset 完成、第二轮只出现一次 partner request，并使 `K14_REBOOT_VCS_PASS epochs=2` 通过。
-3. 在 epoch 验证完成后，再决定生产默认初始能力是否应改为正确的 Gen3 capability advertisement。
+1. 提交已通过的 warm-reset harness 与报告变更。
+2. 保持生产默认初始 Rate ID 为 `02`，另行评估真实硬件 capability advertisement 是否需要改为 Gen3。

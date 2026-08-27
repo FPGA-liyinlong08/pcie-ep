@@ -14,3 +14,4 @@ pcie_ep_kcu105/sim/verilator/k12_integration/k12_integration_negative_observed.t
 *.log
 *.jou
 pcie_ep_kcu105/ucli.key
+.Xil/

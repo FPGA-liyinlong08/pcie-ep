@@ -10,10 +10,13 @@ module board;
     localparam integer EP_TRAIN_TIMEOUT_CYCLES  = 2_000_000;
     localparam integer EP_HOT_RESET_CYCLES      = 16_384;
     localparam integer STABLE_PCLK_CYCLES       = 1_024;
+    localparam integer K14_PERST_HOLD_REFCLK_CYCLES = 10_000;
+    localparam integer K14_RP_RELEASE_DELAY_REFCLK_CYCLES = 10_000;
 
     reg  refclk_p;
     wire refclk_n = ~refclk_p;
     reg  sys_rst_n;
+    reg  rp_sys_rst_n;
     reg  disconnect_lane0;
     reg  b2_negative_stub;
     reg  b2_active;
@@ -27,6 +30,7 @@ module board;
     reg  k13_initial_gen1_l0_seen;
     reg  k13_do_rp_retrain;
     reg  k13_do_ep_retrain;
+    wire rp_reset_n = k14_reboot_active ? rp_sys_rst_n : sys_rst_n;
 
     integer b2_iter;
     integer b2_byte;
@@ -303,6 +307,7 @@ module board;
 
     initial begin
         sys_rst_n = 1'b0;
+        rp_sys_rst_n = 1'b0;
         disconnect_lane0 = $test$plusargs("K11B_DISCONNECT_LANE0");
         b2_negative_stub = $test$plusargs("K11B2_NEGATIVE_STUB");
         b2_active = $test$plusargs("K11B2_RUN");
@@ -325,8 +330,25 @@ module board;
             k13_do_rp_retrain = 1'b1;
             k13_do_ep_retrain = 1'b1;
         end
-        repeat (500) @(posedge refclk_p);
+        // A real PERST# assertion is held long enough for both the endpoint
+        // GT and the encrypted Root Port model to leave any prior link epoch.
+        // Keep the historical short reset for unrelated K11-B checks, but
+        // use a PCIe-style 100 us hold for the K14 reboot experiment.
+        if (k14_reboot_active)
+            repeat (K14_PERST_HOLD_REFCLK_CYCLES) @(posedge refclk_p);
+        else
+            repeat (500) @(posedge refclk_p);
         sys_rst_n = 1'b1;
+        if (k14_reboot_active) begin
+            $display("K14_EP_PERST_RELEASE time_ps=%0t", $time);
+            // Release the RP only after the Endpoint PHY has had a complete
+            // reset-release interval, so the RP's first Detect window cannot
+            // precede Endpoint readiness on a warm reboot.
+            repeat (K14_RP_RELEASE_DELAY_REFCLK_CYCLES) @(posedge refclk_p);
+        end
+        rp_sys_rst_n = 1'b1;
+        if (k14_reboot_active)
+            $display("K14_RP_RESET_RELEASE time_ps=%0t", $time);
         $display("K11B_RESET_RELEASE time_ps=%0t disconnect=%0d", $time,
                  disconnect_lane0);
         if (k13_retrain_active)
@@ -369,7 +391,7 @@ module board;
         .pci_exp_rxn (rp_rxn),
         .sys_clk_p   (refclk_p),
         .sys_clk_n   (refclk_n),
-        .sys_rst_n   (sys_rst_n)
+        .sys_rst_n   (rp_reset_n)
     );
 
 `ifdef K13_DUT
@@ -1019,9 +1041,14 @@ module board;
             stable_count <= 0;
         end else begin
             if (EP.DUT.ltssm_state != last_ep_state) begin
-                $display("K11B_EP_STATE time_ps=%0t state=%0d rx_ts=%0d train_err=%0d timeout=%0d",
+                $display("K11B_EP_STATE time_ps=%0t state=%0d rx_ts=%0d train_err=%0d timeout=%0d ep_pipe_rate=%0d ep_txvalid=%0d ep_txidle=%0d rp_pipe_rate=%0d rp_txvalid=%0d rp_txidle=%0d",
                          $time, EP.DUT.ltssm_state, EP.DUT.rx_ts_count,
-                         EP.DUT.training_error_count, EP.DUT.timeout_count);
+                         EP.DUT.training_error_count, EP.DUT.timeout_count,
+                         EP.DUT.phy_rate, EP.DUT.phy_txdata_valid,
+                         EP.DUT.phy_txelecidle,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle);
                 last_ep_state <= EP.DUT.ltssm_state;
             end
 
@@ -1324,8 +1351,15 @@ module board;
 
                 if (k14_epoch == 0) begin
                     sys_rst_n = 1'b0;
-                    repeat (500) @(posedge refclk_p);
+                    rp_sys_rst_n = 1'b0;
+                    repeat (K14_PERST_HOLD_REFCLK_CYCLES) @(posedge refclk_p);
                     sys_rst_n = 1'b1;
+                    $display("K14_EP_PERST_RELEASE epoch=%0d time_ps=%0t",
+                             k14_epoch + 1, $time);
+                    repeat (K14_RP_RELEASE_DELAY_REFCLK_CYCLES) @(posedge refclk_p);
+                    rp_sys_rst_n = 1'b1;
+                    $display("K14_RP_RESET_RELEASE epoch=%0d time_ps=%0t",
+                             k14_epoch + 1, $time);
                     $display("K14_REBOOT_SECOND_RESET_RELEASE time_ps=%0t",
                              $time);
                 end
