@@ -227,10 +227,12 @@ module pcie_ltssm_mac_gen1 #(
     reg        tx_os_lane_pad;
     reg        tx_os_enable;
     reg  [7:0] tx_os_training_control;
-    // Keep initial Gen1 Polling TS capability at TX_RATE_ID (02).  During a
+    // Keep the production initial Polling TS at TX_RATE_ID (02). During a
     // directed Recovery speed change, advertise the higher-rate capability
-    // together with the speed-change indication; advertising 0e from reset
-    // makes the Xilinx Root Port model reject the initial Gen1 exchange.
+    // together with the speed-change indication. A diagnostic 0e-from-reset
+    // build causes the Xilinx RP to begin its automatic Gen3 transition while
+    // K14 is still closing the initial Gen1 epoch; that sequencing is not yet
+    // a production-safe path, so it must remain an explicit test override.
     wire       advertise_gen3_rate = speed_retrain_active &&
                                      (recovery_target_rate == 2'b10);
     wire [7:0] tx_os_rate_id = TX_RATE_ID |

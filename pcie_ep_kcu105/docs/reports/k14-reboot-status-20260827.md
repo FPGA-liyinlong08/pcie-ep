@@ -6,7 +6,7 @@
 
 ## Git 状态
 
-当前分支已提交到 `265d1bf`（`k14: pass reboot epoch reset sequencing`），包含 warm-reset 时序与观测日志修改；`.Xil/Vivado-3310202-wx-linux/` 是 Vivado 临时目录，不纳入提交。
+当前分支已提交到 `982f04d`（`k14: add hardware rate-id and partner-request evidence`），包含 warm-reset 时序、Rate ID A/B 和硬件 partner-request 观测；`.Xil/Vivado-3310202-wx-linux/` 是 Vivado 临时目录，不纳入提交。
 
 ## VCS 模型
 
@@ -36,7 +36,13 @@ RP 实例为 `pcie3_uscale_rp_top/core`，Endpoint 使用生产版 `pcie_phy_x1_
 
 结果见 [k14_rate_id_0e_simulate.log](../../sim/vcs/build/k14_rate_id_0e_simulate.log)。
 
-结论：此前“RP 模型没有自动发起 Gen3”的判断不成立。`Rate ID=02` 隐藏了 K14 的 Gen3 能力，RP 因而没有协议依据发出自动 Speed Change；`Rate ID=0e` 时 RP 自动请求已被原始 PIPE 证据确认。
+结论：此前“RP 模型没有自动发起 Gen3”的判断不成立。XDMA v4.1 RP 模型本身明确配置为 `PL_LINK_CAP_MAX_LINK_SPEED=4`（Gen3），且 `PL_DISABLE_AUTO_EQ_SPEED_CHANGE_TO_GEN3="FALSE"`；`Rate ID=0e` 时原始 PIPE 已确认 RP 自动发出 `8e` Speed Change TS1。因此不能把当前失败归因于 RP 不支持 Gen3。`Rate ID=02` 的结果只说明：在 K14 当前初始 TS/能力广告和该 reboot 状态下，RP 没有进入自动 speed-change 条件。
+
+## RP 能力与 K14 初始能力广告的边界
+
+KCU105 上早期 XDMA x1 demo 已在同一平台完成 Gen3 x1（8.0 GT/s）链路；其 README 记录了 Gen3 均衡 Phase 1～3 完成。这证明板卡通道、REFCLK、PERST#、平台 Root Port 和官方 Endpoint 的 Gen3 能力成立，但该 demo 是官方 hard-IP 直接建立 Gen3 链路，不等价于“一个初始 TS Rate ID 为 02 的自研 Endpoint 在 reboot 后必然触发 RP 自动 retrain”。
+
+K14 配置空间并非没有 Gen3 能力：Link Capabilities（DW19）为 `0x00100013`，最大速率字段为 Gen3；Link Capabilities 2（DW27）为 `0x0000000e`，也包含 Gen1/Gen2/Gen3。当前真正不同的是 PHY Ordered Set：`LTSSM_TX_RATE_ID=8'h02` 时 Polling 初始 TS 只带 02，`8'h0c/bit7` 仅在已经进入 `speed_retrain_active` 的 Recovery 事务中加入。因此待验证的边界已收窄为“配置空间能力已声明，但初始 TS Rate ID、PERST 后 LTSSM 收敛状态和 RP 自动策略是否满足自动 speed-change 前置条件”，不是平台 RP 或 K14 配置空间缺少 Gen3。
 
 ## 已完成 RTL 修改
 
@@ -145,4 +151,8 @@ summary 明确为 `LTSSM_TX_RATE_ID=8'h0e`、`WNS=0.002 ns`、`WHS=0.004 ns`、`
 - 实板 `0x02`：Endpoint 最终可枚举为 Gen1 x1，直接 RP-request 触发无数据；与 VCS 的“没有自动 Gen3 request”一致。
 - 实板 `0x0e`：可观察到 Gen3 PHY 相关事件，但初始训练被破坏，Endpoint 未稳定枚举；这与 VCS 中 `0x0e` 仅作为能力/诊断 override、而不是生产初始训练值的边界一致，不能把两者当成同一测试条件。
 
-当前结论是：VCS 与实板在 `0x02` 的关键差异不是 Root Port 模型能力，而是实板初始 `Rate ID=02` 没有声明可供 RP 使用的 Gen3 capability，因此 RP 没有协议依据自动发起 Speed Change；`0x0e` 实板实验改变了初始训练条件，不能用来证明生产 reboot 流程已经完成 Gen3 excursion。
+当前结论是：平台 RP 的 Gen3 能力已经由 XDMA demo、VCS RP 参数和 K14 配置空间三方面确认；VCS/实板在生产 `0x02` 条件下都没有观察到自动 Gen3 request，当前应继续定位 K14 初始 TS `Rate ID=02`、PERST 后 LTSSM 收敛状态以及 RP 自动策略触发条件之间的协议契约。`0x0e` 实板实验改变了初始训练条件，不能作为生产 reboot 流程 PASS，但它证明 K14 的 Gen3 PHY excursion 观测链路可以工作。
+
+2026-08-27 23:03 重新运行 `make k14-rate-id-ab-vcs`：`02` 输出 `l0=1`、`rp_gen3_speed_ts1=0`；`0e` 输出 `l0=0`、`rp_gen3_speed_ts1=1`。`0e` 首个 RP `8e` 出现在 `ep_state=10`、`rp_state=b`，即 K14 刚到 L0 状态而 RP 已经进入 Recovery.RcvrLock，未形成稳定的双方共同 L0 窗口。
+
+因此需要明确一个约束交叉点：如果 RP 的自动 Gen3 策略只在初始 Polling TS 看到 Gen3 capability 时启动，那么严格保持 K14 初始 TS 为 `02`、禁止本端自动请求、禁止配置写/软件 retrain，就没有新的协议事件可让 RP 在 Gen1 L0 之后凭空产生 `8e` TS1。下一步应先做诊断性 VCS 对照（初始 TS 仅广告 `0e`、不置 bit7，保持 PIPE 当前速率为 Gen1），确认 RP 是否会在 Polling 阶段提前发起切速；该对照只用于定位，不改变生产默认值。若确认如此，则问题是 K14 对“早于 L0 的合法 RP speed-change”处理边界与既定 L0/Recovery 接收门限冲突，需要在约束允许后重新定义方案。
