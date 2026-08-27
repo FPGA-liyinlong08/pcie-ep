@@ -18,6 +18,8 @@ module board;
     reg  b2_negative_stub;
     reg  b2_active;
     reg  b2_stress;
+    reg  k14_reboot_active;
+    reg  k14_rate_ab_active;
     reg  k13_retrain_active;
     reg  k13_retrain_monitor_armed;
     reg  k13_retry_sent;
@@ -305,6 +307,9 @@ module board;
         b2_negative_stub = $test$plusargs("K11B2_NEGATIVE_STUB");
         b2_active = $test$plusargs("K11B2_RUN");
         b2_stress = $test$plusargs("K11B2_STRESS");
+        k14_reboot_active = $test$plusargs("K14_REBOOT") ||
+                            $test$plusargs("K14_RATE_AB");
+        k14_rate_ab_active = $test$plusargs("K14_RATE_AB");
         k13_retrain_active = $test$plusargs("K13_RETRAIN");
         k13_retrain_monitor_armed = 1'b0;
         k13_retry_sent = 1'b0;
@@ -1047,7 +1052,7 @@ module board;
             else
                 stable_count <= 0;
 
-            if (!disconnect_lane0 && !b2_active &&
+            if (!disconnect_lane0 && !b2_active && !k14_reboot_active &&
                 (stable_count == STABLE_PCLK_CYCLES-1)) begin
                 if (!seen_detect || !seen_phy_powerup || !seen_polling ||
                     !seen_configuration) begin
@@ -1079,6 +1084,298 @@ module board;
     end
 
 `ifdef K11B2_DUT
+`ifdef K14_REBOOT_VCS
+    localparam integer K14_AUTO_REQUEST_WAIT_CYCLES = 250_000;
+    localparam integer K14_EPOCH_TIMEOUT_CYCLES = 1_500_000;
+    integer k14_epoch;
+    integer k14_wait_cycles;
+    integer k14_final_gen1_stable;
+    reg k14_seen_rp_raw_gen3_ts;
+    reg k14_seen_partner_gen3_ts;
+    reg k14_seen_partner_accept;
+    reg k14_seen_gen3_rate;
+    reg k14_seen_gen3_phystatus;
+    reg k14_seen_qpll_lock;
+    reg k14_seen_timeout_fallback;
+    reg k14_seen_gen1_rate;
+    reg k14_ab_seen_l0;
+    reg k14_ab_seen_ep_ts1;
+    reg k14_ab_seen_ep_ts2;
+    reg k14_ab_seen_rp_ts1;
+    reg k14_ab_seen_rp_ts2;
+    reg [7:0] k14_ab_ep_rate_or;
+    reg [7:0] k14_ab_rp_rate_or;
+    integer k14_ab_ep_ts_count;
+    integer k14_ab_rp_ts_count;
+
+    wire k14_qpll1lock =
+        EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.qpll1lock_out[0];
+
+    // Decode the Root Port's Gen1 PIPE transmitter directly.  This is the
+    // source-side proof that a Speed Change TS1 was actually emitted; the
+    // Endpoint's os_ts1_valid below is a separate receive/decode observation.
+    wire k14_rp_raw_ts1;
+    wire k14_rp_raw_ts2;
+    wire [7:0] k14_rp_raw_rate_id;
+    pcie_gen1_os_rx K14_RP_RAW_TX_OS_RX (
+        .clk(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk),
+        .rst_n(sys_rst_n),
+        .enable(k14_reboot_active &&
+                (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b00) &&
+                !RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle),
+        .in_valid(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid),
+        .in_data(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data[15:0]),
+        .in_datak(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_char_is_k),
+        .ts1_valid(k14_rp_raw_ts1), .ts2_valid(k14_rp_raw_ts2),
+        .malformed(), .idle_pair_valid(), .link_number(), .link_is_pad(),
+        .lane_number(), .lane_is_pad(), .n_fts(),
+        .rate_id(k14_rp_raw_rate_id), .training_control()
+    );
+
+    // Decode the Endpoint's actual Gen1 PIPE transmitter independently of
+    // u_ltssm_mac.  The A/B result therefore proves which Rate ID reached the
+    // Xilinx Root Port model rather than merely reporting controller intent.
+    wire k14_ep_raw_ts1;
+    wire k14_ep_raw_ts2;
+    wire [7:0] k14_ep_raw_rate_id;
+    pcie_gen1_os_rx K14_EP_RAW_TX_OS_RX (
+        .clk(EP.DUT.phy_pclk), .rst_n(EP.DUT.pipe_rst_n),
+        .enable(k14_reboot_active && (EP.DUT.phy_rate == 2'b00) &&
+                !EP.DUT.phy_txelecidle),
+        .in_valid(EP.DUT.phy_txdata_valid),
+        .in_data(EP.DUT.phy_txdata[15:0]),
+        .in_datak(EP.DUT.phy_txdatak),
+        .ts1_valid(k14_ep_raw_ts1), .ts2_valid(k14_ep_raw_ts2),
+        .malformed(), .idle_pair_valid(), .link_number(), .link_is_pad(),
+        .lane_number(), .lane_is_pad(), .n_fts(),
+        .rate_id(k14_ep_raw_rate_id), .training_control()
+    );
+
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk or
+             negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            k14_seen_rp_raw_gen3_ts <= 1'b0;
+            k14_ab_seen_rp_ts1 <= 1'b0;
+            k14_ab_seen_rp_ts2 <= 1'b0;
+            k14_ab_rp_rate_or <= 8'h00;
+            k14_ab_rp_ts_count <= 0;
+        end else if (k14_reboot_active && k14_rp_raw_ts1 &&
+                     k14_rp_raw_rate_id[7] && k14_rp_raw_rate_id[3]) begin
+            k14_seen_rp_raw_gen3_ts <= 1'b1;
+            $display("K14_RP_RAW_GEN3_TS epoch=%0d time_ps=%0t rate_id=%02x rp_state=%0h",
+                     k14_epoch, $time, k14_rp_raw_rate_id,
+                     RP.cfg_ltssm_state);
+        end else if (k14_rate_ab_active &&
+                     (k14_rp_raw_ts1 || k14_rp_raw_ts2)) begin
+            k14_ab_seen_rp_ts1 <= k14_ab_seen_rp_ts1 || k14_rp_raw_ts1;
+            k14_ab_seen_rp_ts2 <= k14_ab_seen_rp_ts2 || k14_rp_raw_ts2;
+            k14_ab_rp_rate_or <= k14_ab_rp_rate_or | k14_rp_raw_rate_id;
+            k14_ab_rp_ts_count <= k14_ab_rp_ts_count + 1;
+        end
+    end
+
+    always @(posedge EP.DUT.phy_pclk or negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            k14_ab_seen_ep_ts1 <= 1'b0;
+            k14_ab_seen_ep_ts2 <= 1'b0;
+            k14_ab_ep_rate_or <= 8'h00;
+            k14_ab_ep_ts_count <= 0;
+        end else if (k14_rate_ab_active &&
+                     (k14_ep_raw_ts1 || k14_ep_raw_ts2)) begin
+            k14_ab_seen_ep_ts1 <= k14_ab_seen_ep_ts1 || k14_ep_raw_ts1;
+            k14_ab_seen_ep_ts2 <= k14_ab_seen_ep_ts2 || k14_ep_raw_ts2;
+            k14_ab_ep_rate_or <= k14_ab_ep_rate_or | k14_ep_raw_rate_id;
+            k14_ab_ep_ts_count <= k14_ab_ep_ts_count + 1;
+        end
+    end
+
+    always @(posedge EP.DUT.phy_pclk or negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            k14_seen_partner_gen3_ts <= 1'b0;
+            k14_seen_partner_accept <= 1'b0;
+            k14_seen_gen3_rate <= 1'b0;
+            k14_seen_gen3_phystatus <= 1'b0;
+            k14_seen_qpll_lock <= 1'b0;
+            k14_seen_timeout_fallback <= 1'b0;
+            k14_seen_gen1_rate <= 1'b0;
+        end else if (k14_reboot_active) begin
+            if (EP.DUT.os_ts1_valid && EP.DUT.os_rate_id[7] &&
+                EP.DUT.os_rate_id[3]) begin
+                k14_seen_partner_gen3_ts <= 1'b1;
+                $display("K14_RP_AUTO_GEN3_TS epoch=%0d time_ps=%0t rate_id=%02x ep_state=%0d rp_state=%0h",
+                         k14_epoch, $time, EP.DUT.os_rate_id,
+                         EP.DUT.ltssm_state, RP.cfg_ltssm_state);
+            end
+            if (EP.DUT.g_gen3_rate_change.speed_retrain_accept) begin
+                if (!k14_seen_partner_accept)
+                    $display("K14_PARTNER_REQUEST_ACCEPTED epoch=%0d time_ps=%0t speed_state=%0d",
+                             k14_epoch, $time,
+                             EP.DUT.speed_state);
+                k14_seen_partner_accept <= 1'b1;
+            end
+            if (EP.DUT.phy_rate == 2'b10) begin
+                if (!k14_seen_gen3_rate)
+                    $display("K14_GEN3_PHY_RATE_SEEN epoch=%0d time_ps=%0t rate_state=%0d",
+                             k14_epoch, $time, EP.DUT.phy_rate_state);
+                k14_seen_gen3_rate <= 1'b1;
+            end
+            if ((EP.DUT.phy_rate == 2'b10) && EP.DUT.phy_phystatus) begin
+                if (!k14_seen_gen3_phystatus)
+                    $display("K14_GEN3_PHYSTATUS_SEEN epoch=%0d time_ps=%0t qpll=%0d",
+                             k14_epoch, $time, k14_qpll1lock);
+                k14_seen_gen3_phystatus <= 1'b1;
+            end
+            if ((EP.DUT.phy_rate == 2'b10) && k14_qpll1lock)
+                k14_seen_qpll_lock <= 1'b1;
+            if (EP.DUT.g_gen3_rate_change.speed_timeout_sticky &&
+                EP.DUT.speed_fallback_active) begin
+                if (!k14_seen_timeout_fallback)
+                    $display("K14_TIMEOUT_FALLBACK_SEEN epoch=%0d time_ps=%0t speed_state=%0d ep_state=%0d",
+                             k14_epoch, $time,
+                             EP.DUT.speed_state,
+                             EP.DUT.ltssm_state);
+                k14_seen_timeout_fallback <= 1'b1;
+            end
+            if (k14_seen_timeout_fallback &&
+                (EP.DUT.phy_rate == 2'b00) && EP.DUT.phy_phystatus) begin
+                if (!k14_seen_gen1_rate)
+                    $display("K14_GEN1_FALLBACK_PHYSTATUS_SEEN epoch=%0d time_ps=%0t",
+                             k14_epoch, $time);
+                k14_seen_gen1_rate <= 1'b1;
+            end
+        end
+    end
+
+    initial begin : k14_reboot_test
+        k14_epoch = 0;
+        k14_wait_cycles = 0;
+        k14_final_gen1_stable = 0;
+        if ($test$plusargs("K14_REBOOT")) begin
+            wait (sys_rst_n === 1'b1);
+            for (k14_epoch = 0; k14_epoch < 2; k14_epoch = k14_epoch + 1) begin
+                wait ((EP.DUT.link_up === 1'b1) &&
+                      (EP.DUT.phy_rate === 2'b00));
+                if (RP.cfg_ltssm_state === 6'h10)
+                    $display("K14_REBOOT_GEN1_L0_PASS epoch=%0d time_ps=%0t",
+                             k14_epoch, $time);
+                else
+                    $display("K14_REBOOT_GEN1_TO_RECOVERY_HANDOFF epoch=%0d time_ps=%0t rp_state=%0h",
+                             k14_epoch, $time, RP.cfg_ltssm_state);
+
+                k14_wait_cycles = 0;
+                while (!k14_seen_rp_raw_gen3_ts &&
+                       (k14_wait_cycles < K14_AUTO_REQUEST_WAIT_CYCLES)) begin
+                    @(posedge EP.DUT.phy_pclk);
+                    k14_wait_cycles = k14_wait_cycles + 1;
+                end
+                if (!k14_seen_rp_raw_gen3_ts) begin
+                    $display("RP_AUTO_GEN3_REQUEST_MISSING epoch=%0d wait_cycles=%0d ep_state=%0d rp_state=%0h rp_speed=%0d ep_rate=%0d auto=0 mailbox=%0d",
+                             k14_epoch, k14_wait_cycles, EP.DUT.ltssm_state,
+                             RP.cfg_ltssm_state, RP.cfg_current_speed,
+                             EP.DUT.phy_rate,
+                             EP.DUT.g_gen3_rate_change.mailbox_valid);
+                    $fatal(1, "Root Port did not autonomously request Gen3");
+                end
+
+                k14_wait_cycles = 0;
+                while (!k14_seen_partner_gen3_ts &&
+                       (k14_wait_cycles < K14_AUTO_REQUEST_WAIT_CYCLES)) begin
+                    @(posedge EP.DUT.phy_pclk);
+                    k14_wait_cycles = k14_wait_cycles + 1;
+                end
+                if (!k14_seen_partner_gen3_ts)
+                    $fatal(1, "K14_RP_GEN3_TS_NOT_DECODED");
+
+                k14_wait_cycles = 0;
+                while (!(k14_seen_partner_accept && k14_seen_gen3_rate &&
+                         k14_seen_gen3_phystatus && k14_seen_qpll_lock &&
+                         k14_seen_timeout_fallback && k14_seen_gen1_rate) &&
+                       (k14_wait_cycles < K14_EPOCH_TIMEOUT_CYCLES)) begin
+                    @(posedge EP.DUT.phy_pclk);
+                    k14_wait_cycles = k14_wait_cycles + 1;
+                end
+                if (!k14_seen_partner_accept)
+                    $fatal(1, "K14_PARTNER_REQUEST_NOT_ACCEPTED");
+                if (!k14_seen_gen3_rate)
+                    $fatal(1, "K14_GEN3_RATE_MISSING");
+                if (!k14_seen_gen3_phystatus)
+                    $fatal(1, "K14_GEN3_PHYSTATUS_MISSING");
+                if (!k14_seen_qpll_lock)
+                    $fatal(1, "K14_GEN3_QPLL_LOCK_MISSING");
+                if (!k14_seen_timeout_fallback)
+                    $fatal(1, "K14_TIMEOUT_FALLBACK_MISSING");
+                if (!k14_seen_gen1_rate)
+                    $fatal(1, "K14_GEN1_RATE_RETURN_MISSING");
+
+                k14_final_gen1_stable = 0;
+                while (k14_final_gen1_stable < 64) begin
+                    @(posedge EP.DUT.phy_pclk);
+                    if ((EP.DUT.link_up === 1'b1) &&
+                        (EP.DUT.dll_active === 1'b1) &&
+                        (EP.DUT.phy_rate === 2'b00) &&
+                        (RP.cfg_ltssm_state === 6'h10) &&
+                        (RP.user_lnk_up === 1'b1))
+                        k14_final_gen1_stable = k14_final_gen1_stable + 1;
+                    else
+                        k14_final_gen1_stable = 0;
+                end
+                $display("K14_REBOOT_EPOCH_PASS epoch=%0d wait=%0d",
+                         k14_epoch, k14_wait_cycles);
+
+                if (k14_epoch == 0) begin
+                    sys_rst_n = 1'b0;
+                    repeat (500) @(posedge refclk_p);
+                    sys_rst_n = 1'b1;
+                    $display("K14_REBOOT_SECOND_RESET_RELEASE time_ps=%0t",
+                             $time);
+                end
+            end
+            $display("K14_REBOOT_VCS_PASS epochs=2");
+            $finish;
+        end
+    end
+
+    // Observation-only A/B experiment.  It does not invoke the RP usrapp,
+    // configuration writes, retrain tasks, Endpoint AUTO, or force protocol
+    // state.  Both variants finish successfully and leave interpretation to
+    // the comparison runner so a missing L0 remains useful evidence.
+    initial begin : k14_rate_id_ab_test
+        k14_ab_seen_l0 = 1'b0;
+        if ($test$plusargs("K14_RATE_AB")) begin
+            wait (sys_rst_n === 1'b1);
+            k14_wait_cycles = 0;
+            while (!k14_ab_seen_l0 && (k14_wait_cycles < 60_000)) begin
+                @(posedge EP.DUT.phy_pclk);
+                k14_wait_cycles = k14_wait_cycles + 1;
+                if ((EP.DUT.link_up === 1'b1) &&
+                    (EP.DUT.phy_rate === 2'b00) &&
+                    (RP.cfg_ltssm_state === 6'h10))
+                    k14_ab_seen_l0 = 1'b1;
+            end
+            if (k14_ab_seen_l0)
+                $display("K14_RATE_ID_GEN1_L0_SEEN time_ps=%0t", $time);
+
+            k14_wait_cycles = 0;
+            while (!k14_seen_rp_raw_gen3_ts &&
+                   (k14_wait_cycles < 32_000)) begin
+                @(posedge EP.DUT.phy_pclk);
+                k14_wait_cycles = k14_wait_cycles + 1;
+            end
+            $display("K14_RATE_ID_CAPTURE_PASS configured=%02x l0=%0d ep_ts1=%0d ep_ts2=%0d ep_rate_or=%02x ep_ts_count=%0d rp_ts1=%0d rp_ts2=%0d rp_rate_or=%02x rp_ts_count=%0d rp_gen3_speed_ts1=%0d ep_state=%0d rp_state=%0h rp_speed=%0d ep_rate=%0d auto=0 mailbox=%0d",
+                     EP.DUT.LTSSM_TX_RATE_ID, k14_ab_seen_l0,
+                     k14_ab_seen_ep_ts1, k14_ab_seen_ep_ts2,
+                     k14_ab_ep_rate_or, k14_ab_ep_ts_count,
+                     k14_ab_seen_rp_ts1, k14_ab_seen_rp_ts2,
+                     k14_ab_rp_rate_or, k14_ab_rp_ts_count,
+                     k14_seen_rp_raw_gen3_ts, EP.DUT.ltssm_state,
+                     RP.cfg_ltssm_state, RP.cfg_current_speed,
+                     EP.DUT.phy_rate,
+                     EP.DUT.g_gen3_rate_change.mailbox_valid);
+            $finish;
+        end
+    end
+`endif
+
     initial begin : k11b2_timeout_diagnostics
         if ($test$plusargs("K11B2_RUN")) begin
             #190000000;
@@ -1580,7 +1877,7 @@ module board;
             $display("K11B_VCS_CHECKER_SELFTEST_PASS ep_state=%0d rp_link=%0d timeout=%0d",
                      EP.DUT.ltssm_state, RP.user_lnk_up, EP.DUT.timeout_count);
             $finish;
-        end else if (!b2_active) begin
+        end else if (!b2_active && !k14_reboot_active) begin
             #160000000;
             $display("K11B_SERIAL_ACTIVITY ep_tx=%0d rp_tx=%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d ep_rxvalid=%0d ep_data_valid=%0d ep_elec_idle=%0d ep_rxstatus=%0d",
                      ep_tx_edge_count, rp_tx_edge_count[0], rp_tx_edge_count[1],
@@ -1641,6 +1938,15 @@ module k11b_endpoint_compat #(
         .DETECT_TIMEOUT_CYCLES (DETECT_TIMEOUT_CYCLES),
         .TRAIN_TIMEOUT_CYCLES  (TRAIN_TIMEOUT_CYCLES),
         .HOT_RESET_CYCLES      (HOT_RESET_CYCLES),
+`ifdef K14_REBOOT_VCS
+        .K14_RATE_DEBUG        (0),
+        .GEN3_RATE_CHANGE_ENABLE(1),
+        .GEN3_SPEED_TIMEOUT_CYCLES(16_384),
+        .GEN3_AUTO_RETRAIN_CYCLES(0),
+`ifdef K14_EP_TX_RATE_ID_VALUE
+        .LTSSM_TX_RATE_ID      (`K14_EP_TX_RATE_ID_VALUE),
+`endif
+`endif
         // The encrypted Root-Port model restarts Detect when the Endpoint
         // holds the board-only G9 activity window.  G9 itself is covered by
         // the K03/controller directed suite; the canonical hardware release

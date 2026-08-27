@@ -22,6 +22,10 @@ license_lmutil="${VCS_LICENSE_LMUTIL:-/home/questasim/linux_x86_64/lmutil}"
 b2_mode="${K11B2_MODE:-0}"
 b2_stress_mode="${K11B2_STRESS_MODE:-0}"
 k12e_mode="${K12E_VCS:-0}"
+k14_reboot_mode="${K14_REBOOT_VCS:-0}"
+k14_rate_ab_mode="${K14_RATE_AB_VCS:-0}"
+k14_ep_tx_rate_id="${K14_EP_TX_RATE_ID:-02}"
+k14_reboot_tx_rate_id="${K14_REBOOT_TX_RATE_ID:-02}"
 k13_enable="${K13_ENABLE:-0}"
 k13_retrain="${K13_VCS_RETRAIN:-0}"
 k13_rxeq_bootstrap="${K13_RXEQ_BOOTSTRAP:-1}"
@@ -44,8 +48,31 @@ afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
 tb_defines=()
 tb_defines+=(+define+K13_RXEQ_BOOTSTRAP_VALUE=${k13_rxeq_bootstrap})
 tb_defines+=(+define+K13_RXEQ_TWO_PASS_VALUE=${k13_rxeq_two_pass})
-if [[ "${b2_mode}" == "1" ]]; then
+if [[ "${b2_mode}" == "1" || "${k14_reboot_mode}" == "1" ||
+      "${k14_rate_ab_mode}" == "1" ]]; then
     tb_defines+=(+define+K11B2_DUT)
+fi
+if [[ "${k14_reboot_mode}" == "1" || "${k14_rate_ab_mode}" == "1" ]]; then
+    tb_defines+=(+define+K14_REBOOT_VCS)
+fi
+if [[ "${k14_rate_ab_mode}" == "1" ]]; then
+    case "${k14_ep_tx_rate_id}" in
+        02|0e) ;;
+        *)
+            echo "错误：K14_EP_TX_RATE_ID必须为02或0e" >&2
+            exit 64
+            ;;
+    esac
+    tb_defines+=("+define+K14_EP_TX_RATE_ID_VALUE=8'h${k14_ep_tx_rate_id}")
+elif [[ "${k14_reboot_mode}" == "1" ]]; then
+    case "${k14_reboot_tx_rate_id}" in
+        02|0e) ;;
+        *)
+            echo "错误：K14_REBOOT_TX_RATE_ID必须为02或0e" >&2
+            exit 64
+            ;;
+    esac
+    tb_defines+=("+define+K14_EP_TX_RATE_ID_VALUE=8'h${k14_reboot_tx_rate_id}")
 fi
 if [[ "${k12e_mode}" == "1" ]]; then
     tb_defines+=(+define+K12E_VCS)
@@ -147,6 +174,7 @@ fi
     "${project_dir}/rtl/common/pcie_tlp_async_bridge.sv" \
     "${project_dir}/rtl/common/pcie_cdc_snapshot.sv" \
     "${project_dir}/rtl/common/pcie_cdc_pulse.sv" \
+    "${project_dir}/rtl/common/pcie_retrain_cdc_mailbox.sv" \
     "${project_dir}/rtl/phy/kcu105_reset_ctrl.sv" \
     "${project_dir}/rtl/phy/kcu105_refclk_reset.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_phy_wrapper.sv" \
@@ -159,6 +187,8 @@ fi
     "${project_dir}/rtl/phy/pcie_gen3_os_tx.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_framer.sv" \
     "${project_dir}/rtl/phy/pcie_phy_command_ctrl.sv" \
+    "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv" \
+    "${project_dir}/rtl/phy/pcie_partner_retrain_pending.sv" \
     "${project_dir}/rtl/phy/pcie_ltssm_mac_gen1.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_gen1_top.sv" \
     "${project_dir}/rtl/dll/pcie_crc_stream.sv" \
@@ -200,6 +230,43 @@ if [[ ${elaborate_status} -eq 124 ]]; then
     exit 124
 elif [[ ${elaborate_status} -ne 0 ]]; then
     exit "${elaborate_status}"
+fi
+
+if [[ "${k14_rate_ab_mode}" == "1" ]]; then
+    set +e
+    timeout --foreground "${simulation_timeout}" \
+        "${run_dir}/k11b_simv" +K14_RATE_AB -licqueue \
+        -l "build/k14_rate_id_${k14_ep_tx_rate_id}_simulate.log"
+    k14_rate_ab_status=$?
+    set -e
+    if [[ ${k14_rate_ab_status} -eq 124 ]]; then
+        echo "错误：K14 Rate ID ${k14_ep_tx_rate_id} A/B仿真超过 ${simulation_timeout} 秒" >&2
+        exit 124
+    elif [[ ${k14_rate_ab_status} -ne 0 ]]; then
+        exit "${k14_rate_ab_status}"
+    fi
+    grep -q 'K14_RATE_ID_CAPTURE_PASS' \
+        "build/k14_rate_id_${k14_ep_tx_rate_id}_simulate.log"
+    echo "K14_RATE_ID_CAPTURE_VCS_PASS rate_id=${k14_ep_tx_rate_id} run_dir=${run_dir}"
+    exit 0
+fi
+
+if [[ "${k14_reboot_mode}" == "1" ]]; then
+    set +e
+    timeout --foreground "${simulation_timeout}" \
+        "${run_dir}/k11b_simv" +K14_REBOOT -licqueue \
+        -l build/k14_reboot_simulate.log
+    k14_reboot_status=$?
+    set -e
+    if [[ ${k14_reboot_status} -eq 124 ]]; then
+        echo "错误：K14 reboot真实串行仿真超过 ${simulation_timeout} 秒" >&2
+        exit 124
+    elif [[ ${k14_reboot_status} -ne 0 ]]; then
+        exit "${k14_reboot_status}"
+    fi
+    grep -q 'K14_REBOOT_VCS_PASS epochs=2' build/k14_reboot_simulate.log
+    echo "K14_REBOOT_VCS_REAL_RP_PASS run_dir=${run_dir}"
+    exit 0
 fi
 
 if [[ "${b2_mode}" == "1" ]]; then

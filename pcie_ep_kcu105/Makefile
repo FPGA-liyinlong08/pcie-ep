@@ -25,7 +25,10 @@
 	k11b2-hw-probe k11b2-hw-program k11b2-hw-acceptance k11b2-hw-program-debug \
 	k14-recovery-speed-vivado k14-recovery-speed-hw-program-arm \
 	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
-	k14-recovery-speed-hw-repeat k14-recovery-speed-test \
+	k14-recovery-speed-hw-repeat k14-recovery-speed-test k14-direct-vcs \
+	k14-rate-id-ab-vcs \
+	k14-direct-sim \
+	k14-reboot-vcs k14-reboot-sim \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
@@ -277,10 +280,31 @@ k14-recovery-speed-test:
 		--top-module k14_recovery_speed_test_top \
 		$(CURDIR)/rtl/phy/pcie_phy_command_ctrl.sv \
 		$(CURDIR)/rtl/phy/pcie_recovery_speed_ctrl.sv \
+		$(CURDIR)/rtl/phy/pcie_partner_retrain_pending.sv \
 		$(CURDIR)/sim/verilator/k14_recovery_speed/k14_recovery_speed_test_top.sv \
 		$(CURDIR)/sim/verilator/k14_recovery_speed/k14_recovery_speed_test.cpp \
 		-Mdir sim/verilator/k14_recovery_speed/sim_build
 	./sim/verilator/k14_recovery_speed/sim_build/Vk14_recovery_speed_test_top
+
+# Direct semantic verification: no TS decoder, Root Port task, setpci or
+# Endpoint AUTO stimulus participates in this gate.
+k14-direct-vcs:
+	./sim/vcs/run_k14_direct.sh
+
+k14-rate-id-ab-vcs:
+	./sim/vcs/run_k14_rate_id_ab.sh
+
+k14-direct-sim:
+	$(MAKE) k14-direct-vcs
+	$(MAKE) k14-recovery-speed-test
+	$(MAKE) phy-command-ownership
+
+k14-reboot-vcs:
+	./sim/vcs/run_k14_reboot.sh
+
+k14-reboot-sim:
+	$(MAKE) k14-direct-sim
+	$(MAKE) k14-reboot-vcs
 
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
@@ -302,12 +326,16 @@ k11b2-lint:
 		rtl/common/pcie_async_pkt_fifo.sv rtl/common/pcie_async_event_fifo.sv \
 		rtl/common/pcie_tlp_async_bridge.sv rtl/common/pcie_cdc_snapshot.sv \
 		rtl/common/pcie_cdc_pulse.sv rtl/common/pcie_link_loss_trigger.sv \
+		rtl/common/pcie_retrain_cdc_mailbox.sv \
 		rtl/phy/kcu105_reset_ctrl.sv \
 		rtl/phy/kcu105_refclk_reset.sv rtl/phy/kcu105_pcie_phy_wrapper.sv \
 		rtl/phy/pcie_gen12_scrambler.sv rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
 		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
 		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_phy_command_ctrl.sv \
+		rtl/phy/pcie_recovery_speed_ctrl.sv \
+		rtl/phy/pcie_partner_retrain_pending.sv \
+		rtl/phy/k02_phy_event_recorder.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv \
 		rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
 		rtl/dll/pcie_crc32_lcrc.sv rtl/dll/pcie_fc_local_credit_pool.sv \

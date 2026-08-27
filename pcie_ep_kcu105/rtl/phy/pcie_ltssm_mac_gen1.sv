@@ -1038,12 +1038,23 @@ module pcie_ltssm_mac_gen1 #(
                     end
                     RECOVERY_RCVRCFG: begin
                         state_timer <= state_timer + 1'b1;
-                        if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
+                        // The partner may leave the link immediately after a
+                        // failed higher-rate attempt.  Once fallback policy is
+                        // selected, do not wait for more higher-rate TS2s;
+                        // rendezvous with the semantic controller in Speed
+                        // before issuing the Gen1 PHY operation.
+                        if (recovery_fallback_active &&
+                            (active_phy_rate != 2'b00)) begin
+                            ltssm_state <= RECOVERY_SPEED;
+                            state_timer <= 32'd0;
+                            rx_ts_count <= 5'd0;
+                        end else if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
                                 if (speed_retrain_active &&
                                     (!recovery_speed_changed ||
-                                     recovery_fallback_active))
+                                     (recovery_fallback_active &&
+                                      (active_phy_rate != 2'b00))))
                                     ltssm_state <= RECOVERY_SPEED;
                                 else
                                     ltssm_state <= RECOVERY_IDLE;

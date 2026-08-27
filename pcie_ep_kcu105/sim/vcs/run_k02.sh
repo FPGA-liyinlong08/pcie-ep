@@ -34,7 +34,20 @@ if [[ "${VCS_LICENSE_PREFLIGHT:-1}" == "1" && -x "${license_lmutil}" ]]; then
         exit 69
     fi
 fi
-if [[ "${K02_VCS_DYNAMIC_TXEQ:-0}" == "1" ]]; then
+extra_tb_sources=()
+if [[ "${K14_DIRECT_VCS:-0}" == "1" ]]; then
+    tb_name=k14_direct_vcs_tb
+    tb_source="${script_dir}/k14_direct/k14_direct_vcs_tb.sv"
+    sim_log=build/k14_direct_simulate.log
+    elaborate_log=build/k14_direct_elaborate.log
+    sim_exe_name=k14_direct_simv
+    pass_marker=K14_DIRECT_VCS_PASS
+    extra_tb_sources+=(
+        "${project_dir}/rtl/phy/pcie_partner_retrain_pending.sv"
+        "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv"
+        "${project_dir}/rtl/phy/pcie_phy_command_ctrl.sv"
+    )
+elif [[ "${K02_VCS_DYNAMIC_TXEQ:-0}" == "1" ]]; then
     tb_name=k02_dynamic_txeq_tb
     tb_source="${script_dir}/k02_dynamic_txeq_tb.sv"
     sim_log=build/k02_dynamic_txeq_simulate.log
@@ -102,6 +115,7 @@ export SYNOPSYS_SIM_SETUP="${setup_file}"
     "${project_dir}/rtl/phy/kcu105_reset_ctrl.sv" \
     "${project_dir}/rtl/phy/kcu105_refclk_reset.sv" \
     "${project_dir}/rtl/phy/kcu105_pcie_phy_wrapper.sv" \
+    "${extra_tb_sources[@]}" \
     "${vivado_home}/data/verilog/src/glbl.v" \
     "${tb_source}" \
     -l build/k02_tb_vlogan.log

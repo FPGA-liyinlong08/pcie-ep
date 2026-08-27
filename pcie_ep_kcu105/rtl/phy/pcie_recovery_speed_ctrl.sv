@@ -89,7 +89,11 @@ module pcie_recovery_speed_ctrl #(
                 recovery_active = 1'b1;
             end
             ST_FALLBACK_REQUEST: begin
-                rate_req_valid  = 1'b1;
+                // Keep fallback semantic intent asserted while the LTSSM
+                // moves back to Recovery.Speed.  Do not start the PHY
+                // operation early: rate_op_done is a pulse and would be lost
+                // if the LTSSM entered Recovery.Speed after the operation.
+                rate_req_valid  = ltssm_speed_ready;
                 rate_req_target = 2'b00;
                 fallback_req    = 1'b1;
                 traffic_quiesce = 1'b1;
@@ -224,7 +228,7 @@ module pcie_recovery_speed_ctrl #(
                 ST_FALLBACK_REQUEST: begin
                     // Once fallback is policy-selected, a persistent CDR-loss
                     // indication must not prevent the Gen1 request handshake.
-                    if (rate_req_ready) begin
+                    if (ltssm_speed_ready && rate_req_ready) begin
                         timeout_count <= 32'd0;
                         state <= ST_FALLBACK_WAIT;
                     end else if (timeout_expired) begin

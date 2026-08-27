@@ -6,6 +6,8 @@ module k14_recovery_speed_test_top (
     input  wire       rst_n,
     input  wire       retrain_valid,
     input  wire [1:0] retrain_target,
+    input  wire       retrain_rearm,
+    input  wire       retrain_accept_enable,
     input  wire       ltssm_speed_ready,
     input  wire       phy_phystatus,
     input  wire       peer_speed_ok,
@@ -18,6 +20,8 @@ module k14_recovery_speed_test_top (
     output wire       traffic_quiesce,
     output wire       recovery_active,
     output wire       retrain_accept,
+    output wire       retrain_pending,
+    output wire       retrain_armed,
     output wire       rate_done,
     output wire [2:0] rate_result,
     output wire [1:0] phy_rate,
@@ -35,18 +39,31 @@ module k14_recovery_speed_test_top (
     wire rate_success = rate_done && (rate_result == 3'd1);
     wire rate_failed = rate_done && (rate_result != 3'd0) &&
                        (rate_result != 3'd1);
+    wire [1:0] pending_target;
+    wire controller_retrain_accept;
+
+    pcie_partner_retrain_pending u_partner_pending (
+        .clk(clk), .rst_n(rst_n),
+        .request_valid(retrain_valid), .request_target(retrain_target),
+        .rearm(retrain_rearm),
+        .accept(controller_retrain_accept),
+        .pending(retrain_pending), .pending_target(pending_target),
+        .armed(retrain_armed)
+    );
+
+    assign retrain_accept = controller_retrain_accept;
 
     pcie_recovery_speed_ctrl #(.SPEED_TIMEOUT_CYCLES(24)) u_speed (
         .clk(clk), .rst_n(rst_n), .link_up(1'b1),
         .reinitialize_gen1(reinitialize_gen1),
-        .retrain_valid(retrain_valid),
-        .retrain_target_speed(retrain_target),
+        .retrain_valid(retrain_pending && retrain_accept_enable),
+        .retrain_target_speed(pending_target),
         .ltssm_speed_ready(ltssm_speed_ready),
         .rate_req_valid(rate_req_valid), .rate_req_target(rate_req_target),
         .fallback_req(fallback_req), .rate_req_ready(rate_req_ready),
         .rate_op_done(rate_success), .rate_op_failed(rate_failed),
         .active_rate(active_rate), .requested_rate(requested_rate),
-        .retrain_accept(retrain_accept), .phy_cdr_lost(1'b0),
+        .retrain_accept(controller_retrain_accept), .phy_cdr_lost(1'b0),
         .peer_speed_ok(peer_speed_ok), .peer_speed_reject(1'b0),
         .state(speed_state), .traffic_quiesce(traffic_quiesce),
         .recovery_active(recovery_active),

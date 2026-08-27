@@ -15,7 +15,11 @@ module kcu105_pcie_ep_gen1_top #(
     // Phase D experimental path.  Zero is the signed Phase C Gen1 release.
     parameter integer GEN3_RATE_CHANGE_ENABLE = 0,
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0
+    parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
+    // Baseline hardware advertises only the Gen1 initial-training Rate ID.
+    // The parameter exists so a full-RP simulation can compare capability
+    // advertisements without editing or forcing production logic.
+    parameter [7:0] LTSSM_TX_RATE_ID = 8'h02
 ) (
     input wire pcie_refclk_p, input wire pcie_refclk_n,
     input wire pcie_perst_n, input wire pcie_rxp, input wire pcie_rxn,
@@ -121,17 +125,6 @@ module kcu105_pcie_ep_gen1_top #(
         wire speed_illegal_sticky, speed_cdr_loss_sticky;
         wire speed_fallback_sticky;
         wire [1:0] speed_negotiated;
-        wire partner_retrain_window = link_up ||
-                                      (ltssm_state == 6'd11) ||
-                                      (ltssm_state == 6'd12) ||
-                                      (ltssm_state == 6'd18);
-        wire [1:0] partner_target = os_rate_id[3] ? 2'b10 :
-                                    os_rate_id[2] ? 2'b01 :
-                                    os_rate_id[1] ? 2'b00 : 2'b11;
-        wire partner_retrain_valid = partner_retrain_window && os_ts1_valid &&
-                                      os_rate_id[7] &&
-                                      (partner_target != 2'b11);
-
         localparam integer AUTO_RETRAIN_LIMIT =
             (GEN3_AUTO_RETRAIN_CYCLES < 1) ? 1 : GEN3_AUTO_RETRAIN_CYCLES;
         reg [31:0] auto_retrain_count;
@@ -140,6 +133,38 @@ module kcu105_pcie_ep_gen1_top #(
                                    link_up && !auto_retrain_issued &&
                                    (auto_retrain_count >=
                                     (AUTO_RETRAIN_LIMIT - 1));
+        wire partner_retrain_window = link_up ||
+                                      (ltssm_state == 6'd11) ||
+                                      (ltssm_state == 6'd12) ||
+                                      (ltssm_state == 6'd18);
+        wire [1:0] partner_target = os_rate_id[3] ? 2'b10 :
+                                    os_rate_id[2] ? 2'b01 :
+                                    os_rate_id[1] ? 2'b00 : 2'b11;
+        wire partner_request_valid = partner_retrain_window && os_ts1_valid &&
+                                     os_rate_id[7] &&
+                                     (partner_target != 2'b11);
+        wire partner_retrain_pending;
+        wire [1:0] partner_retrain_target;
+        wire partner_retrain_armed;
+        wire partner_retrain_accept = partner_retrain_pending &&
+                                      speed_retrain_accept &&
+                                      !auto_retrain_pulse;
+
+        pcie_partner_retrain_pending u_partner_retrain_pending (
+            .clk(phy_pclk), .rst_n(pipe_rst_n),
+            .request_valid(partner_request_valid),
+            .request_target(partner_target),
+            // Re-arm only after the accepted Recovery transaction has
+            // returned to the semantic L0 state.  Intermediate Recovery
+            // substates must not turn repeated TS1s into a second request.
+            .rearm(link_up && (speed_state == 3'd0) &&
+                   !speed_recovery_active),
+            .accept(partner_retrain_accept),
+            .pending(partner_retrain_pending),
+            .pending_target(partner_retrain_target),
+            .armed(partner_retrain_armed)
+        );
+
         always @(posedge phy_pclk or negedge pipe_rst_n) begin
             if (!pipe_rst_n) begin
                 auto_retrain_count <= 32'd0;
@@ -164,13 +189,13 @@ module kcu105_pcie_ep_gen1_top #(
         );
 
         wire semantic_retrain_valid = auto_retrain_pulse ||
-                                      partner_retrain_valid || mailbox_valid;
+                                      partner_retrain_pending || mailbox_valid;
         wire [1:0] semantic_retrain_target = auto_retrain_pulse ? 2'b10 :
-                                               partner_retrain_valid ?
-                                               partner_target : mailbox_target;
+                                               partner_retrain_pending ?
+                                               partner_retrain_target : mailbox_target;
         assign mailbox_accept = mailbox_valid && speed_retrain_accept &&
                                 !auto_retrain_pulse &&
-                                !partner_retrain_valid;
+                                !partner_retrain_pending;
 
         wire reinitialize_gen1 = (ltssm_state == 6'd0) ||
                                  (ltssm_state == 6'd1) ||
@@ -183,8 +208,13 @@ module kcu105_pcie_ep_gen1_top #(
         wire rate_op_failed = phy_rate_done &&
                               (phy_rate_result != 3'd0) &&
                               (phy_rate_result != 3'd1);
+        // A single TS at the new rate proves only that the receiver is alive;
+        // it does not prove that the partner completed Recovery.  Declare the
+        // peer side complete only after the LTSSM consumed the required
+        // RcvrLock/RcvrCfg sequence and entered Recovery.Idle.  Otherwise the
+        // existing semantic timeout must drive the safe Gen1 fallback.
         wire peer_speed_ok = (phy_active_rate == speed_requested_rate) &&
-                             (os_ts1_valid || os_ts2_valid);
+                             (ltssm_state == 6'd13);
 
         pcie_recovery_speed_ctrl #(
             .SPEED_TIMEOUT_CYCLES(GEN3_SPEED_TIMEOUT_CYCLES)
@@ -238,6 +268,25 @@ module kcu105_pcie_ep_gen1_top #(
                 speed_state;
             (* mark_debug = "true" *) wire [5:0] k14_ltssm_state_w =
                 ltssm_state;
+            (* mark_debug = "true" *) wire k14_rp_gen3_request_seen_w =
+                partner_request_valid && (partner_target == 2'b10);
+            (* mark_debug = "true" *) wire k14_partner_pending_w =
+                partner_retrain_pending;
+            (* mark_debug = "true" *) wire k14_partner_armed_w =
+                partner_retrain_armed;
+            (* mark_debug = "true" *) wire k14_partner_accept_w =
+                partner_retrain_accept;
+            (* mark_debug = "true" *) wire k14_gen3_rate_success_w =
+                rate_op_success && (phy_rate == 2'b10);
+            (* mark_debug = "true" *) wire k14_timeout_fallback_w =
+                speed_timeout_sticky && speed_fallback_sticky;
+            (* mark_debug = "true" *) wire k14_gen1_fallback_success_w =
+                rate_op_success && (phy_rate == 2'b00) &&
+                (speed_state >= 3'd5);
+            (* mark_debug = "true" *) wire k14_auto_retrain_w =
+                auto_retrain_pulse;
+            (* mark_debug = "true" *) wire k14_mailbox_valid_w =
+                mailbox_valid;
             k02_phy_event_recorder u_k14_event_recorder (
                 .clk(phy_pclk), .rst(!pipe_rst_n),
                 .qpll1lock(qpll1lock_record_in),
@@ -249,6 +298,7 @@ module kcu105_pcie_ep_gen1_top #(
         end
 
         wire _unused_gen3 = &{1'b0, mailbox_busy, mailbox_overflow_sticky,
+            partner_retrain_armed,
             speed_fallback_req,
             speed_timeout_sticky, speed_peer_reject_sticky,
             speed_illegal_sticky, speed_cdr_loss_sticky,
@@ -336,7 +386,7 @@ module kcu105_pcie_ep_gen1_top #(
         .K11B2_ILA_DEBUG(K11B2_ILA_DEBUG),
         .G9_WAIT_REMOTE_DETECT(G9_WAIT_REMOTE_DETECT),
         .G9_WAIT_REMOTE_DETECT_CYCLES(G9_WAIT_REMOTE_DETECT_CYCLES),
-        .TX_RATE_ID(8'h02)
+        .TX_RATE_ID(LTSSM_TX_RATE_ID)
     ) u_ltssm_mac (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .phy_rxdata(phy_rxdata), .phy_rxdatak(phy_rxdatak),

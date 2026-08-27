@@ -62,6 +62,7 @@ if {$resume_routed_dcp ne ""} {
   rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
   rtl/phy/pcie_gen1_framer.sv rtl/phy/k02_phy_event_recorder.sv \
   rtl/phy/pcie_phy_command_ctrl.sv rtl/phy/pcie_recovery_speed_ctrl.sv \
+  rtl/phy/pcie_partner_retrain_pending.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
   rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
   rtl/dll/pcie_crc32_lcrc.sv rtl/dll/pcie_fc_local_credit_pool.sv \

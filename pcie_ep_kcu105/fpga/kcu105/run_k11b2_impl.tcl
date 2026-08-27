@@ -483,6 +483,7 @@ set sv_files [list \
   rtl/phy/k13_qpll_event_recorder.sv \
   rtl/phy/k13_golden_rate_replay.sv \
   rtl/phy/pcie_recovery_speed_ctrl.sv \
+  rtl/phy/pcie_partner_retrain_pending.sv \
   rtl/phy/pcie_equalization_ctrl.sv rtl/phy/pcie_recovery_ts_guard.sv \
   rtl/phy/pcie_k13_production_ctrl.sv \
   rtl/dll/pcie_crc_stream.sv rtl/dll/pcie_crc16_dllp.sv \
