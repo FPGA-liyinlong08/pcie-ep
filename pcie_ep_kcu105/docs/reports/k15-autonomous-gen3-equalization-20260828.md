@@ -434,3 +434,36 @@ K15_UNEXPECTED_SPEED_TIMEOUT_FALLBACK
 这确认缺陷仍在本工程 endpoint/standalone PHY contract 或其 PIPE/PCS 时序，不能
 归因于 RP 不会自动请求。`PHY_CORECLK_FREQ`/`PHY_USERCLK_FREQ` A/B 仍需以
 重新生成 IP 后的可重复结果判断是否为唯一根因。
+
+## 12. K15 原始 GT RX 与本地回环隔离（2026-08-28）
+
+为避免把 integrated RP 的现象误判为 Endpoint EQ 问题，testbench 增加了 RP 原始
+GT RX 观测和 standalone PHY 本地串行回环开关 `+K15_LOCAL_PHY_LOOPBACK`。严格
+golden-RP 运行中，Endpoint 在 Gen3 已输出有效 128b/130b envelope；对应 RP 侧
+同时满足 CDR lock、RX resetdone、Gen3 rate 和 user Gen3 ready，但原始 GT RX 与
+PIPE RX envelope 均没有有效数据：
+
+```text
+K15_RP_RX_ENVELOPE ... gt_valid=0 gt_start=0 gt_header=00
+  gt_data=00000000 gt_ctrl=0000 rxvalid=0 cdrlock=1 rxresetdone=1
+  rate_gen3=1 user_gen3_rdy=1 rate_idle=1
+K15_VCS_BLOCKED_RP_EQ_RESPONSE_NOT_CONSUMED
+  rp_rxvalid_seen=0 rp_rxvalid_beats=0 rp_decoded_ts=0
+```
+
+随后执行 Endpoint TX→RX 本地回环。回环在 Gen3 rate 提交时建立，但在 Gen3 窗口
+结束前没有观察到任何 RXVALID/RXDATA_VALID/RXSTART_BLOCK；此前出现的 Gen1 RX
+事件已被新判据排除：
+
+```text
+K15_LOCAL_PHY_LOOPBACK_ENABLE time_ps=379087529 rate=10
+K15_LOCAL_PHY_LOOPBACK_RESULT wait=35166 rx_cycles=28775
+  gen3_rx_seen=0 active_rate=00 rxvalid=0 data_valid=0 start=0
+K15_LOCAL_PHY_LOOPBACK_FAIL
+```
+
+这条隔离证据表明当前问题不只是 RP EQ TS 响应解析：standalone PHY 在 Gen3
+串行回环窗口内也没有形成可消费的 RX block。生成 PHY IP 文件没有修改；诊断仅
+扩展了 monitor、增加了回环开关，并让严格 K15 gate 在回环模式下不因预期 fallback
+提前中止。后续应继续检查本工程 Gen3 TX/PCS→standalone GT RX 的 block-lock、
+reset/clock contract 与 EQ 控制时序，再决定是否做可逆的重新生成 IP A/B。

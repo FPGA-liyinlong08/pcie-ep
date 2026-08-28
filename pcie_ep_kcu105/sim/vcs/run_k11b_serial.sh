@@ -25,6 +25,7 @@ k12e_mode="${K12E_VCS:-0}"
 k14_reboot_mode="${K14_REBOOT_VCS:-0}"
 k14_rate_ab_mode="${K14_RATE_AB_VCS:-0}"
 k15_mode="${K15_VCS:-0}"
+k15_local_phy_loopback="${K15_LOCAL_PHY_LOOPBACK:-0}"
 k15_continue_after_fallback="${K15_CONTINUE_AFTER_FALLBACK:-0}"
 k14_ep_tx_rate_id="${K14_EP_TX_RATE_ID:-02}"
 k14_reboot_tx_rate_id="${K14_REBOOT_TX_RATE_ID:-02}"
@@ -281,7 +282,12 @@ fi
 
 if [[ "${k15_mode}" == "1" ]]; then
     k15_plusargs=(+K15_GEN3)
-    if [[ "${k15_continue_after_fallback}" == "1" ]]; then
+    if [[ "${k15_local_phy_loopback}" == "1" ]]; then
+        k15_plusargs+=(+K15_LOCAL_PHY_LOOPBACK)
+    fi
+    if [[ "${k15_local_phy_loopback}" == "1" ]]; then
+        k15_plusargs+=(+K15_CONTINUE_AFTER_FALLBACK)
+    elif [[ "${k15_continue_after_fallback}" == "1" ]]; then
         k15_plusargs+=(+K15_CONTINUE_AFTER_FALLBACK)
     fi
     if [[ "${k13_trace}" == "1" ]]; then
@@ -299,7 +305,11 @@ if [[ "${k15_mode}" == "1" ]]; then
     elif [[ ${k15_status} -ne 0 ]]; then
         exit "${k15_status}"
     fi
-    if [[ "${k15_continue_after_fallback}" == "1" ]]; then
+    if [[ "${k15_local_phy_loopback}" == "1" ]]; then
+        grep -q 'K15_LOCAL_PHY_LOOPBACK_PASS' \
+            build/k15_gen3_simulate.log
+        echo "K15_LOCAL_PHY_LOOPBACK_PASS run_dir=${run_dir}"
+    elif [[ "${k15_continue_after_fallback}" == "1" ]]; then
         grep -q 'K15_GEN1_RECOVERY_PASS_AFTER_FALLBACK' \
             build/k15_gen3_simulate.log
         echo "K15_GEN1_RECOVERY_DIAGNOSTIC_PASS run_dir=${run_dir}"

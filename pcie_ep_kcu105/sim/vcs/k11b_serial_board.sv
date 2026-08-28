@@ -395,6 +395,67 @@ module board;
         .sys_rst_n   (rp_reset_n)
     );
 
+`ifdef K11B2_DUT
+    // Standalone-PHY-only diagnostic for K15.  Wait until the normal K14
+    // rate transaction commits Gen3, then loop the Endpoint serial output
+    // back into its own RX pins.  The Root Port remains connected, so this
+    // isolates the Endpoint GT/PCS receive path without changing any PHY IP.
+    initial begin : k15_local_phy_loopback
+        integer wait_cycles;
+        integer rx_cycles;
+        reg gen3_rx_seen;
+        if ($test$plusargs("K15_LOCAL_PHY_LOOPBACK")) begin
+            wait_cycles = 0;
+            rx_cycles = 0;
+            gen3_rx_seen = 1'b0;
+            wait (sys_rst_n === 1'b1);
+            while ((EP.DUT.phy_active_rate != 2'b10) &&
+                   (wait_cycles < 1_500_000)) begin
+                @(posedge EP.DUT.phy_pclk);
+                wait_cycles = wait_cycles + 1;
+            end
+            if (EP.DUT.phy_active_rate != 2'b10) begin
+                $display("K15_LOCAL_PHY_LOOPBACK_BLOCKED wait=%0d rate=%02b phystatus=%0d",
+                         wait_cycles, EP.DUT.phy_active_rate,
+                         EP.DUT.phy_phystatus);
+                $finish;
+            end
+
+            force ep_rxp = ep_txp;
+            force ep_rxn = ep_txn;
+            $display("K15_LOCAL_PHY_LOOPBACK_ENABLE time_ps=%0t rate=%02b",
+                     $time, EP.DUT.phy_active_rate);
+            while ((EP.DUT.phy_active_rate == 2'b10) &&
+                   !gen3_rx_seen && (rx_cycles < 100_000)) begin
+                @(posedge EP.DUT.phy_pclk);
+                rx_cycles = rx_cycles + 1;
+                if ((EP.DUT.phy_active_rate == 2'b10) &&
+                    (EP.DUT.phy_rxvalid || EP.DUT.phy_rxdata_valid ||
+                     EP.DUT.phy_rxstart_block))
+                    gen3_rx_seen = 1'b1;
+            end
+            $display("K15_LOCAL_PHY_LOOPBACK_RESULT wait=%0d rx_cycles=%0d gen3_rx_seen=%0d active_rate=%02b rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x rxstatus=%03b cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d rate_idle=%0d",
+                     wait_cycles, rx_cycles, gen3_rx_seen,
+                     EP.DUT.phy_active_rate, EP.DUT.phy_rxvalid,
+                     EP.DUT.phy_rxdata_valid, EP.DUT.phy_rxstart_block,
+                     EP.DUT.phy_rxsync_header, EP.DUT.phy_rxdata,
+                     EP.DUT.phy_rxstatus,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxcdrlock,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxresetdone,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcierategen3,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcieusergen3rdy,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcierateidle);
+            if (gen3_rx_seen)
+                $display("K15_LOCAL_PHY_LOOPBACK_PASS");
+            else
+                $display("K15_LOCAL_PHY_LOOPBACK_FAIL");
+            release ep_rxp;
+            release ep_rxn;
+            $finish;
+        end
+    end
+`endif
+
 `ifdef K13_DUT
     wire k13_pipe_compare_active = k13_pipe_compare_enabled &&
         ((!k13_initial_gen1_l0_seen || EP.DUT.k13_fallback_sticky) &&
@@ -1215,12 +1276,17 @@ module board;
                  (EP.DUT.phy_active_rate == 2'b10) &&
                  (RP.cfg_ltssm_state >= 6'h28) &&
                  (k15_rp_rx_envelope_samples < 64)) begin
-            $display("K15_RP_RX_ENVELOPE n=%0d time_ps=%0t valid=%0d start=%0d header=%02b data=%08x rxvalid=%0d cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d user_rate_start=%0d rate_idle=%0d rx_idle=%0d",
+            $display("K15_RP_RX_ENVELOPE n=%0d time_ps=%0t valid=%0d start=%0d header=%02b data=%08x gt_valid=%0d gt_start=%0d gt_header=%02b gt_data=%08x gt_ctrl=%04x rxvalid=%0d cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d user_rate_start=%0d rate_idle=%0d rx_idle=%0d",
                      k15_rp_rx_envelope_samples, $time,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXDATA_VALID,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXSTART_BLOCK,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXSYNC_HEADER,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXDATA,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXDATAK,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXVALID,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXCDRLOCK,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_rxresetdone[0],
@@ -1748,7 +1814,8 @@ module board;
                              RP.cfg_ltssm_state, EP.DUT.ltssm_state,
                              EP.DUT.u_ltssm_mac.k15_tx_eq_control,
                              EP.DUT.u_ltssm_mac.k15_tx_eq_data);
-                    if (!$test$plusargs("K15_CONTINUE_AFTER_FALLBACK"))
+                    if (!$test$plusargs("K15_CONTINUE_AFTER_FALLBACK") &&
+                        !$test$plusargs("K15_LOCAL_PHY_LOOPBACK"))
                         $fatal(1, "K15_UNEXPECTED_SPEED_TIMEOUT_FALLBACK");
 
                     // Diagnostic mode: do not stop at the Gen3 failure.  The
