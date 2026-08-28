@@ -55,7 +55,10 @@ int main(int argc, char **argv) {
     d.ts_eq_control = 1; d.ts_eq_data = 0x8a0c28;
 
     enter_phase(d, 2);
+    require(d.operation_state == 0, "phase2 waits for partner TS");
+    pulse_ts(d);
     require(d.operation_state == 1, "phase2 RX adapt request");
+    require(d.eq_req_preset == 8, "phase2 preset decodes EQ_DATA[23:20]");
     d.eq_done = 1; d.eq_result = 2; d.eq_rsp_preset_sel = 1;
     d.eq_rsp_coeff = 7; tick(d); d.eq_done = 0; d.eq_result = 0; tick(d);
     require(d.tx_eq_control == 0x22, "phase2 proposal response");
@@ -82,8 +85,8 @@ int main(int argc, char **argv) {
         require(d.training_valid, "training prefix valid");
         require(d.training_data == 0xff00ff00, "training starts with EIEOS");
         require(d.training_start_block == (i == 0), "EIEOS block boundary");
-        require(d.training_sync_header == 0x1,
-                "EIEOS header held across PHY32 block");
+        require(d.training_sync_header == (i == 0 ? 0x1 : 0x0),
+                "EIEOS sync header follows block boundary");
         tick(d);
     }
     for (int i = 0; i < 4; ++i) {
@@ -91,8 +94,8 @@ int main(int argc, char **argv) {
         require(d.training_data == (i == 3 ? 0xbcbf9de1 : 0xaaaaaaaa),
                 "official EIEOS-to-SKP prefix");
         require(d.training_start_block == (i == 0), "SKP block boundary");
-        require(d.training_sync_header == 0x1,
-                "SKP header held across PHY32 block");
+        require(d.training_sync_header == (i == 0 ? 0x1 : 0x0),
+                "SKP sync header follows block boundary");
         tick(d);
     }
     require(d.training_start_block, "TS starts after initial SKP");

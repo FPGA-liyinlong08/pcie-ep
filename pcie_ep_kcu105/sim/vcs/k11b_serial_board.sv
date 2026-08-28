@@ -1202,6 +1202,58 @@ module board;
         end
     end
 
+    // Bounded receiver-side envelope capture.  This distinguishes a PCS
+    // block-sync failure (RXDATA_VALID never asserts) from a TS decoder
+    // failure after valid Gen3 PIPE data has already reached the RP.
+    integer k15_rp_rx_envelope_samples;
+    integer k15_ep_post_eq_samples;
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk or
+             negedge sys_rst_n) begin
+        if (!sys_rst_n)
+            k15_rp_rx_envelope_samples <= 0;
+        else if ($test$plusargs("K15_GEN3") &&
+                 (EP.DUT.phy_active_rate == 2'b10) &&
+                 (RP.cfg_ltssm_state >= 6'h28) &&
+                 (k15_rp_rx_envelope_samples < 64)) begin
+            $display("K15_RP_RX_ENVELOPE n=%0d time_ps=%0t valid=%0d start=%0d header=%02b data=%08x rxvalid=%0d cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d user_rate_start=%0d rate_idle=%0d rx_idle=%0d",
+                     k15_rp_rx_envelope_samples, $time,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXVALID,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXCDRLOCK,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_rxresetdone[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierategen3[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcieusergen3rdy[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcieuserratestart[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierateidle[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0]);
+            k15_rp_rx_envelope_samples <= k15_rp_rx_envelope_samples + 1;
+        end
+    end
+
+    // Once the RP reaches its explicit Phase-0/1 state, sample the EP side
+    // again.  This catches a TX-side idle/reset mismatch that would otherwise
+    // look identical to a receive PCS failure at the RP.
+    always @(posedge EP.DUT.phy_pclk or negedge sys_rst_n) begin
+        if (!sys_rst_n)
+            k15_ep_post_eq_samples <= 0;
+        else if ($test$plusargs("K15_GEN3") &&
+                 (RP.cfg_ltssm_state >= 6'h28) &&
+                 (k15_ep_post_eq_samples < 16)) begin
+            $display("K15_EP_POST_EQ n=%0d time_ps=%0t state=%0h data=%08x valid=%0d start=%0d header=%02b rate=%02b txidle=%0d gt_valid=%0d gt_start=%0d gt_header=%02b",
+                     k15_ep_post_eq_samples, $time, EP.DUT.ltssm_state,
+                     EP.DUT.phy_txdata, EP.DUT.phy_txdata_valid,
+                     EP.DUT.phy_txstart_block, EP.DUT.phy_txsync_header,
+                     EP.DUT.phy_active_rate, EP.DUT.phy_txelecidle,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_TXDATA_VALID,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_TXSTART_BLOCK,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_TXSYNC_HEADER);
+            k15_ep_post_eq_samples <= k15_ep_post_eq_samples + 1;
+        end
+    end
+
     always @(posedge EP.DUT.phy_pclk or negedge sys_rst_n) begin
         if (!sys_rst_n) begin
             k14_ab_seen_ep_ts1 <= 1'b0;
@@ -1570,6 +1622,14 @@ module board;
             if ((EP.DUT.phy_active_rate == 2'b10) &&
                 EP.DUT.phy_txdata_valid &&
                 (k15_ep_tx_word_count < 24)) begin
+                // Gen3 PIPE carries one 128b/130b block over four 32-bit
+                // beats.  Only the first beat advertises the ordered-set
+                // sync header (01); continuation beats must be 00, matching
+                // the XDMA golden EP and the receiver PCS contract.
+                if (!EP.DUT.phy_txstart_block &&
+                    (EP.DUT.phy_txsync_header != 2'b00))
+                    $fatal(1, "K15_GEN3_CONTINUATION_SYNC_HEADER_BAD header=%02b",
+                           EP.DUT.phy_txsync_header);
                 $display("K15_EP_TX_PIPE n=%0d time_ps=%0t state=%0h data=%08x valid=%0d start=%0d header=%02b gt_data=%08x gt_ctrl=%04x rate_gen3=%0d user_gen3_rdy=%0d txresetdone=%0d txuserrdy=%0d gttxreset=%0d syncstart=%0d pcs_syncdone=%0d txphalign=%0d txsyncdone=%0d",
                          k15_ep_tx_word_count, $time, EP.DUT.ltssm_state,
                          EP.DUT.phy_txdata, EP.DUT.phy_txdata_valid,

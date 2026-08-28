@@ -72,8 +72,12 @@ module pcie_gen3_equalization_ctrl #(
                                (ts_eq_control == 8'h01) &&
                                (ts_eq_data == 24'h8a0c28);
     wire timeout_expired = timeout_count >= (TIMEOUT_LIMIT - 1);
-    wire [3:0] peer_preset = (ts_eq_data[3:0] <= 4'd9) ?
-                             ts_eq_data[3:0] : 4'd5;
+    // Gen3 TS equalization tuple places the transmitter preset in the high
+    // nibble of the last EQ byte (symbol 8), i.e. EQ_DATA[23:20].  The low
+    // byte carries FS/LF (for example 8a0c28); using EQ_DATA[3:0] happens to
+    // pass that sample but is not a legal decoder for other partner presets.
+    wire [3:0] peer_preset = (ts_eq_data[23:20] <= 4'd9) ?
+                             ts_eq_data[23:20] : 4'd5;
 
     always @* begin
         eq_req_valid = 1'b0;
@@ -104,7 +108,12 @@ module pcie_gen3_equalization_ctrl #(
                                  (proposal_preset_sel ?
                                   {20'd0, proposal_coeff[3:0]} :
                                   {6'd0, proposal_coeff}) : 24'h000c28;
-                    if ((operation_state == OP_IDLE) && eq_req_ready) begin
+                    // Do not launch RX Adapt at phase entry.  The partner's
+                    // TS1 carries the requested transmitter preset; wait
+                    // until at least one legal TS has been sampled so the
+                    // selected_preset register contains that tuple.
+                    if ((operation_state == OP_IDLE) &&
+                        (phase_ts_count != 4'd0) && eq_req_ready) begin
                         eq_req_valid = 1'b1;
                         eq_req_kind = EQ_RX_ADAPT;
                         eq_req_preset = selected_preset;

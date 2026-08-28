@@ -191,9 +191,14 @@ module pcie_gen3_os_tx (
         out_data = 32'd0;
         out_valid = enable && (mode != 2'd0);
         start_block = out_valid && (active_index == 2'd0);
-        // AMD PHY32 requires the block type to remain valid on every 32-bit
-        // beat; TXSTART_BLOCK alone identifies the first beat.
-        sync_header = out_valid ? SH_ORDERED_SET : 2'b00;
+        // The PIPE sync header identifies the 128b block, not each 32-bit
+        // beat.  XDMA's Gen3 golden path drives 01 only on the first dword
+        // (the same beat as TXSTART_BLOCK) and drives 00 for the remaining
+        // three dwords.  Repeating 01 on every beat prevents the partner PCS
+        // from acquiring the 128b/130b block boundary and leaves its
+        // RXDATA_VALID low during Recovery.Equalization.
+        sync_header = out_valid && (active_index == 2'd0) ?
+                      SH_ORDERED_SET : 2'b00;
         balanced_data = scrambled_data;
         if (stream_state == SEND_EIEOS) begin
             out_data = 32'hff00_ff00;
