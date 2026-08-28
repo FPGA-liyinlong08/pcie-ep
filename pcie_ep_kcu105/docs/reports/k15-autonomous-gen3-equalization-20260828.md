@@ -149,3 +149,73 @@ Endpoint Gen3 TX到Root Port Gen3 PIPE RX之间的GT/PCS仿真通路；仓库既
 或在后续获准的实板ILA验证中取得等价的双epochPhase 0/1/2/3与Gen3 L0证据。
 
 K16仍保持独立：在K15 Gate关闭前，不接入Gen3 DLLP/TLP和128b/130b正常L0数据路径。
+
+## 6. 实板 reboot 对照结果（2026-08-28）
+
+本轮使用实验 bit
+`fpga/kcu105/build_k15_recovery_speed_hw0e_popcount_opt/impl/k14_recovery_speed_ila.bit`
+及对应 LTX，在 KCU105 上明确重新下载、ARM ILA，然后对远端主机执行 reboot。捕获文件为：
+
+`fpga/kcu105/build_k15_recovery_speed_hw0e_popcount_opt/capture_reboot/20260828_144429_k14_recovery_speed.csv`
+
+K14 速率/QPLL ILA 证明了以下路径：
+
+```text
+Gen1 -> Recovery.Speed -> Gen3 PHY rate -> QPLL lock -> PhyStatus
+```
+
+对应记录为 `qpll_rise_us=87.728`、`phystatus_us=122.000`、
+`final_rate=2`、`qpll_lock=1`、`rategen3=1`、`usergen3rdy=1`。
+
+同一捕获中的 EP LTSSM 状态值为：
+
+```text
+0x12 (Recovery.Speed)
+0x0b (Recovery.RcvrLock)
+0x28 (Equalization Phase 0)
+0x29 (Equalization Phase 1)
+0x2a (Equalization Phase 2)
+```
+
+没有采到 `0x2b`（Phase 3），也没有采到 EP `0x0d`（Recovery.Idle）。注意
+ILA 中 `k14_speed_state=ST_RECOVERY_IDLE` 是 K14 速率控制器内部状态，不能等同于
+PCIe LTSSM 的 `Recovery.Idle`。
+
+因此实板当前进度是 **K15-C 已进入 Phase 2，未完成 Phase 3；尚未达到 Gen3 L0**。
+本轮 ILA 未包含 EIEOS、SKP、`TXSTART_BLOCK`、`TXSYNC_HEADER` 和 RX block-valid
+原始探针，不能据此宣称 128b/130b block 对齐已经完成。
+
+reboot 后 Linux 未发现 `01:00.0` Endpoint，不能记录为 `LnkSta=8GT/s x1`，也尚未
+完成实板 Gen1 fallback 后重新枚举的验证。远端同时出现 Root Port corrected
+physical-layer `RxErr`，该现象与 VCS 中 Phase-1 EQ response 未被 RP 消费后回退的
+边界相符，但仍需增加原始 Gen3 RX block/TS 探针确认。
+
+该实验 bit 的实现时序为 `WNS=-0.129 ns`、`WHS=+0.004 ns`、DRC 0，且构建使用
+`K14_ALLOW_TIMING_VIOLATION=1`，仅用于诊断，不能作为 timing-clean 生产 bit。
+
+## 7. 本轮时序优化记录
+
+为缩短 Gen3 TX 数据路径，本轮保留功能等价性并进行了两项组合逻辑重构：
+
+- `pcie_gen3_scrambler32.sv`：将原先按 bit 串行推进的 32-bit LFSR 反馈循环改为
+  4 个 byte stage 的 XOR 矩阵；多项式和输出序列保持不变。
+- `pcie_gen3_os_tx.sv`：将 DC balance 的 32-bit 逐 bit 计数改为 4 个 byte
+  popcount tree，并保持同一饱和边界和符号计算。
+
+曾尝试加入 `balance_data_q` 的 look-ahead 输出寄存器，但实现后形成约 42 级
+`balance_data_q -> GT TXDATA` 路径，WNS 恶化至约 `-8.05 ns`，因此已撤销，最终
+版本不包含该寄存器路径。
+
+优化前后实现结果如下：
+
+| 项目 | 优化前 | 当前 bit |
+| --- | ---: | ---: |
+| WNS | `-2.063 ns` | `-0.129 ns` |
+| 关键路径逻辑级数 | 17 | 9 |
+| 关键路径数据延迟 | 5.940 ns | 3.688 ns |
+| WHS | — | `+0.004 ns` |
+| DRC errors | — | 0 |
+
+当前剩余最差路径已从 Gen3 scrambler/DC-balance 路径转移到普通 Gen1
+framer→scrambler→OS TX→GT TXDATA 路径；因此优化明显改善了逻辑级数和 WNS，但
+`-0.129 ns` 仍未达到 timing-clean，后续生产 bit 仍需继续收敛时序。

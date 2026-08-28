@@ -59,24 +59,36 @@ module pcie_gen3_os_tx (
     wire [22:0] lfsr_next;
     reg [31:0] balanced_data;
 
+    function automatic [2:0] popcount4;
+        input [3:0] value;
+        begin
+            popcount4 = value[0] + value[1] + value[2] + value[3];
+        end
+    endfunction
+
+    function automatic [4:0] popcount8;
+        input [7:0] value;
+        begin
+            popcount8 = popcount4(value[3:0]) + popcount4(value[7:4]);
+        end
+    endfunction
+
     function automatic signed [10:0] update_dc_balance;
         input signed [10:0] current_balance;
         input [31:0] transmitted_data;
         input [3:0] included_bytes;
-        integer bit_number;
-        integer ones;
-        integer included_bits;
-        integer next_balance;
+        reg [6:0] ones;
+        reg [6:0] included_bits;
+        reg signed [11:0] next_balance;
         begin
-            ones = 0;
-            included_bits = 0;
-            for (bit_number = 0; bit_number < 32;
-                 bit_number = bit_number + 1) begin
-                if (included_bytes[bit_number / 8]) begin
-                    ones = ones + transmitted_data[bit_number];
-                    included_bits = included_bits + 1;
-                end
-            end
+            ones = (included_bytes[0] ? popcount8(transmitted_data[7:0]) : 7'd0) +
+                   (included_bytes[1] ? popcount8(transmitted_data[15:8]) : 7'd0) +
+                   (included_bytes[2] ? popcount8(transmitted_data[23:16]) : 7'd0) +
+                   (included_bytes[3] ? popcount8(transmitted_data[31:24]) : 7'd0);
+            included_bits = (included_bytes[0] ? 7'd8 : 7'd0) +
+                            (included_bytes[1] ? 7'd8 : 7'd0) +
+                            (included_bytes[2] ? 7'd8 : 7'd0) +
+                            (included_bytes[3] ? 7'd8 : 7'd0);
             next_balance = current_balance + ((ones * 2) - included_bits);
             if (next_balance > 511)
                 update_dc_balance = 11'sd511;
@@ -119,52 +131,48 @@ module pcie_gen3_os_tx (
             lfsr_state <= LANE0_SEED;
             // Electrical-idle exit resets the TS running DC balance.
             dc_balance <= 11'sd0;
-        end else if (stream_state == SEND_EIEOS) begin
-            previous_mode <= mode;
-            if (word_index == 2'd3) begin
-                word_index <= 2'd0;
-                stream_state <= skp_after_eieos ? SEND_SKP : SEND_TS;
-                skp_after_eieos <= 1'b0;
-                ts_interval_count <= 6'd0;
-                // EIEOS advances the LFSR but re-initializes it after Symbol 15.
-                lfsr_state <= LANE0_SEED;
-            end else begin
-                word_index <= word_index + 1'b1;
-            end
-        end else if (stream_state == SEND_SKP) begin
-            previous_mode <= mode;
-            // The passing XDMA demo emits the lane-0 SKP body
-            // AA...AA/E1/9D/BF/BC and starts the first TS from the lane seed.
-            lfsr_state <= LANE0_SEED;
-            if (word_index == 2'd3) begin
-                word_index <= 2'd0;
-                stream_state <= SEND_TS;
-            end else begin
-                word_index <= word_index + 1'b1;
-            end
-        end else if (mode != previous_mode) begin
-            previous_mode <= mode;
-            word_index <= 2'd1;
-            lfsr_state <= lfsr_next;
-            dc_balance <= update_dc_balance(dc_balance, out_data, 4'b1110);
-        end else if (word_index == 2'd3) begin
-            word_index <= 2'd0;
-            lfsr_state <= lfsr_next;
-            dc_balance <= update_dc_balance(dc_balance, out_data, 4'b1111);
-            if (ts_interval_count == 6'd31) begin
-                stream_state <= SEND_EIEOS;
-                skp_after_eieos <= 1'b0;
-                ts_interval_count <= 6'd0;
-            end else begin
-                ts_interval_count <= ts_interval_count + 1'b1;
-            end
         end else begin
-            word_index <= word_index + 1'b1;
-            lfsr_state <= lfsr_next;
-            dc_balance <= update_dc_balance(
-                dc_balance, out_data,
-                (active_index == 2'd0) ? 4'b1110 : 4'b1111
-            );
+            if (stream_state == SEND_EIEOS) begin
+                previous_mode <= mode;
+                if (word_index == 2'd3) begin
+                    word_index <= 2'd0;
+                    stream_state <= skp_after_eieos ? SEND_SKP : SEND_TS;
+                    skp_after_eieos <= 1'b0;
+                    ts_interval_count <= 6'd0;
+                    // EIEOS advances the LFSR but re-initializes it after Symbol 15.
+                    lfsr_state <= LANE0_SEED;
+                end else begin
+                    word_index <= word_index + 1'b1;
+                end
+            end else if (stream_state == SEND_SKP) begin
+                previous_mode <= mode;
+                // The passing XDMA demo emits the lane-0 SKP body
+                // AA...AA/E1/9D/BF/BC and starts the first TS from the lane seed.
+                lfsr_state <= LANE0_SEED;
+                if (word_index == 2'd3) begin
+                    word_index <= 2'd0;
+                    stream_state <= SEND_TS;
+                end else begin
+                    word_index <= word_index + 1'b1;
+                end
+            end else if (mode != previous_mode) begin
+                previous_mode <= mode;
+                word_index <= 2'd1;
+                lfsr_state <= lfsr_next;
+            end else if (word_index == 2'd3) begin
+                word_index <= 2'd0;
+                lfsr_state <= lfsr_next;
+                if (ts_interval_count == 6'd31) begin
+                    stream_state <= SEND_EIEOS;
+                    skp_after_eieos <= 1'b0;
+                    ts_interval_count <= 6'd0;
+                end else begin
+                    ts_interval_count <= ts_interval_count + 1'b1;
+                end
+            end else begin
+                word_index <= word_index + 1'b1;
+                lfsr_state <= lfsr_next;
+            end
         end
     end
 
