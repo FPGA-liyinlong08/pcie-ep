@@ -8,7 +8,13 @@ module pcie_phy_command_ctrl #(
     parameter integer GOLDEN_RELEASE_GAP_CYCLES = 2_500,
     parameter integer RATE_TIMEOUT_CYCLES = 1_000_000,
     parameter integer GEN3_TX_SETTLE_CYCLES = 32,
-    parameter integer EQ_TIMEOUT_CYCLES = 1_000_000
+    parameter integer EQ_TIMEOUT_CYCLES = 1_000_000,
+    // K15-only reversible A/B knobs.  All default to the signed K14 Golden
+    // envelope: no CDR hold, no pre-rate TXEQ, and no added dwell.
+    parameter integer K15_AB_CDR_HOLD = 0,
+    parameter integer K15_AB_PRERATE_TXEQ = 0,
+    parameter integer K15_AB_PRERATE_DWELL_CYCLES = 0,
+    parameter integer K15_AB_PRERATE_PRESET = 4
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -103,6 +109,8 @@ module pcie_phy_command_ctrl #(
     localparam [3:0] RATE_GEN3_SETTLE = 4'd5;
     localparam [3:0] RATE_COMPLETE = 4'd6;
     localparam [3:0] RATE_ERROR_HOLD = 4'd7;
+    localparam [3:0] RATE_PRERATE_EQ = 4'd8;
+    localparam [3:0] RATE_PRERATE_CLEAR = 4'd9;
 
     localparam [2:0] EQ_TX_PRESET = 3'd0;
     localparam [2:0] EQ_TX_COEFF  = 3'd1;
@@ -125,12 +133,23 @@ module pcie_phy_command_ctrl #(
     localparam integer EQ_TIMEOUT_LIMIT =
         (EQ_TIMEOUT_CYCLES < 1) ? 1 : EQ_TIMEOUT_CYCLES;
 
+    function automatic prerate_dwell_expired(input [31:0] count);
+        integer signed dwell_last;
+        begin
+            dwell_last = K15_AB_PRERATE_DWELL_CYCLES - 1;
+            prerate_dwell_expired = (dwell_last <= 0) ||
+                                    (count >= dwell_last);
+        end
+    endfunction
+
     reg [3:0] rate_state_r;
     reg [1:0] active_rate_r;
     reg [1:0] target_rate_r;
     reg [31:0] gap_count_r;
     reg [31:0] timeout_count_r;
     reg [31:0] settle_count_r;
+    reg [31:0] prerate_count_r;
+    reg prerate_txeq_seen_r;
     reg phy_phystatus_q;
     reg rate_done_r;
     reg [2:0] rate_result_r;
@@ -202,7 +221,7 @@ module pcie_phy_command_ctrl #(
             phy_txdetectrx = 1'b0;
             phy_txelecidle = 1'b1;
             as_mac_in_detect = 1'b0;
-            as_cdr_hold_req = 1'b0;
+            as_cdr_hold_req = (K15_AB_CDR_HOLD != 0);
         end
     end
 
@@ -243,7 +262,12 @@ module pcie_phy_command_ctrl #(
         phy_txeq_coeff = 6'd0;
         phy_rxeq_ctrl = 2'b00;
         phy_rxeq_txpreset = 4'd0;
-        if (eq_busy_r) begin
+        if ((rate_state_r == RATE_PRERATE_EQ) &&
+            (target_rate_r == RATE_GEN3) &&
+            (K15_AB_PRERATE_TXEQ != 0)) begin
+            phy_txeq_ctrl = 2'b01;
+            phy_txeq_preset = K15_AB_PRERATE_PRESET[3:0];
+        end else if (eq_busy_r) begin
             case (eq_kind_r)
                 EQ_TX_PRESET: begin
                     phy_txeq_ctrl = 2'b01;
@@ -279,6 +303,8 @@ module pcie_phy_command_ctrl #(
             gap_count_r <= 32'd0;
             timeout_count_r <= 32'd0;
             settle_count_r <= 32'd0;
+            prerate_count_r <= 32'd0;
+            prerate_txeq_seen_r <= 1'b0;
             phy_phystatus_q <= 1'b0;
             rate_done_r <= 1'b0;
             rate_result_r <= RATE_RESULT_NONE;
@@ -303,6 +329,8 @@ module pcie_phy_command_ctrl #(
             gap_count_r <= 32'd0;
             timeout_count_r <= 32'd0;
             settle_count_r <= 32'd0;
+            prerate_count_r <= 32'd0;
+            prerate_txeq_seen_r <= 1'b0;
             phy_phystatus_q <= phy_phystatus;
             rate_done_r <= rate_envelope_active;
             rate_result_r <= rate_envelope_active ? RATE_RESULT_ABORTED :
@@ -327,6 +355,8 @@ module pcie_phy_command_ctrl #(
                     gap_count_r <= 32'd0;
                     timeout_count_r <= 32'd0;
                     settle_count_r <= 32'd0;
+                    prerate_count_r <= 32'd0;
+                    prerate_txeq_seen_r <= 1'b0;
                     if (rate_req_valid && rate_req_ready) begin
                         if ((rate_req_target == 2'b11) ||
                             (rate_req_target == 2'b01)) begin
@@ -351,10 +381,45 @@ module pcie_phy_command_ctrl #(
                 RATE_GOLDEN_GAP: begin
                     if (gap_count_r >= (GAP_LIMIT - 1)) begin
                         gap_count_r <= 32'd0;
-                        rate_state_r <= RATE_APPLY;
+                        prerate_count_r <= 32'd0;
+                        prerate_txeq_seen_r <= 1'b0;
+                        if ((target_rate_r == RATE_GEN3) &&
+                            ((K15_AB_PRERATE_TXEQ != 0) ||
+                             (K15_AB_PRERATE_DWELL_CYCLES > 0)))
+                            rate_state_r <= RATE_PRERATE_EQ;
+                        else
+                            rate_state_r <= RATE_APPLY;
                     end else begin
                         gap_count_r <= gap_count_r + 1'b1;
                     end
+                end
+                RATE_PRERATE_EQ: begin
+                    // Optional experiment window.  A0/A1 can use the same
+                    // dwell without driving TXEQ, separating a preset effect
+                    // from a pure pre-rate timing effect.  TXEQ_DONE must be
+                    // a fresh edge when the TXEQ option is enabled.
+                    if (txeq_done_rising)
+                        prerate_txeq_seen_r <= 1'b1;
+                    if (((K15_AB_PRERATE_TXEQ == 0) ||
+                         prerate_txeq_seen_r || txeq_done_rising) &&
+                        prerate_dwell_expired(prerate_count_r)) begin
+                        timeout_count_r <= 32'd0;
+                        rate_state_r <= RATE_PRERATE_CLEAR;
+                    end else if (timeout_count_r >= (TIMEOUT_LIMIT - 1)) begin
+                        rate_done_r <= 1'b1;
+                        rate_result_r <= RATE_RESULT_PHYSTATUS_TIMEOUT;
+                        rate_state_r <= RATE_ERROR_HOLD;
+                    end else begin
+                        timeout_count_r <= timeout_count_r + 1'b1;
+                        if (!prerate_dwell_expired(prerate_count_r))
+                            prerate_count_r <= prerate_count_r + 1'b1;
+                    end
+                end
+                RATE_PRERATE_CLEAR: begin
+                    // One explicit Gen1/P0 cycle clears TXEQ before RATE
+                    // changes, making the experiment trace unambiguous.
+                    timeout_count_r <= 32'd0;
+                    rate_state_r <= RATE_APPLY;
                 end
                 RATE_APPLY: begin
                     timeout_count_r <= 32'd0;

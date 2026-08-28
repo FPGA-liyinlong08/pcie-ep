@@ -16,6 +16,12 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer GEN3_RATE_CHANGE_ENABLE = 1,
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
+    // K15-only reversible PHY-envelope experiment knobs. Defaults preserve
+    // the signed K14 Golden rate-change contract.
+    parameter integer K15_AB_CDR_HOLD = 0,
+    parameter integer K15_AB_PRERATE_TXEQ = 0,
+    parameter integer K15_AB_PRERATE_DWELL_CYCLES = 0,
+    parameter integer K15_AB_PRERATE_PRESET = 4,
     // K15 production capability: Gen1/2/3 supported, speed_change clear until
     // an accepted Recovery transaction requests the physical transition.
     parameter [7:0] LTSSM_TX_RATE_ID = 8'h0e
@@ -361,7 +367,12 @@ module kcu105_pcie_ep_gen1_top #(
         .phy_rxeq_done(phy_rxeq_done)
     );
 
-    pcie_phy_command_ctrl u_phy_command_ctrl (
+    pcie_phy_command_ctrl #(
+        .K15_AB_CDR_HOLD(K15_AB_CDR_HOLD),
+        .K15_AB_PRERATE_TXEQ(K15_AB_PRERATE_TXEQ),
+        .K15_AB_PRERATE_DWELL_CYCLES(K15_AB_PRERATE_DWELL_CYCLES),
+        .K15_AB_PRERATE_PRESET(K15_AB_PRERATE_PRESET)
+    ) u_phy_command_ctrl (
         .phy_pclk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .cmd_profile(phy_cmd_profile), .op_valid(phy_cmd_valid),
         .op_kind(phy_cmd_kind), .op_ready(phy_cmd_ready),

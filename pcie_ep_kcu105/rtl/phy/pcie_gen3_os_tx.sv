@@ -51,6 +51,9 @@ module pcie_gen3_os_tx (
     reg [5:0] ts_interval_count;
     reg [22:0] lfsr_state;
     reg signed [10:0] dc_balance;
+    reg [6:0] dc_ones_q;
+    reg [6:0] dc_included_bits_q;
+    reg       dc_count_valid_q;
     wire [1:0] active_index = (mode != previous_mode) ? 2'd0 : word_index;
     wire [7:0] identifier = (mode == 2'd1) ? D_TS1 : D_TS2;
     wire [7:0] os_identifier = (mode == 2'd1) ? OS_TS1 : OS_TS2;
@@ -58,6 +61,7 @@ module pcie_gen3_os_tx (
     wire [31:0] scrambled_data;
     wire [22:0] lfsr_next;
     reg [31:0] balanced_data;
+    reg [6:0] output_ones;
 
     function automatic [2:0] popcount4;
         input [3:0] value;
@@ -75,31 +79,31 @@ module pcie_gen3_os_tx (
         end
     endfunction
 
-    function automatic signed [10:0] update_dc_balance;
+    function automatic [6:0] count_ones32;
+        input [31:0] value;
+        begin
+            count_ones32 = {2'b0, popcount8(value[7:0])} +
+                           {2'b0, popcount8(value[15:8])} +
+                           {2'b0, popcount8(value[23:16])} +
+                           {2'b0, popcount8(value[31:24])};
+        end
+    endfunction
+
+    function automatic signed [10:0] update_dc_balance_counts;
         input signed [10:0] current_balance;
-        input [31:0] transmitted_data;
-        input [3:0] included_bytes;
-        reg [6:0] ones;
-        reg [6:0] included_bits;
+        input [6:0] ones;
+        input [6:0] included_bits;
         reg signed [11:0] next_balance;
         begin
-            ones = (included_bytes[0] ? {2'b0, popcount8(transmitted_data[7:0])} : 7'd0) +
-                   (included_bytes[1] ? {2'b0, popcount8(transmitted_data[15:8])} : 7'd0) +
-                   (included_bytes[2] ? {2'b0, popcount8(transmitted_data[23:16])} : 7'd0) +
-                   (included_bytes[3] ? {2'b0, popcount8(transmitted_data[31:24])} : 7'd0);
-            included_bits = (included_bytes[0] ? 7'd8 : 7'd0) +
-                            (included_bytes[1] ? 7'd8 : 7'd0) +
-                            (included_bytes[2] ? 7'd8 : 7'd0) +
-                            (included_bytes[3] ? 7'd8 : 7'd0);
             next_balance = $signed({current_balance[10], current_balance}) +
                            $signed({4'b0, ones, 1'b0}) -
                            $signed({5'b0, included_bits});
             if (next_balance > 511)
-                update_dc_balance = 11'sd511;
+                update_dc_balance_counts = 11'sd511;
             else if (next_balance < -511)
-                update_dc_balance = -11'sd511;
+                update_dc_balance_counts = -11'sd511;
             else
-                update_dc_balance = next_balance[10:0];
+                update_dc_balance_counts = next_balance[10:0];
         end
     endfunction
 
@@ -117,6 +121,8 @@ module pcie_gen3_os_tx (
         (enable && (mode != 2'd0) && (stream_state == SEND_TS)) ?
             lfsr_next : lfsr_state;
 
+    reg signed [10:0] dc_balance_for_output;
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             word_index <= 2'd0;
@@ -126,6 +132,9 @@ module pcie_gen3_os_tx (
             ts_interval_count <= 6'd0;
             lfsr_state <= LANE0_SEED;
             dc_balance <= 11'sd0;
+            dc_ones_q <= 7'd0;
+            dc_included_bits_q <= 7'd0;
+            dc_count_valid_q <= 1'b0;
         end else if (!enable || (mode == 2'd0)) begin
             word_index <= 2'd0;
             previous_mode <= mode;
@@ -135,7 +144,29 @@ module pcie_gen3_os_tx (
             lfsr_state <= LANE0_SEED;
             // Electrical-idle exit resets the TS running DC balance.
             dc_balance <= 11'sd0;
+            dc_ones_q <= 7'd0;
+            dc_included_bits_q <= 7'd0;
+            dc_count_valid_q <= 1'b0;
         end else begin
+            // Consume the popcount captured for the preceding TS word. This
+            // keeps the scrambler/popcount path separate from the running
+            // balance adder and its saturation logic.
+            if (dc_count_valid_q)
+                dc_balance <= update_dc_balance_counts(
+                    dc_balance, dc_ones_q, dc_included_bits_q
+                );
+            dc_count_valid_q <= 1'b0;
+
+            // Capture the transmitted word's count for the next edge. Keep
+            // the base popcount independent of the word-3 balance decision;
+            // counting out_data here would recreate a dc_balance -> output ->
+            // popcount timing path through the running-balance substitution.
+            if (stream_state == SEND_TS) begin
+                dc_ones_q <= output_ones;
+                dc_included_bits_q <= (active_index == 2'd0) ? 7'd24 : 7'd32;
+                dc_count_valid_q <= 1'b1;
+            end
+
             if (stream_state == SEND_EIEOS) begin
                 previous_mode <= mode;
                 if (word_index == 2'd3) begin
@@ -163,11 +194,9 @@ module pcie_gen3_os_tx (
                 previous_mode <= mode;
                 word_index <= 2'd1;
                 lfsr_state <= lfsr_next;
-                dc_balance <= update_dc_balance(dc_balance, out_data, 4'b1110);
             end else if (word_index == 2'd3) begin
                 word_index <= 2'd0;
                 lfsr_state <= lfsr_next;
-                dc_balance <= update_dc_balance(dc_balance, out_data, 4'b1111);
                 if (ts_interval_count == 6'd31) begin
                     stream_state <= SEND_EIEOS;
                     skp_after_eieos <= 1'b0;
@@ -178,10 +207,6 @@ module pcie_gen3_os_tx (
             end else begin
                 word_index <= word_index + 1'b1;
                 lfsr_state <= lfsr_next;
-                dc_balance <= update_dc_balance(
-                    dc_balance, out_data,
-                    (active_index == 2'd0) ? 4'b1110 : 4'b1111
-                );
             end
         end
     end
@@ -200,6 +225,7 @@ module pcie_gen3_os_tx (
         sync_header = out_valid && (active_index == 2'd0) ?
                       SH_ORDERED_SET : 2'b00;
         balanced_data = scrambled_data;
+        output_ones = 7'd0;
         if (stream_state == SEND_EIEOS) begin
             out_data = 32'hff00_ff00;
         end else if (stream_state == SEND_SKP) begin
@@ -228,16 +254,36 @@ module pcie_gen3_os_tx (
                     plain_data = {identifier, identifier, identifier, identifier};
                 end
             endcase
+            // Add the pending preceding-word count for TS word 3. Both
+            // operands are registered, so this is a short balance-only path
+            // rather than scrambler -> popcount -> balance arithmetic.
+            dc_balance_for_output = dc_balance;
+            if (dc_count_valid_q)
+                dc_balance_for_output = update_dc_balance_counts(
+                    dc_balance, dc_ones_q, dc_included_bits_q
+                );
             balanced_data = scrambled_data;
+            output_ones = count_ones32(scrambled_data);
             if (active_index == 2'd3) begin
-                if ($signed(dc_balance) > 11'sd31)
+                if ($signed(dc_balance_for_output) > 11'sd31) begin
                     balanced_data[31:16] = 16'h0820;
-                else if ($signed(dc_balance) < -11'sd31)
+                    output_ones = {2'b0, popcount8(scrambled_data[15:8])} +
+                                  {2'b0, popcount8(scrambled_data[7:0])} + 7'd2;
+                end else if ($signed(dc_balance_for_output) < -11'sd31) begin
                     balanced_data[31:16] = 16'hf7df;
-                else if ($signed(dc_balance) > 11'sd15)
+                    output_ones = {2'b0, popcount8(scrambled_data[15:8])} +
+                                  {2'b0, popcount8(scrambled_data[7:0])} + 7'd15;
+                end else if ($signed(dc_balance_for_output) > 11'sd15) begin
                     balanced_data[31:24] = 8'h08;
-                else if ($signed(dc_balance) < -11'sd15)
+                    output_ones = {2'b0, popcount8(scrambled_data[23:16])} +
+                                  {2'b0, popcount8(scrambled_data[15:8])} +
+                                  {2'b0, popcount8(scrambled_data[7:0])} + 7'd1;
+                end else if ($signed(dc_balance_for_output) < -11'sd15) begin
                     balanced_data[31:24] = 8'hf7;
+                    output_ones = {2'b0, popcount8(scrambled_data[23:16])} +
+                                  {2'b0, popcount8(scrambled_data[15:8])} +
+                                  {2'b0, popcount8(scrambled_data[7:0])} + 7'd7;
+                end
             end
             out_data = balanced_data;
         end

@@ -20,7 +20,11 @@ RAW = (
 
 def violations(top_text: str, board_text: str, ltssm_text: str):
     errors = []
-    instances = len(re.findall(r"\bpcie_phy_command_ctrl\s+u_[A-Za-z0-9_]+\s*\(", top_text))
+    # Allow a parameterized instance (`pcie_phy_command_ctrl #( ... ) u_*`)
+    # while still requiring exactly one production owner.
+    instances = len(re.findall(
+        r"\bpcie_phy_command_ctrl\b\s*(?:#\s*\([^;]*?\)\s*)?"
+        r"u_[A-Za-z0-9_]+\s*\(", top_text, flags=re.DOTALL))
     if instances != 1:
         errors.append(f"production controller instance count={instances}, expected=1")
     if re.search(r"\b[Kk]13[_A-Za-z0-9]*\b", top_text + "\n" + board_text):

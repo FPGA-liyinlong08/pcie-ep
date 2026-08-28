@@ -275,6 +275,9 @@ phy-command-ctrl-test:
 		-Mdir sim/verilator/phy_command_ctrl/sim_build
 	./sim/verilator/phy_command_ctrl/sim_build/Vpcie_phy_command_ctrl
 
+k15-phy-ab-test:
+	./sim/verilator/phy_command_ctrl/run_k15_ab_matrix.sh
+
 phy-command-ownership:
 	python3 scripts/check_phy_command_ownership.py
 
@@ -322,11 +325,14 @@ k14-reboot-sim:
 	$(MAKE) k14-direct-sim
 	$(MAKE) k14-reboot-vcs
 
-k15-static: k15-directed-test phy-command-ctrl-test \
+k15-static: k15-directed-test phy-command-ctrl-test k15-phy-ab-test \
 		k14-recovery-speed-test phy-command-ownership k11b2-lint
 
 k15-vcs:
 	./sim/vcs/run_k15_gen3.sh
+
+k15-vcs-ab-matrix:
+	./sim/vcs/run_k15_ab_matrix.sh
 
 k15: k15-static k15-vcs
 

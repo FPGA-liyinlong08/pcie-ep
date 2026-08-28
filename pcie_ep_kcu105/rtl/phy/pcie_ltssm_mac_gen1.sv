@@ -401,10 +401,28 @@ module pcie_ltssm_mac_gen1 #(
     wire        frame_tx_valid;
     wire        framer_error;
     wire        framer_enable = (ltssm_state == STATE_L0) && !gen3_mode;
-    wire [15:0] tx_plain_data = framer_enable ? frame_tx_data[15:0] :
+    // The framer uses asynchronous distributed-memory reads.  Register its
+    // streaming output before the Gen1 scrambler so the framer RAM/read mux
+    // is not part of the same 4 ns path as the scrambler and GT TXDATA.
+    reg [31:0] frame_tx_data_q;
+    reg [1:0]  frame_tx_datak_q;
+    reg        frame_tx_valid_q;
+    always @(posedge phy_pclk or negedge pipe_rst_n) begin
+        if (!pipe_rst_n) begin
+            frame_tx_data_q  <= 32'd0;
+            frame_tx_datak_q  <= 2'b00;
+            frame_tx_valid_q <= 1'b0;
+        end else begin
+            frame_tx_data_q  <= frame_tx_data;
+            frame_tx_datak_q <= frame_tx_datak;
+            frame_tx_valid_q <= frame_tx_valid;
+        end
+    end
+
+    wire [15:0] tx_plain_data = framer_enable ? frame_tx_data_q[15:0] :
                                                 os_tx_data[15:0];
-    wire [1:0]  tx_plain_datak = framer_enable ? frame_tx_datak : os_tx_datak;
-    wire        tx_plain_valid = framer_enable ? frame_tx_valid : os_tx_valid;
+    wire [1:0]  tx_plain_datak = framer_enable ? frame_tx_datak_q : os_tx_datak;
+    wire        tx_plain_valid = framer_enable ? frame_tx_valid_q : os_tx_valid;
     wire        tx_scramble_disable = !((ltssm_state == CFG_IDLE) ||
                                         (ltssm_state == STATE_L0) ||
                                         (ltssm_state == RECOVERY_IDLE));

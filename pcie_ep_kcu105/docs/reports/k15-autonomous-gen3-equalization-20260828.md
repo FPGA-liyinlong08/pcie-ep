@@ -483,3 +483,66 @@ K15_LOCAL_PHY_LOOPBACK_FAIL
 CDR、resetdone、sync done 都成立，但 RX PCS 没有产生有效 block。下一轮优先对照
 XDMA 的 GT 输入控制字段（`TXDATAK=0`、首 beat `Sync Header=01`、后续 beat
 `00`、`TXELECIDLE`）及其时序，而不是继续修改 RP 或生成 IP。
+
+## 13. Gate-A 可逆 PHY-envelope A/B 矩阵（2026-08-28）
+
+按照 K14 Golden 优先的原则，生产默认保持 A0：
+
+| Variant | `as_cdr_hold_req` | pre-rate TXEQ | pre-rate dwell |
+|---|---:|---:|---:|
+| A0 | 0 | 0 | 4 cycles |
+| A1 | 1 | 0 | 4 cycles |
+| A2 | 0 | P4 | 4 cycles |
+| A3 | 1 | P4 | 4 cycles |
+
+4-cycle dwell 是实验等长窗口；A0/A1 在窗口内不驱动 TXEQ，A2/A3 执行 P4 apply
+并等待 fresh `TXEQ_DONE`，随后统一经过一个显式 TXEQ clear cycle 再提交 Gen3
+rate。所有 knob 默认值仍为 `cdr=0 / TXEQ=0 / dwell=0`，因此不改变 K14
+production contract。
+
+当前已通过 controller/static Gate：
+
+```text
+K15_PHY_AB_PASS cdr=0 txeq=0 dwell=4 prerate_cycles=4
+K15_PHY_AB_PASS cdr=1 txeq=0 dwell=4 prerate_cycles=4
+K15_PHY_AB_PASS cdr=0 txeq=1 dwell=4 prerate_cycles=4
+K15_PHY_AB_PASS cdr=1 txeq=1 dwell=4 prerate_cycles=4
+K15_PHY_AB_MATRIX_PASS variants=4 dwell=4
+```
+
+这只证明 envelope 状态机和参数传递正确，不等价于 VCS 的 RP 首块接收或实板
+Phase2→Phase3 成功。VCS runner 已支持 `K15_AB_CDR_HOLD`、
+`K15_AB_PRERATE_TXEQ`、`K15_AB_PRERATE_DWELL_CYCLES` 和
+`K15_AB_PRERATE_PRESET`；最终判据仍分别是 RP 首个 `RXDATA_VALID/RXSTART_BLOCK`
+以及实板是否从 `0x2a` 进入 `0x2b`。
+
+## 14. Gate-A Full VCS 与实板 A0 结果（2026-08-28）
+
+最终时序修复后的 Full VCS A0 重新运行，以及 A0～A3 矩阵均未改变首个失败边界：
+
+```text
+K15_AB_LATENCY rate_seen=1 qpll_seen=1 phystatus_seen=1
+  cdrlock_seen=1 rxvalid_seen=0 rxstart_seen=0
+  T0_rate_to_qpll_ps=4000 T1_rate_to_phystatus_ps=26664000
+  T2_rate_to_cdrlock_ps=4000 T3_rate_to_rxdata_valid_ps=0
+  T4_rate_to_rxstart_block_ps=0
+K15_VCS_BLOCKED_RP_EQ_RESPONSE_NOT_CONSUMED
+  rp_rxvalid_seen=0 rp_rxvalid_beats=0 rp_decoded_ts=0
+```
+
+A0、A1、A2、A3 四组均为上述失败，未有变体产生第一个 RP Gen3 RX block，
+因此没有任何变体升格为 root-cause fix。需要注意，本轮 Full VCS 中 TXEQ 变体
+仍包含 TXEQ apply/done 的额外路径延迟；由于所有变体均失败，这轮结果用于排除
+“CDR hold 或 P4 apply 能推进首块接收”，不作为严格等时延的正向因果证明。
+
+实板 A0 使用时序通过的 bit 完成一次重启捕获，记录为：
+
+```text
+K14_RECOVERY_TRACE qpll_rise_us=87.088 phystatus_us=114.352
+  final_rate=2 qpll_lock=1 rategen3=1 usergen3rdy=1 pass=1
+LTSSM samples: 0x0b=36, 0x28=31, 0x29=31, 0x2a=8093, 0x2b=0
+```
+
+这确认实板已通过 Gen3 rate/QPLL/PhyStatus 并进入 Phase 2，但本次窗口未进入
+Phase 3；Linux 侧仍未枚举 Endpoint。捕获文件为
+`fpga/kcu105/build_k15_txpipe/capture/20260828_223502_k14_recovery_speed.csv`。

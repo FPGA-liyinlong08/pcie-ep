@@ -28,6 +28,10 @@ k15_mode="${K15_VCS:-0}"
 k15_local_phy_loopback="${K15_LOCAL_PHY_LOOPBACK:-0}"
 k15_gt_loopback="${K15_GT_LOOPBACK:-0}"
 k15_continue_after_fallback="${K15_CONTINUE_AFTER_FALLBACK:-0}"
+k15_ab_cdr_hold="${K15_AB_CDR_HOLD:-0}"
+k15_ab_prerate_txeq="${K15_AB_PRERATE_TXEQ:-0}"
+k15_ab_prerate_dwell="${K15_AB_PRERATE_DWELL_CYCLES:-0}"
+k15_ab_prerate_preset="${K15_AB_PRERATE_PRESET:-4}"
 k14_ep_tx_rate_id="${K14_EP_TX_RATE_ID:-02}"
 k14_reboot_tx_rate_id="${K14_REBOOT_TX_RATE_ID:-02}"
 k13_enable="${K13_ENABLE:-0}"
@@ -64,6 +68,10 @@ fi
 if [[ "${k15_mode}" == "1" ]]; then
     tb_defines+=(+define+K15_VCS)
     tb_defines+=("+define+K14_EP_TX_RATE_ID_VALUE=8'h0e")
+    tb_defines+=("+define+K15_AB_CDR_HOLD_VALUE=${k15_ab_cdr_hold}")
+    tb_defines+=("+define+K15_AB_PRERATE_TXEQ_VALUE=${k15_ab_prerate_txeq}")
+    tb_defines+=("+define+K15_AB_PRERATE_DWELL_VALUE=${k15_ab_prerate_dwell}")
+    tb_defines+=("+define+K15_AB_PRERATE_PRESET_VALUE=${k15_ab_prerate_preset}")
 fi
 if [[ "${k14_rate_ab_mode}" == "1" ]]; then
     case "${k14_ep_tx_rate_id}" in

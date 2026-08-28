@@ -1581,6 +1581,89 @@ module board;
     wire [7:0] k15_rp_rx_eq_control;
     wire [23:0] k15_rp_rx_eq_data;
 
+    // First-event timestamps for the Gate-A comparison.  These are
+    // observation-only and intentionally use the existing RP PIPE clock so
+    // A0-A3 logs can be compared without adding a control-path dependency.
+    time k15_ab_rate_time;
+    time k15_ab_qpll_time;
+    time k15_ab_phystatus_time;
+    time k15_ab_cdrlock_time;
+    time k15_ab_rxvalid_time;
+    time k15_ab_rxstart_time;
+    reg k15_ab_rate_seen;
+    reg k15_ab_qpll_seen;
+    reg k15_ab_phystatus_seen;
+    reg k15_ab_cdrlock_seen;
+    reg k15_ab_rxvalid_seen;
+    reg k15_ab_rxstart_seen;
+
+    task automatic k15_report_ab_latency;
+        begin
+            $display("K15_AB_LATENCY rate_seen=%0d qpll_seen=%0d phystatus_seen=%0d cdrlock_seen=%0d rxvalid_seen=%0d rxstart_seen=%0d T0_rate_to_qpll_ps=%0t T1_rate_to_phystatus_ps=%0t T2_rate_to_cdrlock_ps=%0t T3_rate_to_rxdata_valid_ps=%0t T4_rate_to_rxstart_block_ps=%0t",
+                     k15_ab_rate_seen, k15_ab_qpll_seen,
+                     k15_ab_phystatus_seen, k15_ab_cdrlock_seen,
+                     k15_ab_rxvalid_seen, k15_ab_rxstart_seen,
+                     (k15_ab_rate_seen && k15_ab_qpll_seen) ?
+                         (k15_ab_qpll_time - k15_ab_rate_time) : 0,
+                     (k15_ab_rate_seen && k15_ab_phystatus_seen) ?
+                         (k15_ab_phystatus_time - k15_ab_rate_time) : 0,
+                     (k15_ab_rate_seen && k15_ab_cdrlock_seen) ?
+                         (k15_ab_cdrlock_time - k15_ab_rate_time) : 0,
+                     (k15_ab_rate_seen && k15_ab_rxvalid_seen) ?
+                         (k15_ab_rxvalid_time - k15_ab_rate_time) : 0,
+                     (k15_ab_rate_seen && k15_ab_rxstart_seen) ?
+                         (k15_ab_rxstart_time - k15_ab_rate_time) : 0);
+        end
+    endtask
+
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk or
+             negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            k15_ab_rate_seen <= 1'b0;
+            k15_ab_qpll_seen <= 1'b0;
+            k15_ab_phystatus_seen <= 1'b0;
+            k15_ab_cdrlock_seen <= 1'b0;
+            k15_ab_rxvalid_seen <= 1'b0;
+            k15_ab_rxstart_seen <= 1'b0;
+            k15_ab_rate_time <= 0;
+            k15_ab_qpll_time <= 0;
+            k15_ab_phystatus_time <= 0;
+            k15_ab_cdrlock_time <= 0;
+            k15_ab_rxvalid_time <= 0;
+            k15_ab_rxstart_time <= 0;
+        end else if ($test$plusargs("K15_GEN3")) begin
+            if (!k15_ab_rate_seen && (EP.DUT.phy_rate === 2'b10)) begin
+                k15_ab_rate_seen <= 1'b1;
+                k15_ab_rate_time <= $time;
+            end
+            if (k15_ab_rate_seen && !k15_ab_qpll_seen &&
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_qpll1lock[0]) begin
+                k15_ab_qpll_seen <= 1'b1;
+                k15_ab_qpll_time <= $time;
+            end
+            if (k15_ab_rate_seen && !k15_ab_phystatus_seen &&
+                EP.DUT.phy_phystatus) begin
+                k15_ab_phystatus_seen <= 1'b1;
+                k15_ab_phystatus_time <= $time;
+            end
+            if (k15_ab_rate_seen && !k15_ab_cdrlock_seen &&
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXCDRLOCK) begin
+                k15_ab_cdrlock_seen <= 1'b1;
+                k15_ab_cdrlock_time <= $time;
+            end
+            if (k15_ab_rate_seen && !k15_ab_rxvalid_seen &&
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]) begin
+                k15_ab_rxvalid_seen <= 1'b1;
+                k15_ab_rxvalid_time <= $time;
+            end
+            if (k15_ab_rate_seen && !k15_ab_rxstart_seen &&
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0]) begin
+                k15_ab_rxstart_seen <= 1'b1;
+                k15_ab_rxstart_time <= $time;
+            end
+        end
+    end
+
     // The standalone PHY and the integrated XDMA endpoint can present an
     // identical PIPE stream while serializing it at different effective
     // rates.  Capture a bounded set of post-switch edge intervals so a PCS
@@ -1826,6 +1909,7 @@ module board;
                     $fatal(1, "K15_INITIAL_GEN3_CAPABILITY_MISSING");
                 if (EP.DUT.g_gen3_rate_change.speed_timeout_sticky ||
                     EP.DUT.g_gen3_rate_change.speed_fallback_sticky) begin
+                    k15_report_ab_latency();
                     $display("K15_VCS_BLOCKED_RP_EQ_RESPONSE_NOT_CONSUMED epoch=%0d ep_txvalid=%0d ep_txstart=%0d rp_rxvalid_seen=%0d rp_rxvalid_beats=%0d rp_decoded_ts=%0d rp_state=%0h ep_state=%0h ep_tx_eq_control=%02x ep_tx_eq_data=%06x",
                              k15_epoch, EP.DUT.phy_txdata_valid,
                              EP.DUT.phy_txstart_block,
@@ -1926,6 +2010,7 @@ module board;
                     else
                         k15_l0_stable = 0;
                 end
+                k15_report_ab_latency();
                 $display("K15_EPOCH_PASS epoch=%0d stable=%0d auto=0 mailbox=0",
                          k15_epoch, k15_l0_stable);
 
@@ -2513,6 +2598,12 @@ module k11b_endpoint_compat #(
         .GEN3_RATE_CHANGE_ENABLE(1),
         .GEN3_SPEED_TIMEOUT_CYCLES(16_384),
         .GEN3_AUTO_RETRAIN_CYCLES(0),
+`ifdef K15_VCS
+        .K15_AB_CDR_HOLD(`K15_AB_CDR_HOLD_VALUE),
+        .K15_AB_PRERATE_TXEQ(`K15_AB_PRERATE_TXEQ_VALUE),
+        .K15_AB_PRERATE_DWELL_CYCLES(`K15_AB_PRERATE_DWELL_VALUE),
+        .K15_AB_PRERATE_PRESET(`K15_AB_PRERATE_PRESET_VALUE),
+`endif
 `ifdef K14_EP_TX_RATE_ID_VALUE
         .LTSSM_TX_RATE_ID      (`K14_EP_TX_RATE_ID_VALUE),
 `endif
