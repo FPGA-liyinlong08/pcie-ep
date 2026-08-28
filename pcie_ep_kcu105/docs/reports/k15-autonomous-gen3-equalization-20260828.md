@@ -266,8 +266,11 @@ Physical Layer RxErr**。下一轮应增加 fallback 后的 Gen1 TS1/TS2、`RxVa
 
 ## 9. `aca2308` 后的 VCS 优先复核与 XDMA demo 对照
 
-本轮首先复跑当前 HEAD 的严格 `make k15-vcs`，并以仓库中的官方 XDMA example
-通过日志作为 Root Port golden。XDMA example 能完成 8.0 GT/s 测试，因此不再把
+本轮首先复跑当前 HEAD 的严格 `make k15-vcs`；其 Root Port 来源明确为
+`/home/wx/Documents/XDMA/xdma_dec_250922/imports`，即
+`pcie3_uscale_rp_core_top.v`、`pcie3_uscale_rp_top.v` 和
+`xilinx_pcie_uscale_rp.v` 三个文件。该工程的通过日志为其 `vcs/simulate.log`。
+XDMA example 能完成 8.0 GT/s 测试，因此不再把
 “RP 不支持或不会请求 Gen3”作为主假设。官方 example 使用
 `PL_SIM_FAST_LINK_TRAINING=TRUE` 和 `PL_EQ_BYPASS_PHASE23=TRUE`，只能证明 RP、串行
 通路及 Phase 0/1 快速路径可工作，不能用它替代本项目 Phase 2/3 的严格 Gate。
@@ -294,6 +297,10 @@ PHY_COMMAND_OWNERSHIP_PASS
 这项回归会直接影响真实 partner 对 soft EP Gen3 TS 的接受，因而与实板进入
 Phase 2 后不前进高度相关。下一块实板 bit 必须包含此修复并重新跑实现时序；不能
 用删除协议状态更新的方式换取 WNS。当前尚未生成新 bit，故不能宣称实板问题已关闭。
+
+K15 testbench 现在在同一个 golden RP 实例上增加了有界的
+`K15_RP_TX_PIPE` 记录，与 `K15_EP_TX_PIPE` 使用完全相同的 PIPE/GT 字段；VCS
+编译阶段已确认该监视器可用（运行阶段受 FlexNet license server 阻塞）。
 
 严格 VCS 在修复后仍停于较早的独立边界：soft EP 已收到并解码 RP Phase 0/1 TS，
 也在 32-bit PIPE TX 上发出修正后的 EIEOS/SKP/TS，但集成 RP 的接收侧从未产生第一个

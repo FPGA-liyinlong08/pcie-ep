@@ -1421,6 +1421,7 @@ module board;
     integer k15_ep_tx_word_count;
     integer k15_rp_rx_valid_beats;
     integer k15_rp_rx_decoded_ts;
+    integer k15_rp_tx_word_count;
     integer k15_ep_serial_edges;
     time k15_ep_serial_last_edge;
     reg k15_seen_initial_capability;
@@ -1454,6 +1455,39 @@ module board;
                      $time - k15_ep_serial_last_edge, ep_txp);
             k15_ep_serial_last_edge = $time;
             k15_ep_serial_edges = k15_ep_serial_edges + 1;
+        end
+    end
+
+    // Capture the golden XDMA Root Port's own Gen3 PIPE and GT transmit
+    // contract.  This is intentionally bounded: it records the exact words
+    // and envelope at the same boundary as K15_EP_TX_PIPE without modifying
+    // the encrypted RP or supplying a protocol bypass.
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk or
+             negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            k15_rp_tx_word_count <= 0;
+        end else if ($test$plusargs("K15_GEN3") &&
+                     (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b10) &&
+                     (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid) &&
+                     (k15_rp_tx_word_count < 24)) begin
+            $display("K15_RP_TX_PIPE n=%0d time_ps=%0t state=%0h data=%08x valid=%0d start=%0d header=%02b gt_data=%08x gt_ctrl=%04x rate_gen3=%0d user_gen3_rdy=%0d txresetdone=%0d qpll1lock=%0d txelecidle=%0d txvalid=%0d txstart=%0d txheader=%02b",
+                     k15_rp_tx_word_count, $time,
+                     RP.cfg_ltssm_state,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_syncheader,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXDATA,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXDATAK,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierategen3[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcieusergen3rdy[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_txresetdone[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_qpll1lock[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXELECIDLE,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXDATA_VALID,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXSTART_BLOCK,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_TXSYNC_HEADER);
+            k15_rp_tx_word_count <= k15_rp_tx_word_count + 1;
         end
     end
 
@@ -1529,6 +1563,7 @@ module board;
             k15_last_ep_state <= 6'h3f;
             k15_eq_trace_count <= 0;
             k15_ep_tx_word_count <= 0;
+            k15_rp_tx_word_count <= 0;
             k15_ep_serial_edges = 0;
             k15_ep_serial_last_edge = 0;
         end else if ($test$plusargs("K15_GEN3")) begin
