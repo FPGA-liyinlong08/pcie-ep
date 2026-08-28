@@ -9,7 +9,7 @@ module pcie_ltssm_mac_gen1 #(
     parameter integer HOT_RESET_CYCLES      = 250_000,
     parameter integer TX_BUFFER_BYTES       = 160,
     parameter integer K11B2_ILA_DEBUG       = 0,
-    parameter [7:0]  TX_RATE_ID             = 8'h02,
+    parameter [7:0]  TX_RATE_ID             = 8'h0e,
     // G9仅用于上板诊断：本端Receiver Detect成功并切到P0后，暂不发TS1，
     // 保持Detect assist，等待Root Port的RX activity。默认关闭。
     parameter integer G9_WAIT_REMOTE_DETECT = 0,
@@ -37,6 +37,19 @@ module pcie_ltssm_mac_gen1 #(
     input  wire [7:0]  gen3_tx_eq_control,
     input  wire [23:0] gen3_tx_eq_data,
     input  wire        gen3_protocol_eq_complete,
+    output wire        eq_req_valid,
+    output wire [2:0]  eq_req_kind,
+    output wire [3:0]  eq_req_preset,
+    output wire [17:0] eq_req_coeff,
+    input  wire        eq_req_ready,
+    input  wire        eq_busy,
+    input  wire        eq_done,
+    input  wire [2:0]  eq_result,
+    input  wire        eq_rsp_preset_sel,
+    input  wire [17:0] eq_rsp_coeff,
+    output wire        gen3_eq_active,
+    output wire [1:0]  gen3_eq_phase,
+    output wire        gen3_eq_failed,
 
     output wire [31:0] phy_txdata,
     output wire [1:0]  phy_txdatak,
@@ -111,6 +124,10 @@ module pcie_ltssm_mac_gen1 #(
     localparam [5:0] WAIT_REMOTE_DETECT    = 6'd16;
     localparam [5:0] G9_DETECT_TIMEOUT     = 6'd17;
     localparam [5:0] RECOVERY_SPEED        = 6'd18;
+    localparam [5:0] RECOVERY_EQ_PHASE0    = 6'h28;
+    localparam [5:0] RECOVERY_EQ_PHASE1    = 6'h29;
+    localparam [5:0] RECOVERY_EQ_PHASE2    = 6'h2a;
+    localparam [5:0] RECOVERY_EQ_PHASE3    = 6'h2b;
     localparam [2:0] PROFILE_DETECT_QUIET  = 3'd0;
     localparam [2:0] PROFILE_DETECT_ACTIVE = 3'd1;
     localparam [2:0] PROFILE_PHY_POWERUP   = 3'd2;
@@ -180,15 +197,33 @@ module pcie_ltssm_mac_gen1 #(
                                    (recovery_target_rate == 2'b10) &&
                                    (ltssm_state == RECOVERY_SPEED);
     wire       gen3_mode = (active_phy_rate == 2'b10) || gen3_rate_pending;
-    // A Gen3 Root Port can remain in Recovery.Equalization and exchange
-    // phase-0 TS1s with EQ fields while this compact LTSSM is represented by
-    // Recovery.RcvrCfg. Respond with TS1 during that phase; ordinary TS2
-    // RcvrCfg traffic (used by the directed harness) remains unchanged.
-    reg        gen3_eq_ts1_response_hold;
-    wire       gen3_eq_ts1_response = gen3_mode &&
-                                      (gen3_eq_ts1_response_hold ||
-                                       ((gen3_tx_eq_control != 8'h00) &&
-                                        !gen3_protocol_eq_complete));
+    wire       eq_phase_valid = (ltssm_state == RECOVERY_EQ_PHASE0) ||
+                                (ltssm_state == RECOVERY_EQ_PHASE1) ||
+                                (ltssm_state == RECOVERY_EQ_PHASE2) ||
+                                (ltssm_state == RECOVERY_EQ_PHASE3);
+    wire [1:0] eq_phase_w = (ltssm_state == RECOVERY_EQ_PHASE0) ? 2'd0 :
+                            (ltssm_state == RECOVERY_EQ_PHASE1) ? 2'd1 :
+                            (ltssm_state == RECOVERY_EQ_PHASE2) ? 2'd2 : 2'd3;
+    wire [7:0] k15_tx_eq_control;
+    wire [23:0] k15_tx_eq_data;
+    // Recovery.Equalization begins at the new rate.  The first TS1s sent
+    // while reacquiring Receiver Lock therefore already carry the Phase-0
+    // upstream-port response.  Do not expose the equalization controller's
+    // inactive 00/454545 placeholder on the serial link between Speed and
+    // the explicit Phase-0 LTSSM state.
+    wire post_rate_gen3_rcvrlock =
+        (ltssm_state == RECOVERY_RCVRLOCK) &&
+        (active_phy_rate == 2'b10) && recovery_speed_changed;
+    wire [7:0] tx_gen3_eq_control = post_rate_gen3_rcvrlock ?
+                                     8'h20 : k15_tx_eq_control;
+    wire [23:0] tx_gen3_eq_data = post_rate_gen3_rcvrlock ?
+                                  24'h802800 : k15_tx_eq_data;
+    wire eq_phase_done, eq_phase_failed;
+    wire [3:0] eq_phase_ts_count;
+    wire [2:0] eq_operation_state;
+    assign gen3_eq_active = eq_phase_valid;
+    assign gen3_eq_phase = eq_phase_w;
+    assign gen3_eq_failed = eq_phase_failed;
     wire       gen1_os_ts1_valid, gen1_os_ts2_valid, gen1_os_malformed;
     wire [7:0] gen1_os_link_number, gen1_os_lane_number;
     wire [7:0] gen1_os_n_fts, gen1_os_rate_id, gen1_os_training_control;
@@ -365,7 +400,7 @@ module pcie_ltssm_mac_gen1 #(
     wire [1:0]  frame_tx_datak;
     wire        frame_tx_valid;
     wire        framer_error;
-    wire        framer_enable = (ltssm_state == STATE_L0);
+    wire        framer_enable = (ltssm_state == STATE_L0) && !gen3_mode;
     wire [15:0] tx_plain_data = framer_enable ? frame_tx_data[15:0] :
                                                 os_tx_data[15:0];
     wire [1:0]  tx_plain_datak = framer_enable ? frame_tx_datak : os_tx_datak;
@@ -474,6 +509,32 @@ module pcie_ltssm_mac_gen1 #(
     assign os_eq_control = gen3_mode ? gen3_os_eq_control : 8'd0;
     assign os_eq_data = gen3_mode ? gen3_os_eq_data : 24'd0;
 
+    pcie_gen3_equalization_ctrl #(
+        .PHASE_TIMEOUT_CYCLES(TRAIN_TIMEOUT_CYCLES),
+        .TS_REQUIRED(8), .PORT_ROLE(0)
+    ) u_gen3_equalization (
+        .clk(phy_pclk), .rst_n(pipe_rst_n),
+        .phase_valid(eq_phase_valid), .phase(eq_phase_w),
+        .ts1_valid(os_ts1_valid && !os_link_is_pad && !os_lane_is_pad &&
+                   (os_link_number == link_number) &&
+                   (os_lane_number == 0)),
+        .ts2_valid(os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
+                   (os_link_number == link_number) &&
+                   (os_lane_number == 0)),
+        .ts_eq_control(os_eq_control), .ts_eq_data(os_eq_data),
+        .tx_ts_complete(os_tx_complete),
+        .eq_req_valid(eq_req_valid), .eq_req_kind(eq_req_kind),
+        .eq_req_preset(eq_req_preset), .eq_req_coeff(eq_req_coeff),
+        .eq_req_ready(eq_req_ready), .eq_busy(eq_busy),
+        .eq_done(eq_done), .eq_result(eq_result),
+        .eq_rsp_preset_sel(eq_rsp_preset_sel),
+        .eq_rsp_coeff(eq_rsp_coeff),
+        .tx_eq_control(k15_tx_eq_control), .tx_eq_data(k15_tx_eq_data),
+        .phase_done(eq_phase_done), .phase_failed(eq_phase_failed),
+        .phase_ts_count(eq_phase_ts_count),
+        .operation_state(eq_operation_state)
+    );
+
     pcie_gen1_os_tx u_os_tx (
         .clk              (phy_pclk),
         .rst_n            (pipe_rst_n),
@@ -496,6 +557,7 @@ module pcie_ltssm_mac_gen1 #(
         .active_word_index_debug(tx_os_active_word_index)
     );
 
+    wire [22:0] gen3_os_tx_lfsr_after_word;
     pcie_gen3_os_tx u_gen3_os_tx (
         .clk(phy_pclk), .rst_n(pipe_rst_n),
         .enable(gen3_mode && tx_os_enable), .mode(tx_os_mode),
@@ -503,12 +565,31 @@ module pcie_ltssm_mac_gen1 #(
         .lane_number(tx_os_lane), .lane_is_pad(tx_os_lane_pad),
         .n_fts(8'hff), .rate_id(tx_os_rate_id),
         .training_control(tx_os_training_control),
-        .eq_control(gen3_tx_eq_control), .eq_data(gen3_tx_eq_data),
+        .eq_control(tx_gen3_eq_control), .eq_data(tx_gen3_eq_data),
         .out_data(gen3_os_tx_data), .out_valid(gen3_os_tx_valid),
         .start_block(gen3_os_tx_start_block),
         .sync_header(gen3_os_tx_sync_header),
         .os_complete(gen3_os_tx_complete),
-        .word_index_debug(gen3_os_tx_word_index)
+        .word_index_debug(gen3_os_tx_word_index),
+        .lfsr_state_after_word(gen3_os_tx_lfsr_after_word)
+    );
+
+    wire [31:0] gen3_idle_tx_data;
+    wire gen3_idle_tx_valid, gen3_idle_tx_start_block;
+    wire [1:0] gen3_idle_tx_sync_header;
+    wire gen3_idle_block_complete;
+    wire gen3_idle_tx_enable = gen3_mode &&
+                               ((ltssm_state == RECOVERY_IDLE) ||
+                                (ltssm_state == STATE_L0));
+    pcie_gen3_idle_tx u_gen3_idle_tx (
+        .clk(phy_pclk), .rst_n(pipe_rst_n),
+        .enable(gen3_idle_tx_enable),
+        .lfsr_state_in(gen3_os_tx_lfsr_after_word),
+        .out_data(gen3_idle_tx_data),
+        .out_valid(gen3_idle_tx_valid),
+        .start_block(gen3_idle_tx_start_block),
+        .sync_header(gen3_idle_tx_sync_header),
+        .idle_block_complete(gen3_idle_block_complete)
     );
 
     assign os_tx_complete = gen3_mode ? gen3_os_tx_complete :
@@ -594,8 +675,10 @@ module pcie_ltssm_mac_gen1 #(
             end
             CFG_LANENUM_ACCEPT, RECOVERY_RCVRLOCK: tx_os_mode = 2'd1;
             CFG_COMPLETE:                         tx_os_mode = 2'd2;
-            RECOVERY_RCVRCFG:                     tx_os_mode =
-                gen3_eq_ts1_response ? 2'd1 : 2'd2;
+            RECOVERY_RCVRCFG:                     tx_os_mode = 2'd2;
+            RECOVERY_EQ_PHASE0, RECOVERY_EQ_PHASE1,
+            RECOVERY_EQ_PHASE2, RECOVERY_EQ_PHASE3:
+                                                   tx_os_mode = 2'd1;
             RECOVERY_SPEED: begin
                 tx_os_enable = 1'b0;
             end
@@ -603,8 +686,9 @@ module pcie_ltssm_mac_gen1 #(
         endcase
     end
 
-    assign phy_txdata         = gen3_mode ? gen3_os_tx_data :
-                                             {16'd0, tx_scrambled_data};
+    assign phy_txdata         = gen3_mode ?
+        (gen3_idle_tx_enable ? gen3_idle_tx_data : gen3_os_tx_data) :
+        {16'd0, tx_scrambled_data};
     // Gen3 128b/130b PIPE does not use the Gen1 K-character bitmap.  The
     // legacy 8b/10b ordered-set generator still drives tx_scrambled_datak
     // (for example 2'b01 on a TS first word); forwarding that bitmap while
@@ -612,10 +696,15 @@ module pcie_ltssm_mac_gen1 #(
     // can prevent the partner PCS from asserting RXDATA_VALID.  Gen3 carries
     // block type in TXSYNC_HEADER instead, so TXDATAK must be zero.
     assign phy_txdatak        = gen3_mode ? 2'b00 : tx_scrambled_datak;
-    assign phy_txdata_valid   = gen3_mode ? gen3_os_tx_valid :
-                                             tx_scrambled_valid;
-    assign phy_txstart_block  = gen3_mode && gen3_os_tx_start_block;
-    assign phy_txsync_header  = gen3_mode ? gen3_os_tx_sync_header : 2'b00;
+    assign phy_txdata_valid   = gen3_mode ?
+        (gen3_idle_tx_enable ? gen3_idle_tx_valid : gen3_os_tx_valid) :
+        tx_scrambled_valid;
+    assign phy_txstart_block  = gen3_mode &&
+        (gen3_idle_tx_enable ? gen3_idle_tx_start_block :
+                               gen3_os_tx_start_block);
+    assign phy_txsync_header  = gen3_mode ?
+        (gen3_idle_tx_enable ? gen3_idle_tx_sync_header :
+                               gen3_os_tx_sync_header) : 2'b00;
     assign phy_cmd_profile =
         (ltssm_state == DETECT_QUIET) ? PROFILE_DETECT_QUIET :
         (ltssm_state == DETECT_ACTIVE) ? PROFILE_DETECT_ACTIVE :
@@ -631,8 +720,9 @@ module pcie_ltssm_mac_gen1 #(
     assign link_up            = (ltssm_state == STATE_L0);
     assign negotiated_width   = ((ltssm_state >= STATE_L0 &&
                                   ltssm_state <= RECOVERY_IDLE) ||
-                                 (ltssm_state == RECOVERY_SPEED)) ? 3'd1 : 3'd0;
-    assign negotiated_speed   = 2'b00;
+                                 (ltssm_state == RECOVERY_SPEED) ||
+                                 eq_phase_valid) ? 3'd1 : 3'd0;
+    assign negotiated_speed   = active_phy_rate;
     assign recovery_speed_ready = (ltssm_state == RECOVERY_SPEED);
 
     always @(posedge phy_pclk or negedge pipe_rst_n) begin
@@ -662,34 +752,11 @@ module pcie_ltssm_mac_gen1 #(
             cfg_complete_pending <= 1'b0;
             recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= 1'b0;
-            gen3_eq_ts1_response_hold <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
             if (speed_retrain_active && !speed_retrain_active_q)
                 recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= speed_retrain_active;
-            // speed_retrain_active is a Recovery.Speed transaction flag and
-            // is cleared as soon as PhyStatus completes.  Gen3 equalization
-            // continues in RcvrCfg after that point, so it must not be used
-            // to release an in-flight TS1 response.  Otherwise a TS1 can be
-            // truncated and the next TS2 can start in the middle of the
-            // Ordered Set (observed as two mode-1 words followed by mode-2).
-            // Keep the response hold while the active PHY rate is Gen3 and
-            // the LTSSM remains in RcvrCfg.  A parser malformed pulse can be
-            // caused by EIEOS/re-synchronization and must not inject a TS2
-            // into a run of Phase-1 response TS1 Ordered Sets.  Release only
-            // on a valid TS2, explicit protocol completion, or state exit.
-            if (!gen3_mode || gen3_protocol_eq_complete ||
-                ((active_phy_rate != 2'b10) && !speed_retrain_active) ||
-                (ltssm_state != RECOVERY_RCVRCFG))
-                gen3_eq_ts1_response_hold <= 1'b0;
-            else if (os_ts2_valid)
-                gen3_eq_ts1_response_hold <= 1'b0;
-            else if (os_ts1_valid &&
-                     ((os_eq_control != 8'd0) || (os_eq_data != 24'd0)))
-                // Hold the response mode for the entire next TS block;
-                // os_ts1_valid itself is only a one-cycle completion pulse.
-                gen3_eq_ts1_response_hold <= 1'b1;
             if (ltssm_state == CFG_COMPLETE)
                 dbg_cfg_complete_seen <= 1'b1;
             if (ltssm_state == CFG_IDLE)
@@ -1026,7 +1093,10 @@ module pcie_ltssm_mac_gen1 #(
                         end else if (os_ts1_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
-                                ltssm_state <= RECOVERY_RCVRCFG;
+                                ltssm_state <= ((active_phy_rate == 2'b10) &&
+                                                recovery_speed_changed) ?
+                                               RECOVERY_EQ_PHASE0 :
+                                               RECOVERY_RCVRCFG;
                                 state_timer <= 32'd0;
                                 rx_ts_count <= 5'd0;
                             end else rx_ts_count <= rx_ts_count + 1'b1;
@@ -1084,6 +1154,50 @@ module pcie_ltssm_mac_gen1 #(
                             timeout_count <= sat_inc32(timeout_count);
                         end
                     end
+                    RECOVERY_EQ_PHASE0: begin
+                        state_timer <= state_timer + 1'b1;
+                        rx_ts_count <= 5'd0;
+                        if (recovery_fallback_active) begin
+                            ltssm_state <= RECOVERY_SPEED;
+                            state_timer <= 32'd0;
+                        end else if (eq_phase_done && (state_timer != 0)) begin
+                            ltssm_state <= RECOVERY_EQ_PHASE1;
+                            state_timer <= 32'd0;
+                        end
+                    end
+                    RECOVERY_EQ_PHASE1: begin
+                        state_timer <= state_timer + 1'b1;
+                        rx_ts_count <= 5'd0;
+                        if (recovery_fallback_active) begin
+                            ltssm_state <= RECOVERY_SPEED;
+                            state_timer <= 32'd0;
+                        end else if (eq_phase_done && (state_timer != 0)) begin
+                            ltssm_state <= RECOVERY_EQ_PHASE2;
+                            state_timer <= 32'd0;
+                        end
+                    end
+                    RECOVERY_EQ_PHASE2: begin
+                        state_timer <= state_timer + 1'b1;
+                        rx_ts_count <= 5'd0;
+                        if (recovery_fallback_active) begin
+                            ltssm_state <= RECOVERY_SPEED;
+                            state_timer <= 32'd0;
+                        end else if (eq_phase_done && (state_timer != 0)) begin
+                            ltssm_state <= RECOVERY_EQ_PHASE3;
+                            state_timer <= 32'd0;
+                        end
+                    end
+                    RECOVERY_EQ_PHASE3: begin
+                        state_timer <= state_timer + 1'b1;
+                        rx_ts_count <= 5'd0;
+                        if (recovery_fallback_active) begin
+                            ltssm_state <= RECOVERY_SPEED;
+                            state_timer <= 32'd0;
+                        end else if (eq_phase_done && (state_timer != 0)) begin
+                            ltssm_state <= RECOVERY_RCVRCFG;
+                            state_timer <= 32'd0;
+                        end
+                    end
                     RECOVERY_IDLE: begin
                         state_timer <= state_timer + 1'b1;
                         // K13 Speed/EQ控制未释放前保持Recovery，避免PHY已切速而
@@ -1130,7 +1244,11 @@ module pcie_ltssm_mac_gen1 #(
                                os_n_fts, os_rate_id, os_training_control[7:1],
                                os_raw_idle_pair_valid, tx_scrambler_state,
                                rx_scrambler_state, os_tx_data[31:16],
-                               frame_tx_data[31:16], phy_cmd_ready};
+                               frame_tx_data[31:16], phy_cmd_ready,
+                               gen3_tx_eq_control, gen3_tx_eq_data,
+                               gen3_protocol_eq_complete,
+                               eq_phase_ts_count, eq_operation_state,
+                               gen3_idle_block_complete};
 endmodule
 
 `default_nettype wire

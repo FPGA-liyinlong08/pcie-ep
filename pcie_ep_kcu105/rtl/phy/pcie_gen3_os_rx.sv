@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// Gen3 32-bit PIPE ordered-set receiver. EIEOS and SDS are clear control
-// blocks. EIEOS initializes the lane scrambler; SDS only starts a data stream
-// and still advances the LFSR. TS symbols 1..15 are descrambled while the
-// 1E/2D identifier remains clear.
+// Gen3 32-bit PIPE ordered-set receiver. EIEOS, SKP and SDS are clear control
+// blocks. EIEOS initializes the lane scrambler, SKP does not advance it, and
+// SDS advances it while arming the following Data Stream. TS symbols 1..15
+// are descrambled while the 1E/2D identifier remains clear.
 module pcie_gen3_os_rx (
     input  wire        clk,
     input  wire        rst_n,
@@ -38,25 +38,29 @@ module pcie_gen3_os_rx (
     localparam [1:0] SH_ORDERED_SET = 2'b01;
     localparam [2:0] BLOCK_NONE  = 3'd0;
     localparam [2:0] BLOCK_EIEOS = 3'd1;
-    localparam [2:0] BLOCK_SDS   = 3'd2;
+    localparam [2:0] BLOCK_SKP   = 3'd2;
     localparam [2:0] BLOCK_TS1   = 3'd3;
     localparam [2:0] BLOCK_TS2   = 3'd4;
+    localparam [2:0] BLOCK_IDLE  = 3'd5;
+    localparam [2:0] BLOCK_SDS   = 3'd6;
     localparam [22:0] LANE0_SEED = 23'h1dbfbc;
 
     reg [2:0] block_kind;
     reg [1:0] word_index;
     reg parse_error;
     reg lfsr_ready;
+    reg data_stream_armed;
     reg [22:0] lfsr_state;
     wire [31:0] descrambled_data;
     wire [22:0] lfsr_next;
     wire ts_start = start_block &&
                     ((in_data[7:0] == OS_TS1) ||
                      (in_data[7:0] == OS_TS2));
+    wire [3:0] descramble_bypass = ts_start ? 4'b0001 : 4'b0000;
 
     pcie_gen3_scrambler32 u_descrambler (
         .state_in(lfsr_state), .data_in(in_data),
-        .bypass_byte((word_index == 2'd0) ? 4'b0001 : 4'b0000),
+        .bypass_byte(descramble_bypass),
         .data_out(descrambled_data), .state_out(lfsr_next)
     );
 
@@ -66,6 +70,7 @@ module pcie_gen3_os_rx (
             word_index <= 2'd0;
             parse_error <= 1'b0;
             lfsr_ready <= 1'b0;
+            data_stream_armed <= 1'b0;
             lfsr_state <= LANE0_SEED;
             ts1_valid <= 1'b0;
             ts2_valid <= 1'b0;
@@ -84,42 +89,46 @@ module pcie_gen3_os_rx (
             ts1_valid <= 1'b0;
             ts2_valid <= 1'b0;
             malformed <= 1'b0;
+            idle_valid <= 1'b0;
 
             if (!enable) begin
                 block_kind <= BLOCK_NONE;
                 word_index <= 2'd0;
                 parse_error <= 1'b0;
                 lfsr_ready <= 1'b0;
+                data_stream_armed <= 1'b0;
                 lfsr_state <= LANE0_SEED;
             end else if (!in_valid) begin
-                if (block_kind != BLOCK_NONE) begin
-                    malformed <= 1'b1;
-                    block_kind <= BLOCK_NONE;
-                    word_index <= 2'd0;
-                end
-            end else if (!start_block && (sync_header == 2'b00) &&
-                         (in_data == 32'd0) &&
-                         (block_kind == BLOCK_NONE)) begin
-                // Gen3 Data Stream logical idle.  This is deliberately a
-                // semantic boundary signal; payload decoding is added by
-                // the later Gen3 L0 protocol gate.
-                idle_valid <= 1'b1;
+                // RxDataValid is a per-cycle use/ignore qualifier.  A bubble
+                // inside a 128-bit block does not terminate or corrupt it.
             end else if (start_block) begin
                 word_index <= 2'd1;
                 parse_error <= (sync_header != SH_ORDERED_SET);
                 if (in_data == 32'hff00_ff00) begin
                     block_kind <= BLOCK_EIEOS;
+                    data_stream_armed <= 1'b0;
                 end else if (in_data == 32'haaaa_aaaa) begin
+                    block_kind <= BLOCK_SKP;
+                    data_stream_armed <= 1'b0;
+                end else if ((in_data == 32'h5555_55e1) && lfsr_ready) begin
                     block_kind <= BLOCK_SDS;
+                    data_stream_armed <= 1'b0;
+                    // SDS bypasses descrambling but advances the LFSR.
                     lfsr_state <= lfsr_next;
                 end else if (ts_start && lfsr_ready) begin
                     block_kind <= (in_data[7:0] == OS_TS1) ? BLOCK_TS1 :
                                                                    BLOCK_TS2;
+                    data_stream_armed <= 1'b0;
                     link_number <= descrambled_data[15:8];
                     link_is_pad <= descrambled_data[15:8] == K_PAD;
                     lane_number <= descrambled_data[23:16];
                     lane_is_pad <= descrambled_data[23:16] == K_PAD;
                     n_fts <= descrambled_data[31:24];
+                    lfsr_state <= lfsr_next;
+                end else if ((sync_header == 2'b10) && lfsr_ready &&
+                             data_stream_armed) begin
+                    block_kind <= BLOCK_IDLE;
+                    parse_error <= (descrambled_data != 32'd0);
                     lfsr_state <= lfsr_next;
                 end else begin
                     block_kind <= BLOCK_NONE;
@@ -142,8 +151,7 @@ module pcie_gen3_os_rx (
                             word_index <= 2'd0;
                         end else word_index <= word_index + 1'b1;
                     end
-                    BLOCK_SDS: begin
-                        lfsr_state <= lfsr_next;
+                    BLOCK_SKP: begin
                         if (((word_index != 2'd3) &&
                              (in_data != 32'haaaa_aaaa)) ||
                             ((word_index == 2'd3) &&
@@ -157,6 +165,24 @@ module pcie_gen3_os_rx (
                             block_kind <= BLOCK_NONE;
                             word_index <= 2'd0;
                         end else word_index <= word_index + 1'b1;
+                    end
+                    BLOCK_SDS: begin
+                        lfsr_state <= lfsr_next;
+                        if (in_data != 32'h5555_5555)
+                            parse_error <= 1'b1;
+                        if (word_index == 2'd3) begin
+                            block_kind <= BLOCK_NONE;
+                            word_index <= 2'd0;
+                            if (parse_error || (in_data != 32'h5555_5555)) begin
+                                malformed <= 1'b1;
+                                lfsr_ready <= 1'b0;
+                                data_stream_armed <= 1'b0;
+                            end else begin
+                                data_stream_armed <= 1'b1;
+                            end
+                        end else begin
+                            word_index <= word_index + 1'b1;
+                        end
                     end
                     BLOCK_TS1, BLOCK_TS2: begin
                         lfsr_state <= lfsr_next;
@@ -202,6 +228,21 @@ module pcie_gen3_os_rx (
                                     ts2_valid <= 1'b1;
                             end
                         endcase
+                    end
+                    BLOCK_IDLE: begin
+                        lfsr_state <= lfsr_next;
+                        if (descrambled_data != 32'd0)
+                            parse_error <= 1'b1;
+                        if (word_index == 2'd3) begin
+                            block_kind <= BLOCK_NONE;
+                            word_index <= 2'd0;
+                            if (parse_error || (descrambled_data != 32'd0))
+                                malformed <= 1'b1;
+                            else
+                                idle_valid <= 1'b1;
+                        end else begin
+                            word_index <= word_index + 1'b1;
+                        end
                     end
                     default: begin
                         malformed <= 1'b1;

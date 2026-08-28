@@ -7,7 +7,8 @@
 module pcie_phy_command_ctrl #(
     parameter integer GOLDEN_RELEASE_GAP_CYCLES = 2_500,
     parameter integer RATE_TIMEOUT_CYCLES = 1_000_000,
-    parameter integer GEN3_TX_SETTLE_CYCLES = 32
+    parameter integer GEN3_TX_SETTLE_CYCLES = 32,
+    parameter integer EQ_TIMEOUT_CYCLES = 1_000_000
 ) (
     input  wire        phy_pclk,
     input  wire        pipe_rst_n,
@@ -31,18 +32,42 @@ module pcie_phy_command_ctrl #(
     output wire [1:0]  active_rate,
     output wire [3:0]  rate_state,
 
+    // K15 semantic equalization request.  The protocol controller chooses the
+    // operation; this block remains the sole owner of the raw PG239 pins.
+    // 0=TX preset, 1=TX coefficient, 2=TX query, 3=RX adapt, 4=RX bypass.
+    input  wire        eq_req_valid,
+    input  wire [2:0]  eq_req_kind,
+    input  wire [3:0]  eq_req_preset,
+    input  wire [17:0] eq_req_coeff,
+    output wire        eq_req_ready,
+    output wire        eq_busy,
+    output wire        eq_done,
+    // 0=none, 1=success, 2=new RX proposal, 3=timeout,
+    // 4=illegal request, 5=aborted.
+    output wire [2:0]  eq_result,
+    output wire        eq_rsp_preset_sel,
+    output wire [17:0] eq_rsp_coeff,
+
     input  wire        phy_phystatus,
     input  wire [2:0]  phy_rxstatus,
+    input  wire [5:0]  phy_txeq_fs,
+    input  wire [5:0]  phy_txeq_lf,
+    input  wire [17:0] phy_txeq_new_coeff,
+    input  wire        phy_txeq_done,
+    input  wire        phy_rxeq_preset_sel,
+    input  wire [17:0] phy_rxeq_new_txcoeff,
+    input  wire        phy_rxeq_adapt_done,
+    input  wire        phy_rxeq_done,
 
     output reg  [1:0]  phy_powerdown,
     output reg         phy_txdetectrx,
     output reg         phy_txelecidle,
     output reg  [1:0]  phy_rate,
-    output wire [1:0]  phy_txeq_ctrl,
-    output wire [3:0]  phy_txeq_preset,
-    output wire [5:0]  phy_txeq_coeff,
-    output wire [1:0]  phy_rxeq_ctrl,
-    output wire [3:0]  phy_rxeq_txpreset,
+    output reg  [1:0]  phy_txeq_ctrl,
+    output reg  [3:0]  phy_txeq_preset,
+    output reg  [5:0]  phy_txeq_coeff,
+    output reg  [1:0]  phy_rxeq_ctrl,
+    output reg  [3:0]  phy_rxeq_txpreset,
     output reg         as_mac_in_detect,
     output reg         as_cdr_hold_req,
     output wire        phy_txcompliance,
@@ -79,12 +104,26 @@ module pcie_phy_command_ctrl #(
     localparam [3:0] RATE_COMPLETE = 4'd6;
     localparam [3:0] RATE_ERROR_HOLD = 4'd7;
 
+    localparam [2:0] EQ_TX_PRESET = 3'd0;
+    localparam [2:0] EQ_TX_COEFF  = 3'd1;
+    localparam [2:0] EQ_TX_QUERY  = 3'd2;
+    localparam [2:0] EQ_RX_ADAPT  = 3'd3;
+    localparam [2:0] EQ_RX_BYPASS = 3'd4;
+    localparam [2:0] EQ_RESULT_NONE = 3'd0;
+    localparam [2:0] EQ_RESULT_SUCCESS = 3'd1;
+    localparam [2:0] EQ_RESULT_PROPOSAL = 3'd2;
+    localparam [2:0] EQ_RESULT_TIMEOUT = 3'd3;
+    localparam [2:0] EQ_RESULT_ILLEGAL = 3'd4;
+    localparam [2:0] EQ_RESULT_ABORTED = 3'd5;
+
     localparam integer GAP_LIMIT =
         (GOLDEN_RELEASE_GAP_CYCLES < 1) ? 1 : GOLDEN_RELEASE_GAP_CYCLES;
     localparam integer TIMEOUT_LIMIT =
         (RATE_TIMEOUT_CYCLES < 1) ? 1 : RATE_TIMEOUT_CYCLES;
     localparam integer SETTLE_LIMIT =
         (GEN3_TX_SETTLE_CYCLES < 1) ? 1 : GEN3_TX_SETTLE_CYCLES;
+    localparam integer EQ_TIMEOUT_LIMIT =
+        (EQ_TIMEOUT_CYCLES < 1) ? 1 : EQ_TIMEOUT_CYCLES;
 
     reg [3:0] rate_state_r;
     reg [1:0] active_rate_r;
@@ -95,14 +134,24 @@ module pcie_phy_command_ctrl #(
     reg phy_phystatus_q;
     reg rate_done_r;
     reg [2:0] rate_result_r;
+    reg phy_txeq_done_q, phy_rxeq_done_q;
+    reg eq_busy_r, eq_done_r;
+    reg [2:0] eq_kind_r, eq_result_r;
+    reg [3:0] eq_preset_r;
+    reg [17:0] eq_coeff_r, eq_rsp_coeff_r;
+    reg eq_rsp_preset_sel_r;
+    reg [1:0] eq_coeff_cycle_r;
+    reg [31:0] eq_timeout_count_r;
 
     wire phystatus_rising = phy_phystatus && !phy_phystatus_q;
+    wire txeq_done_rising = phy_txeq_done && !phy_txeq_done_q;
+    wire rxeq_done_rising = phy_rxeq_done && !phy_rxeq_done_q;
     wire rate_envelope_active = (rate_state_r != RATE_STABLE);
 
     // The controller is always able to accept the profile selected for the
     // current LTSSM state.  Completion deliberately uses the current
     // PhyStatus beat; no completion pipeline is inserted at this boundary.
-    assign op_ready = pipe_rst_n && !rate_envelope_active;
+    assign op_ready = pipe_rst_n && !rate_envelope_active && !eq_busy_r;
     assign op_done = pipe_rst_n && op_valid && op_ready && phy_phystatus;
     assign op_result = !op_done ? 2'd0 :
         ((op_kind == OP_RECEIVER_DETECT) && (phy_rxstatus != 3'b011)) ?
@@ -170,12 +219,57 @@ module pcie_phy_command_ctrl #(
         endcase
     end
 
-    assign rate_req_ready = pipe_rst_n && (rate_state_r == RATE_STABLE);
+    assign rate_req_ready = pipe_rst_n && (rate_state_r == RATE_STABLE) &&
+                            !eq_busy_r;
     assign rate_busy = rate_envelope_active;
     assign rate_done = rate_done_r;
     assign rate_result = rate_result_r;
     assign active_rate = active_rate_r;
     assign rate_state = rate_state_r;
+    assign eq_req_ready = pipe_rst_n && (rate_state_r == RATE_STABLE) &&
+                          !eq_busy_r && !rate_req_valid;
+    assign eq_busy = eq_busy_r;
+    assign eq_done = eq_done_r;
+    assign eq_result = eq_result_r;
+    assign eq_rsp_preset_sel = eq_rsp_preset_sel_r;
+    assign eq_rsp_coeff = eq_rsp_coeff_r;
+
+    // Raw EQ pins are centralized here.  Recovery.Speed deliberately leaves
+    // them inactive so the signed K14 Golden rate envelope is unchanged;
+    // only post-rate semantic Equalization operations may drive them.
+    always @* begin
+        phy_txeq_ctrl = 2'b00;
+        phy_txeq_preset = 4'd0;
+        phy_txeq_coeff = 6'd0;
+        phy_rxeq_ctrl = 2'b00;
+        phy_rxeq_txpreset = 4'd0;
+        if (eq_busy_r) begin
+            case (eq_kind_r)
+                EQ_TX_PRESET: begin
+                    phy_txeq_ctrl = 2'b01;
+                    phy_txeq_preset = eq_preset_r;
+                end
+                EQ_TX_COEFF: begin
+                    phy_txeq_ctrl = 2'b10;
+                    case (eq_coeff_cycle_r)
+                        2'd0: phy_txeq_coeff = eq_coeff_r[17:12];
+                        2'd1: phy_txeq_coeff = eq_coeff_r[11:6];
+                        default: phy_txeq_coeff = eq_coeff_r[5:0];
+                    endcase
+                end
+                EQ_TX_QUERY: phy_txeq_ctrl = 2'b11;
+                EQ_RX_ADAPT: begin
+                    phy_rxeq_ctrl = 2'b10;
+                    phy_rxeq_txpreset = eq_preset_r;
+                end
+                EQ_RX_BYPASS: begin
+                    phy_rxeq_ctrl = 2'b11;
+                    phy_rxeq_txpreset = eq_preset_r;
+                end
+                default: begin end
+            endcase
+        end
+    end
 
     always @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) begin
@@ -188,6 +282,18 @@ module pcie_phy_command_ctrl #(
             phy_phystatus_q <= 1'b0;
             rate_done_r <= 1'b0;
             rate_result_r <= RATE_RESULT_NONE;
+            phy_txeq_done_q <= 1'b0;
+            phy_rxeq_done_q <= 1'b0;
+            eq_busy_r <= 1'b0;
+            eq_done_r <= 1'b0;
+            eq_kind_r <= EQ_TX_PRESET;
+            eq_result_r <= EQ_RESULT_NONE;
+            eq_preset_r <= 4'd0;
+            eq_coeff_r <= 18'd0;
+            eq_rsp_coeff_r <= 18'd0;
+            eq_rsp_preset_sel_r <= 1'b0;
+            eq_coeff_cycle_r <= 2'd0;
+            eq_timeout_count_r <= 32'd0;
         end else if (rate_abort) begin
             // PERST/hot-reset/link-loss recovery always returns to the signed
             // Gen1 command baseline; no in-flight transaction is retried.
@@ -201,10 +307,21 @@ module pcie_phy_command_ctrl #(
             rate_done_r <= rate_envelope_active;
             rate_result_r <= rate_envelope_active ? RATE_RESULT_ABORTED :
                                                     RATE_RESULT_NONE;
+            phy_txeq_done_q <= phy_txeq_done;
+            phy_rxeq_done_q <= phy_rxeq_done;
+            eq_done_r <= eq_busy_r;
+            eq_result_r <= eq_busy_r ? EQ_RESULT_ABORTED : EQ_RESULT_NONE;
+            eq_busy_r <= 1'b0;
+            eq_coeff_cycle_r <= 2'd0;
+            eq_timeout_count_r <= 32'd0;
         end else begin
             phy_phystatus_q <= phy_phystatus;
+            phy_txeq_done_q <= phy_txeq_done;
+            phy_rxeq_done_q <= phy_rxeq_done;
             rate_done_r <= 1'b0;
             rate_result_r <= RATE_RESULT_NONE;
+            eq_done_r <= 1'b0;
+            eq_result_r <= EQ_RESULT_NONE;
             case (rate_state_r)
                 RATE_STABLE: begin
                     gap_count_r <= 32'd0;
@@ -223,6 +340,7 @@ module pcie_phy_command_ctrl #(
                         end else begin
                             target_rate_r <= rate_req_target;
                             rate_state_r <= RATE_RELEASE;
+                            timeout_count_r <= 32'd0;
                         end
                     end
                 end
@@ -282,23 +400,71 @@ module pcie_phy_command_ctrl #(
                     target_rate_r <= RATE_GEN1;
                 end
             endcase
+
+            // Post-rate semantic EQ executor.  Rate requests have admission
+            // priority, and an active rate envelope prevents new EQ work.
+            if (!eq_busy_r) begin
+                eq_timeout_count_r <= 32'd0;
+                eq_coeff_cycle_r <= 2'd0;
+                if (eq_req_valid && eq_req_ready) begin
+                    if (eq_req_kind > EQ_RX_BYPASS ||
+                        ((eq_req_kind == EQ_TX_PRESET ||
+                          eq_req_kind == EQ_RX_ADAPT ||
+                          eq_req_kind == EQ_RX_BYPASS) &&
+                         (eq_req_preset > 4'd9))) begin
+                        eq_done_r <= 1'b1;
+                        eq_result_r <= EQ_RESULT_ILLEGAL;
+                    end else begin
+                        eq_busy_r <= 1'b1;
+                        eq_kind_r <= eq_req_kind;
+                        eq_preset_r <= eq_req_preset;
+                        eq_coeff_r <= eq_req_coeff;
+                    end
+                end
+            end else begin
+                if ((eq_kind_r == EQ_TX_COEFF) &&
+                    (eq_coeff_cycle_r < 2'd2))
+                    eq_coeff_cycle_r <= eq_coeff_cycle_r + 1'b1;
+
+                if (((eq_kind_r <= EQ_TX_QUERY) && txeq_done_rising) ||
+                    ((eq_kind_r >= EQ_RX_ADAPT) && rxeq_done_rising)) begin
+                    eq_busy_r <= 1'b0;
+                    eq_done_r <= 1'b1;
+                    eq_timeout_count_r <= 32'd0;
+                    if (eq_kind_r == EQ_TX_QUERY) begin
+                        eq_rsp_coeff_r <= phy_txeq_new_coeff;
+                        eq_result_r <= EQ_RESULT_SUCCESS;
+                    end else if (eq_kind_r >= EQ_RX_ADAPT) begin
+                        eq_rsp_preset_sel_r <= phy_rxeq_preset_sel;
+                        eq_rsp_coeff_r <= phy_rxeq_new_txcoeff;
+                        eq_result_r <= phy_rxeq_adapt_done ?
+                                       EQ_RESULT_SUCCESS : EQ_RESULT_PROPOSAL;
+                    end else begin
+                        eq_result_r <= EQ_RESULT_SUCCESS;
+                    end
+                end else if (eq_timeout_count_r >=
+                             (EQ_TIMEOUT_LIMIT - 1)) begin
+                    eq_busy_r <= 1'b0;
+                    eq_done_r <= 1'b1;
+                    eq_result_r <= EQ_RESULT_TIMEOUT;
+                    eq_timeout_count_r <= 32'd0;
+                end else begin
+                    eq_timeout_count_r <= eq_timeout_count_r + 1'b1;
+                end
+            end
         end
     end
 
-    // Compliance, polarity, margin, swing, deemphasis and all equalization
-    // controls retain one centralized zero owner through Phase D.
-    assign phy_txeq_ctrl = 2'b00;
-    assign phy_txeq_preset = 4'd0;
-    assign phy_txeq_coeff = 6'd0;
-    assign phy_rxeq_ctrl = 2'b00;
-    assign phy_rxeq_txpreset = 4'd0;
+    // Compliance, polarity, margin, swing and deemphasis retain centralized
+    // safe values. Equalization controls above now share the same raw owner.
     assign phy_txcompliance = 1'b0;
     assign phy_rxpolarity = 1'b0;
     assign phy_txmargin = 3'b000;
     assign phy_txswing = 1'b0;
     assign phy_txdeemph = 1'b0;
 
-    wire _unused = &{1'b0, PROFILE_ACTIVE, RATE_GEN1};
+    wire _unused = &{1'b0, PROFILE_ACTIVE, RATE_GEN1, phy_txeq_fs,
+                     phy_txeq_lf};
 endmodule
 
 `default_nettype wire

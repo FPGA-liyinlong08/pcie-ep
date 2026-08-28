@@ -29,6 +29,7 @@
 	k14-rate-id-ab-vcs \
 	k14-direct-sim \
 	k14-reboot-vcs k14-reboot-sim \
+	k15-directed-test k15-static k15-vcs k15 \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
@@ -236,6 +237,7 @@ k03-lint:
 		rtl/phy/pcie_gen3_scrambler32.sv \
 		rtl/phy/pcie_gen3_os_rx.sv \
 		rtl/phy/pcie_gen3_os_tx.sv \
+		rtl/phy/pcie_gen3_idle_tx.sv rtl/phy/pcie_gen3_equalization_ctrl.sv \
 		rtl/phy/pcie_gen1_framer.sv \
 		rtl/phy/pcie_phy_command_ctrl.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv
@@ -254,6 +256,7 @@ k03-lint:
 		rtl/phy/pcie_gen3_scrambler32.sv \
 		rtl/phy/pcie_gen3_os_rx.sv \
 		rtl/phy/pcie_gen3_os_tx.sv \
+		rtl/phy/pcie_gen3_idle_tx.sv rtl/phy/pcie_gen3_equalization_ctrl.sv \
 		rtl/phy/pcie_gen1_framer.sv \
 		rtl/phy/pcie_phy_command_ctrl.sv \
 		rtl/phy/pcie_ltssm_mac_gen1.sv \
@@ -274,6 +277,19 @@ phy-command-ctrl-test:
 
 phy-command-ownership:
 	python3 scripts/check_phy_command_ownership.py
+
+k15-directed-test:
+	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module k15_eq_idle_test_top \
+		$(CURDIR)/rtl/phy/pcie_gen3_scrambler32.sv \
+		$(CURDIR)/rtl/phy/pcie_gen3_os_rx.sv \
+		$(CURDIR)/rtl/phy/pcie_gen3_os_tx.sv \
+		$(CURDIR)/rtl/phy/pcie_gen3_idle_tx.sv \
+		$(CURDIR)/rtl/phy/pcie_gen3_equalization_ctrl.sv \
+		$(CURDIR)/sim/verilator/k15/k15_eq_idle_test_top.sv \
+		$(CURDIR)/sim/verilator/k15/k15_eq_idle_test.cpp \
+		-Mdir sim/verilator/k15/sim_build
+	./sim/verilator/k15/sim_build/Vk15_eq_idle_test_top
 
 k14-recovery-speed-test:
 	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
@@ -306,6 +322,14 @@ k14-reboot-sim:
 	$(MAKE) k14-direct-sim
 	$(MAKE) k14-reboot-vcs
 
+k15-static: k15-directed-test phy-command-ctrl-test \
+		k14-recovery-speed-test phy-command-ownership k11b2-lint
+
+k15-vcs:
+	./sim/vcs/run_k15_gen3.sh
+
+k15: k15-static k15-vcs
+
 k03-vivado:
 	./fpga/kcu105/run_k03_checks.sh
 
@@ -332,6 +356,7 @@ k11b2-lint:
 		rtl/phy/pcie_gen12_scrambler.sv rtl/phy/pcie_gen1_rx_symbol_aligner.sv \
 		rtl/phy/pcie_gen1_os_rx.sv rtl/phy/pcie_gen1_os_tx.sv \
 		rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
+		rtl/phy/pcie_gen3_idle_tx.sv rtl/phy/pcie_gen3_equalization_ctrl.sv \
 		rtl/phy/pcie_gen1_framer.sv rtl/phy/pcie_phy_command_ctrl.sv \
 		rtl/phy/pcie_recovery_speed_ctrl.sv \
 		rtl/phy/pcie_partner_retrain_pending.sv \

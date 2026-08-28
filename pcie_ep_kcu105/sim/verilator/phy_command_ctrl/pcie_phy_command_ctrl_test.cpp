@@ -28,6 +28,18 @@ static void reset(Vpcie_phy_command_ctrl &dut) {
     dut.rate_req_target = 0;
     dut.rate_abort = 0;
     dut.phy_phystatus = 0;
+    dut.eq_req_valid = 0;
+    dut.eq_req_kind = 0;
+    dut.eq_req_preset = 0;
+    dut.eq_req_coeff = 0;
+    dut.phy_txeq_fs = 0;
+    dut.phy_txeq_lf = 0;
+    dut.phy_txeq_new_coeff = 0;
+    dut.phy_txeq_done = 0;
+    dut.phy_rxeq_preset_sel = 0;
+    dut.phy_rxeq_new_txcoeff = 0;
+    dut.phy_rxeq_adapt_done = 0;
+    dut.phy_rxeq_done = 0;
     dut.eval();
 }
 
@@ -44,6 +56,18 @@ int main(int argc, char **argv) {
     dut.rate_abort = 0;
     dut.phy_phystatus = 0;
     dut.phy_rxstatus = 0;
+    dut.eq_req_valid = 0;
+    dut.eq_req_kind = 0;
+    dut.eq_req_preset = 0;
+    dut.eq_req_coeff = 0;
+    dut.phy_txeq_fs = 0;
+    dut.phy_txeq_lf = 0;
+    dut.phy_txeq_new_coeff = 0;
+    dut.phy_txeq_done = 0;
+    dut.phy_rxeq_preset_sel = 0;
+    dut.phy_rxeq_new_txcoeff = 0;
+    dut.phy_rxeq_adapt_done = 0;
+    dut.phy_rxeq_done = 0;
     dut.eval();
     require(!dut.op_ready && !dut.op_done && dut.op_result == 0,
             "reset handshake");
@@ -94,8 +118,9 @@ int main(int argc, char **argv) {
     dut.eval();
     require(dut.op_done && dut.op_result == 1, "P0 success");
 
-    // Golden Gen1->Gen3 contract: one release beat, four-cycle test gap,
-    // apply/hold Gen3 until a fresh PhyStatus edge, then two settle cycles.
+    // K15 keeps the signed K14 Golden release-gap/rate/PhyStatus envelope
+    // unchanged.  Equalization presets are issued later by the semantic EQ
+    // executor, after the Gen3 rate transaction has completed.
     dut.op_valid = 0;
     dut.phy_phystatus = 0;
     dut.rate_req_valid = 1;
@@ -166,6 +191,7 @@ int main(int argc, char **argv) {
     tick(dut);
     dut.rate_req_valid = 0;
     tick(dut);
+    tick(dut);
     for (int i = 0; i < 5; ++i)
         tick(dut);
     require(dut.rate_state == 4 && !dut.rate_done,
@@ -193,6 +219,7 @@ int main(int argc, char **argv) {
     tick(dut);
     dut.rate_req_valid = 0;
     tick(dut);
+    tick(dut);
     for (int i = 0; i < 5; ++i)
         tick(dut);
     for (int i = 0; i < 12 && dut.rate_state != 7; ++i)
@@ -216,8 +243,50 @@ int main(int argc, char **argv) {
             dut.rate_state == 0 && dut.phy_rate == 0,
             "illegal target rejected");
 
+    // Semantic EQ remains behind the same raw owner. Check TX coefficient
+    // sequencing and RX proposal sampling at the done boundary.
+    tick(dut);
+    dut.eq_req_valid = 1;
+    dut.eq_req_kind = 1;
+    dut.eq_req_coeff = 0x12345;
+    tick(dut);
+    dut.eq_req_valid = 0;
+    require(dut.eq_busy && dut.phy_txeq_ctrl == 2 &&
+            dut.phy_txeq_coeff == ((0x12345 >> 12) & 0x3f),
+            "TX coefficient pre-cursor beat");
+    tick(dut);
+    require(dut.phy_txeq_coeff == ((0x12345 >> 6) & 0x3f),
+            "TX coefficient main-cursor beat");
+    tick(dut);
+    require(dut.phy_txeq_coeff == (0x12345 & 0x3f),
+            "TX coefficient post-cursor beat");
+    dut.phy_txeq_done = 1;
+    tick(dut);
+    dut.phy_txeq_done = 0;
+    require(dut.eq_done && dut.eq_result == 1 && !dut.eq_busy &&
+            dut.phy_txeq_ctrl == 0, "TX coefficient completion");
+
+    tick(dut);
+    dut.eq_req_valid = 1;
+    dut.eq_req_kind = 3;
+    dut.eq_req_preset = 5;
+    tick(dut);
+    dut.eq_req_valid = 0;
+    require(dut.eq_busy && dut.phy_rxeq_ctrl == 2 &&
+            dut.phy_rxeq_txpreset == 5, "RX adapt request");
+    dut.phy_rxeq_preset_sel = 1;
+    dut.phy_rxeq_new_txcoeff = 7;
+    dut.phy_rxeq_done = 1;
+    dut.phy_rxeq_adapt_done = 0;
+    tick(dut);
+    dut.phy_rxeq_done = 0;
+    require(dut.eq_done && dut.eq_result == 2 &&
+            dut.eq_rsp_preset_sel && dut.eq_rsp_coeff == 7,
+            "RX new proposal capture");
+
     std::cout << "PHY_COMMAND_CTRL_EQUIVALENCE_PASS\n";
     std::cout << "PHY_COMMAND_CTRL_GOLDEN_RATE_PASS\n";
+    std::cout << "K15_PHY_EQ_SEMANTIC_PASS\n";
     dut.final();
     return 0;
 }

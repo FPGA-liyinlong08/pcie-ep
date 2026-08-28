@@ -77,6 +77,7 @@ if {$resume_routed_dcp ne ""} {
   rtl/phy/pcie_gen1_rx_symbol_aligner.sv rtl/phy/pcie_gen1_os_rx.sv \
   rtl/phy/pcie_gen1_os_tx.sv rtl/phy/pcie_gen3_scrambler32.sv \
   rtl/phy/pcie_gen3_os_rx.sv rtl/phy/pcie_gen3_os_tx.sv \
+  rtl/phy/pcie_gen3_idle_tx.sv rtl/phy/pcie_gen3_equalization_ctrl.sv \
   rtl/phy/pcie_gen1_framer.sv rtl/phy/k02_phy_event_recorder.sv \
   rtl/phy/pcie_phy_command_ctrl.sv rtl/phy/pcie_recovery_speed_ctrl.sv \
   rtl/phy/pcie_partner_retrain_pending.sv \

@@ -21,6 +21,10 @@ module k14_direct_vcs_tb;
     wire [1:0] phy_txeq_ctrl, phy_rxeq_ctrl;
     wire [3:0] phy_txeq_preset, phy_rxeq_txpreset;
     wire [5:0] phy_txeq_coeff;
+    wire [5:0] phy_txeq_fs, phy_txeq_lf;
+    wire [17:0] phy_txeq_new_coeff, phy_rxeq_new_txcoeff;
+    wire phy_txeq_done, phy_rxeq_preset_sel;
+    wire phy_rxeq_adapt_done, phy_rxeq_done;
     wire as_mac_in_detect, as_cdr_hold_req;
     wire pcie_txp, pcie_txn;
 
@@ -86,7 +90,18 @@ module k14_direct_vcs_tb;
         .rate_busy(rate_busy), .rate_done(rate_done),
         .rate_result(rate_result), .active_rate(active_rate),
         .rate_state(rate_state), .phy_phystatus(phy_phystatus),
-        .phy_rxstatus(phy_rxstatus), .phy_powerdown(phy_powerdown),
+        .eq_req_valid(1'b0), .eq_req_kind(3'd0),
+        .eq_req_preset(4'd0), .eq_req_coeff(18'd0),
+        .eq_req_ready(), .eq_busy(), .eq_done(), .eq_result(),
+        .eq_rsp_preset_sel(), .eq_rsp_coeff(),
+        .phy_rxstatus(phy_rxstatus),
+        .phy_txeq_fs(phy_txeq_fs), .phy_txeq_lf(phy_txeq_lf),
+        .phy_txeq_new_coeff(phy_txeq_new_coeff),
+        .phy_txeq_done(phy_txeq_done),
+        .phy_rxeq_preset_sel(phy_rxeq_preset_sel),
+        .phy_rxeq_new_txcoeff(phy_rxeq_new_txcoeff),
+        .phy_rxeq_adapt_done(phy_rxeq_adapt_done),
+        .phy_rxeq_done(phy_rxeq_done), .phy_powerdown(phy_powerdown),
         .phy_txdetectrx(phy_txdetectrx), .phy_txelecidle(phy_txelecidle),
         .phy_rate(phy_rate), .phy_txeq_ctrl(phy_txeq_ctrl),
         .phy_txeq_preset(phy_txeq_preset),
@@ -119,10 +134,14 @@ module k14_direct_vcs_tb;
         .phy_rxdata_valid(), .phy_rxstart_block(), .phy_rxsync_header(),
         .phy_rxvalid(), .phy_phystatus(phy_phystatus),
         .phy_phystatus_rst(phy_phystatus_rst), .phy_rxelecidle(),
-        .phy_rxstatus(phy_rxstatus), .phy_txeq_fs(), .phy_txeq_lf(),
-        .phy_txeq_new_coeff(), .phy_txeq_done(),
-        .phy_rxeq_preset_sel(), .phy_rxeq_new_txcoeff(),
-        .phy_rxeq_adapt_done(), .phy_rxeq_done()
+        .phy_rxstatus(phy_rxstatus), .phy_txeq_fs(phy_txeq_fs),
+        .phy_txeq_lf(phy_txeq_lf),
+        .phy_txeq_new_coeff(phy_txeq_new_coeff),
+        .phy_txeq_done(phy_txeq_done),
+        .phy_rxeq_preset_sel(phy_rxeq_preset_sel),
+        .phy_rxeq_new_txcoeff(phy_rxeq_new_txcoeff),
+        .phy_rxeq_adapt_done(phy_rxeq_adapt_done),
+        .phy_rxeq_done(phy_rxeq_done)
     );
 
     wire qpll1lock = phy.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.qpll1lock_out[0];
@@ -132,9 +151,16 @@ module k14_direct_vcs_tb;
     reg seen_qpll_lock = 1'b0;
     reg fallback_window = 1'b0;
     reg [1:0] last_phy_rate = 2'b00;
+    reg [3:0] last_rate_state = 4'hf;
+    reg [2:0] last_speed_state = 3'h7;
 
     always @(posedge phy_pclk) begin
         if (pipe_rst_n) begin
+            if ((rate_state != last_rate_state) ||
+                (speed_state != last_speed_state))
+                $display("K14_DIRECT_STATE time_ps=%0t speed=%0d rate_state=%0d rate=%0d active=%0d phystatus=%0d txeq=%0d",
+                         $time, speed_state, rate_state, phy_rate, active_rate,
+                         phy_phystatus, phy_txeq_ctrl);
             if ((phy_rate == 2'b10) && (last_phy_rate != 2'b10))
                 gen3_excursions = gen3_excursions + 1;
             if ((phy_rate == 2'b10) && phy_phystatus)
@@ -146,6 +172,8 @@ module k14_direct_vcs_tb;
             if (fallback_window && (phy_rate == 2'b00) && phy_phystatus)
                 seen_gen1_fallback_phystatus = 1'b1;
             last_phy_rate = phy_rate;
+            last_rate_state = rate_state;
+            last_speed_state = speed_state;
         end
     end
 
@@ -208,6 +236,12 @@ module k14_direct_vcs_tb;
         while (!((active_rate == 2'b00) && (speed_state == 3'd0)) &&
                (cycles < 300_000)) begin
             @(posedge phy_pclk);
+            // Model the production LTSSM returning to Recovery.Speed for the
+            // explicit Gen1 fallback request.
+            if (speed_state == 3'd5)
+                ltssm_speed_ready = 1'b1;
+            else if (speed_state == 3'd6)
+                ltssm_speed_ready = 1'b0;
             cycles = cycles + 1;
         end
         if (!fallback_taken || !speed_timeout)

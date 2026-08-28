@@ -313,6 +313,7 @@ module board;
         b2_active = $test$plusargs("K11B2_RUN");
         b2_stress = $test$plusargs("K11B2_STRESS");
         k14_reboot_active = $test$plusargs("K14_REBOOT") ||
+                            $test$plusargs("K15_GEN3") ||
                             $test$plusargs("K14_RATE_AB");
         k14_rate_ab_active = $test$plusargs("K14_RATE_AB");
         k13_retrain_active = $test$plusargs("K13_RETRAIN");
@@ -1408,6 +1409,287 @@ module board;
             $finish;
         end
     end
+
+`ifdef K15_VCS
+    localparam integer K15_EPOCH_TIMEOUT_CYCLES = 3_000_000;
+    localparam integer K15_L0_STABLE_CYCLES = 256;
+    integer k15_epoch;
+    integer k15_wait_cycles;
+    integer k15_l0_stable;
+    integer k15_eq_trace_count;
+    integer k15_ep_tx_word_count;
+    integer k15_rp_rx_valid_beats;
+    integer k15_rp_rx_decoded_ts;
+    reg k15_seen_initial_capability;
+    reg k15_seen_eq_phase0;
+    reg k15_seen_eq_phase1;
+    reg k15_seen_eq_phase2;
+    reg k15_seen_eq_phase3;
+    reg k15_seen_recovery_idle;
+    reg k15_seen_gen3_l0;
+    reg k15_seen_eq_failure;
+    reg k15_seen_rp_gen3_rxdata_valid;
+    reg [5:0] k15_last_ep_state;
+    wire k15_rp_rx_ts1;
+    wire k15_rp_rx_ts2;
+    wire k15_rp_rx_malformed;
+    wire [7:0] k15_rp_rx_rate;
+    wire [7:0] k15_rp_rx_control;
+    wire [7:0] k15_rp_rx_eq_control;
+    wire [23:0] k15_rp_rx_eq_data;
+
+    always @(EP.DUT.phy_rate or EP.DUT.phy_txelecidle or
+             EP.DUT.phy_phystatus or EP.DUT.phy_txeq_ctrl or
+             EP.DUT.phy_txeq_done or EP.DUT.as_cdr_hold_req) begin
+        if ($test$plusargs("K15_GEN3"))
+            $display("K15_PHY_ENVELOPE time_ps=%0t ep_state=%0h speed_state=%0d cmd_state=%0d rate=%02b txei=%0d txeq_ctrl=%02b txeq_preset=%0d txeq_done=%0d phystatus=%0d cdr_hold=%0d",
+                     $time, EP.DUT.ltssm_state, EP.DUT.speed_state,
+                     EP.DUT.phy_rate_state, EP.DUT.phy_rate,
+                     EP.DUT.phy_txelecidle, EP.DUT.phy_txeq_ctrl,
+                     EP.DUT.phy_txeq_preset, EP.DUT.phy_txeq_done,
+                     EP.DUT.phy_phystatus, EP.DUT.as_cdr_hold_req);
+    end
+
+    // Independent decode at the Root Port PIPE receive boundary proves that
+    // the scrambled Endpoint response, rather than only controller intent,
+    // reached the encrypted RP model.
+    pcie_gen3_os_rx K15_RP_PIPE_RX_OS_RX (
+        .clk(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk),
+        .rst_n(sys_rst_n), .enable(1'b1),
+        .in_valid(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]),
+        .start_block(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0]),
+        .sync_header(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0]),
+        .in_data(RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]),
+        .ts1_valid(k15_rp_rx_ts1), .ts2_valid(k15_rp_rx_ts2),
+        .malformed(k15_rp_rx_malformed), .idle_valid(),
+        .link_number(), .link_is_pad(), .lane_number(), .lane_is_pad(),
+        .n_fts(), .rate_id(k15_rp_rx_rate),
+        .training_control(k15_rp_rx_control),
+        .eq_control(k15_rp_rx_eq_control), .eq_data(k15_rp_rx_eq_data)
+    );
+
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk or
+             negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            k15_seen_rp_gen3_rxdata_valid <= 1'b0;
+            k15_rp_rx_valid_beats <= 0;
+            k15_rp_rx_decoded_ts <= 0;
+        end else if ($test$plusargs("K15_GEN3") &&
+                     (EP.DUT.phy_active_rate == 2'b10)) begin
+            if (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]) begin
+                k15_seen_rp_gen3_rxdata_valid <= 1'b1;
+                k15_rp_rx_valid_beats <= k15_rp_rx_valid_beats + 1;
+            end
+            if (k15_rp_rx_ts1 || k15_rp_rx_ts2)
+                k15_rp_rx_decoded_ts <= k15_rp_rx_decoded_ts + 1;
+        end
+
+        if ($test$plusargs("K15_GEN3") &&
+            (k15_rp_rx_ts1 || k15_rp_rx_ts2) &&
+            (k15_eq_trace_count < 96))
+            $display("K15_RP_PIPE_RX_TRACE time_ps=%0t ts1=%0d ts2=%0d rate=%02x ctl=%02x eqctl=%02x eqdata=%06x malformed=%0d",
+                     $time, k15_rp_rx_ts1, k15_rp_rx_ts2,
+                     k15_rp_rx_rate, k15_rp_rx_control,
+                     k15_rp_rx_eq_control, k15_rp_rx_eq_data,
+                     k15_rp_rx_malformed);
+    end
+
+    // Capability is checked at the actual Endpoint PIPE transmitter while the
+    // committed PHY rate is still Gen1.  Rate bit 7 must remain clear until
+    // the downstream port requests a speed change.
+    always @(posedge EP.DUT.phy_pclk or negedge sys_rst_n) begin
+        if (!sys_rst_n) begin
+            k15_seen_initial_capability <= 1'b0;
+            k15_seen_eq_phase0 <= 1'b0;
+            k15_seen_eq_phase1 <= 1'b0;
+            k15_seen_eq_phase2 <= 1'b0;
+            k15_seen_eq_phase3 <= 1'b0;
+            k15_seen_recovery_idle <= 1'b0;
+            k15_seen_gen3_l0 <= 1'b0;
+            k15_seen_eq_failure <= 1'b0;
+            k15_last_ep_state <= 6'h3f;
+            k15_eq_trace_count <= 0;
+            k15_ep_tx_word_count <= 0;
+        end else if ($test$plusargs("K15_GEN3")) begin
+            if ((EP.DUT.phy_active_rate == 2'b10) &&
+                EP.DUT.phy_txdata_valid &&
+                (k15_ep_tx_word_count < 24)) begin
+                $display("K15_EP_TX_PIPE n=%0d time_ps=%0t state=%0h data=%08x valid=%0d start=%0d header=%02b gt_data=%08x gt_ctrl=%04x rate_gen3=%0d user_gen3_rdy=%0d txresetdone=%0d txuserrdy=%0d gttxreset=%0d syncstart=%0d pcs_syncdone=%0d txphalign=%0d txsyncdone=%0d",
+                         k15_ep_tx_word_count, $time, EP.DUT.ltssm_state,
+                         EP.DUT.phy_txdata, EP.DUT.phy_txdata_valid,
+                         EP.DUT.phy_txstart_block, EP.DUT.phy_txsync_header,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txdata_in[31:0],
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txctrl0_in[15:0],
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIERATEGEN3,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIEUSERGEN3RDY,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_TXRESETDONE,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txuserrdy_in,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.gttxreset_in,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIERSTTXSYNCSTART,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIESYNCTXSYNCDONE,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_TXPHALIGNDONE,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.txsyncdone_out);
+                k15_ep_tx_word_count <= k15_ep_tx_word_count + 1;
+            end
+            if ((k14_ep_raw_ts1 || k14_ep_raw_ts2) &&
+                (k14_ep_raw_rate_id[3:1] == 3'b111) &&
+                !k14_ep_raw_rate_id[7] &&
+                (EP.DUT.phy_active_rate == 2'b00)) begin
+                if (!k15_seen_initial_capability)
+                    $display("K15_INITIAL_GEN3_CAPABILITY_SEEN epoch=%0d time_ps=%0t rate_id=%02x",
+                             k15_epoch, $time, k14_ep_raw_rate_id);
+                k15_seen_initial_capability <= 1'b1;
+            end
+
+            if (EP.DUT.ltssm_state == 6'h28)
+                k15_seen_eq_phase0 <= 1'b1;
+            if ((EP.DUT.ltssm_state == 6'h29) && !k15_seen_eq_phase1) begin
+                k15_seen_eq_phase1 <= 1'b1;
+                $display("K15_EQ_PHASE0_DONE epoch=%0d time_ps=%0t", k15_epoch, $time);
+            end
+            if ((EP.DUT.ltssm_state == 6'h2a) && !k15_seen_eq_phase2) begin
+                k15_seen_eq_phase2 <= 1'b1;
+                $display("K15_EQ_PHASE1_DONE epoch=%0d time_ps=%0t", k15_epoch, $time);
+            end
+            if ((EP.DUT.ltssm_state == 6'h2b) && !k15_seen_eq_phase3) begin
+                k15_seen_eq_phase3 <= 1'b1;
+                $display("K15_EQ_PHASE2_DONE epoch=%0d time_ps=%0t", k15_epoch, $time);
+            end
+            if ((k15_last_ep_state == 6'h2b) &&
+                (EP.DUT.ltssm_state != 6'h2b))
+                $display("K15_EQ_PHASE3_DONE epoch=%0d time_ps=%0t next_state=%0h",
+                         k15_epoch, $time, EP.DUT.ltssm_state);
+
+            if ((EP.DUT.ltssm_state == 6'd13) && !k15_seen_recovery_idle) begin
+                k15_seen_recovery_idle <= 1'b1;
+                $display("K15_RECOVERY_IDLE epoch=%0d time_ps=%0t rp_state=%0h",
+                         k15_epoch, $time, RP.cfg_ltssm_state);
+            end
+            if ((EP.DUT.ltssm_state == 6'd10) &&
+                (EP.DUT.phy_active_rate == 2'b10) && !k15_seen_gen3_l0) begin
+                k15_seen_gen3_l0 <= 1'b1;
+                $display("K15_GEN3_L0_PASS epoch=%0d time_ps=%0t rp_speed=%0d",
+                         k15_epoch, $time, RP.cfg_current_speed);
+            end
+            if (EP.DUT.gen3_eq_failed)
+                k15_seen_eq_failure <= 1'b1;
+            if ((EP.DUT.os_ts1_valid || EP.DUT.os_ts2_valid) &&
+                (EP.DUT.phy_active_rate == 2'b10) &&
+                (k15_eq_trace_count < 96)) begin
+                $display("K15_EQ_RX_TRACE epoch=%0d time_ps=%0t ep_state=%0h rp_state=%0h rp_phase=%0d ts1=%0d ts2=%0d ctl=%02x data=%06x txctl=%02x txdata=%06x op=%0d",
+                         k15_epoch, $time, EP.DUT.ltssm_state,
+                         RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pl_eq_phase,
+                         EP.DUT.os_ts1_valid, EP.DUT.os_ts2_valid,
+                         EP.DUT.os_eq_control, EP.DUT.os_eq_data,
+                         EP.DUT.u_ltssm_mac.k15_tx_eq_control,
+                         EP.DUT.u_ltssm_mac.k15_tx_eq_data,
+                         EP.DUT.u_ltssm_mac.eq_operation_state);
+                k15_eq_trace_count <= k15_eq_trace_count + 1;
+            end
+            k15_last_ep_state <= EP.DUT.ltssm_state;
+        end
+    end
+
+    initial begin : k15_autonomous_gen3_test
+        k15_epoch = 0;
+        k15_wait_cycles = 0;
+        k15_l0_stable = 0;
+        if ($test$plusargs("K15_GEN3")) begin
+            wait (sys_rst_n === 1'b1);
+            for (k15_epoch = 0; k15_epoch < 2; k15_epoch = k15_epoch + 1) begin
+                k15_wait_cycles = 0;
+                while (!(k15_seen_initial_capability &&
+                         k14_seen_rp_raw_gen3_ts &&
+                         k14_seen_partner_accept &&
+                         k14_seen_gen3_rate &&
+                         k14_seen_gen3_phystatus &&
+                         k14_seen_qpll_lock &&
+                         k15_seen_eq_phase0 &&
+                         k15_seen_eq_phase1 &&
+                         k15_seen_eq_phase2 &&
+                         k15_seen_eq_phase3 &&
+                         k15_seen_recovery_idle &&
+                         k15_seen_gen3_l0) &&
+                       !EP.DUT.g_gen3_rate_change.speed_timeout_sticky &&
+                       !EP.DUT.g_gen3_rate_change.speed_fallback_sticky &&
+                       !k15_seen_eq_failure &&
+                       (k15_wait_cycles < K15_EPOCH_TIMEOUT_CYCLES)) begin
+                    @(posedge EP.DUT.phy_pclk);
+                    k15_wait_cycles = k15_wait_cycles + 1;
+                end
+
+                if (!k15_seen_initial_capability)
+                    $fatal(1, "K15_INITIAL_GEN3_CAPABILITY_MISSING");
+                if (EP.DUT.g_gen3_rate_change.speed_timeout_sticky ||
+                    EP.DUT.g_gen3_rate_change.speed_fallback_sticky) begin
+                    $display("K15_VCS_BLOCKED_RP_EQ_RESPONSE_NOT_CONSUMED epoch=%0d ep_txvalid=%0d ep_txstart=%0d rp_rxvalid_seen=%0d rp_rxvalid_beats=%0d rp_decoded_ts=%0d rp_state=%0h ep_state=%0h ep_tx_eq_control=%02x ep_tx_eq_data=%06x",
+                             k15_epoch, EP.DUT.phy_txdata_valid,
+                             EP.DUT.phy_txstart_block,
+                             k15_seen_rp_gen3_rxdata_valid,
+                             k15_rp_rx_valid_beats,
+                             k15_rp_rx_decoded_ts,
+                             RP.cfg_ltssm_state, EP.DUT.ltssm_state,
+                             EP.DUT.u_ltssm_mac.k15_tx_eq_control,
+                             EP.DUT.u_ltssm_mac.k15_tx_eq_data);
+                    $fatal(1, "K15_UNEXPECTED_SPEED_TIMEOUT_FALLBACK");
+                end
+                if (!k14_seen_rp_raw_gen3_ts)
+                    $fatal(1, "K15_RP_SPEED_CHANGE_MISSING");
+                $display("K15_RP_SPEED_CHANGE_SEEN epoch=%0d", k15_epoch);
+                if (!k14_seen_partner_accept)
+                    $fatal(1, "K15_PARTNER_ACCEPT_MISSING");
+                $display("K15_PARTNER_ACCEPT epoch=%0d", k15_epoch);
+                if (!(k14_seen_gen3_rate && k14_seen_gen3_phystatus &&
+                      k14_seen_qpll_lock))
+                    $fatal(1, "K15_GEN3_RATE_DONE_MISSING");
+                $display("K15_GEN3_RATE_DONE epoch=%0d", k15_epoch);
+                if (!(k15_seen_eq_phase0 && k15_seen_eq_phase1 &&
+                      k15_seen_eq_phase2 && k15_seen_eq_phase3))
+                    $fatal(1, "K15_EQUALIZATION_INCOMPLETE");
+                if (!(k15_seen_recovery_idle && k15_seen_gen3_l0))
+                    $fatal(1, "K15_GEN3_L0_MISSING");
+                if (k15_seen_eq_failure ||
+                    EP.DUT.g_gen3_rate_change.speed_timeout_sticky ||
+                    EP.DUT.g_gen3_rate_change.speed_fallback_sticky)
+                    $fatal(1, "K15_UNEXPECTED_FALLBACK_OR_EQ_FAILURE");
+                if (EP.DUT.g_gen3_rate_change.auto_retrain_pulse ||
+                    EP.DUT.g_gen3_rate_change.mailbox_valid)
+                    $fatal(1, "K15_NON_AUTONOMOUS_TRIGGER_SEEN");
+
+                k15_l0_stable = 0;
+                while (k15_l0_stable < K15_L0_STABLE_CYCLES) begin
+                    @(posedge EP.DUT.phy_pclk);
+                    if ((EP.DUT.link_up === 1'b1) &&
+                        (EP.DUT.dll_active === 1'b0) &&
+                        (EP.DUT.phy_active_rate === 2'b10) &&
+                        (EP.DUT.negotiated_speed === 2'b10) &&
+                        (RP.cfg_ltssm_state === 6'h10) &&
+                        (RP.cfg_current_speed === 2'b11) &&
+                        (RP.cfg_phy_link_status === 1'b1) &&
+                        (RP.user_lnk_up === 1'b1))
+                        k15_l0_stable = k15_l0_stable + 1;
+                    else
+                        k15_l0_stable = 0;
+                end
+                $display("K15_EPOCH_PASS epoch=%0d stable=%0d auto=0 mailbox=0",
+                         k15_epoch, k15_l0_stable);
+
+                if (k15_epoch == 0) begin
+                    sys_rst_n = 1'b0;
+                    rp_sys_rst_n = 1'b0;
+                    repeat (K14_PERST_HOLD_REFCLK_CYCLES) @(posedge refclk_p);
+                    sys_rst_n = 1'b1;
+                    repeat (K14_RP_RELEASE_DELAY_REFCLK_CYCLES) @(posedge refclk_p);
+                    rp_sys_rst_n = 1'b1;
+                    $display("K15_SECOND_EPOCH_RELEASE time_ps=%0t", $time);
+                end
+            end
+            $display("K15_VCS_PASS epochs=2");
+            $finish;
+        end
+    end
+`endif
 `endif
 
     initial begin : k11b2_timeout_diagnostics

@@ -13,13 +13,12 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer G9_WAIT_REMOTE_DETECT = 1,
     parameter integer G9_WAIT_REMOTE_DETECT_CYCLES = 6_250_000,
     // Phase D experimental path.  Zero is the signed Phase C Gen1 release.
-    parameter integer GEN3_RATE_CHANGE_ENABLE = 0,
+    parameter integer GEN3_RATE_CHANGE_ENABLE = 1,
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
-    // Baseline hardware advertises only the Gen1 initial-training Rate ID.
-    // The parameter exists so a full-RP simulation can compare capability
-    // advertisements without editing or forcing production logic.
-    parameter [7:0] LTSSM_TX_RATE_ID = 8'h02
+    // K15 production capability: Gen1/2/3 supported, speed_change clear until
+    // an accepted Recovery transaction requests the physical transition.
+    parameter [7:0] LTSSM_TX_RATE_ID = 8'h0e
 ) (
     input wire pcie_refclk_p, input wire pcie_refclk_n,
     input wire pcie_perst_n, input wire pcie_rxp, input wire pcie_rxn,
@@ -87,6 +86,13 @@ module kcu105_pcie_ep_gen1_top #(
     wire speed_traffic_quiesce, speed_fallback_req, speed_fallback_active;
     wire [1:0] speed_requested_rate;
     wire [2:0] speed_state;
+    wire eq_req_valid, eq_req_ready, eq_busy, eq_done;
+    wire [2:0] eq_req_kind, eq_result;
+    wire [3:0] eq_req_preset;
+    wire [17:0] eq_req_coeff, eq_rsp_coeff;
+    wire eq_rsp_preset_sel;
+    wire gen3_eq_active, gen3_eq_failed;
+    wire [1:0] gen3_eq_phase;
     reg [24:0] heartbeat_count;
 
     wire dbg_operational_seen, dbg_link_loss_seen;
@@ -231,7 +237,8 @@ module kcu105_pcie_ep_gen1_top #(
             .rate_op_done(rate_op_success), .rate_op_failed(rate_op_failed),
             .active_rate(phy_active_rate), .requested_rate(speed_requested_rate),
             .retrain_accept(speed_retrain_accept), .phy_cdr_lost(1'b0),
-            .peer_speed_ok(peer_speed_ok), .peer_speed_reject(1'b0),
+            .peer_speed_ok(peer_speed_ok),
+            .peer_speed_reject(gen3_eq_failed),
             .state(speed_state), .traffic_quiesce(speed_traffic_quiesce),
             .recovery_active(speed_recovery_active),
             .negotiated_speed(speed_negotiated),
@@ -365,7 +372,20 @@ module kcu105_pcie_ep_gen1_top #(
         .rate_busy(phy_rate_busy), .rate_done(phy_rate_done),
         .rate_result(phy_rate_result), .active_rate(phy_active_rate),
         .rate_state(phy_rate_state),
+        .eq_req_valid(eq_req_valid), .eq_req_kind(eq_req_kind),
+        .eq_req_preset(eq_req_preset), .eq_req_coeff(eq_req_coeff),
+        .eq_req_ready(eq_req_ready), .eq_busy(eq_busy),
+        .eq_done(eq_done), .eq_result(eq_result),
+        .eq_rsp_preset_sel(eq_rsp_preset_sel),
+        .eq_rsp_coeff(eq_rsp_coeff),
         .phy_phystatus(phy_phystatus), .phy_rxstatus(phy_rxstatus),
+        .phy_txeq_fs(phy_txeq_fs), .phy_txeq_lf(phy_txeq_lf),
+        .phy_txeq_new_coeff(phy_txeq_new_coeff),
+        .phy_txeq_done(phy_txeq_done),
+        .phy_rxeq_preset_sel(phy_rxeq_preset_sel),
+        .phy_rxeq_new_txcoeff(phy_rxeq_new_txcoeff),
+        .phy_rxeq_adapt_done(phy_rxeq_adapt_done),
+        .phy_rxeq_done(phy_rxeq_done),
         .phy_powerdown(phy_powerdown), .phy_txdetectrx(phy_txdetectrx),
         .phy_txelecidle(phy_txelecidle), .phy_rate(phy_rate),
         .phy_txeq_ctrl(phy_txeq_ctrl), .phy_txeq_preset(phy_txeq_preset),
@@ -402,6 +422,14 @@ module kcu105_pcie_ep_gen1_top #(
         .recovery_fallback_active(speed_fallback_active),
         .gen3_tx_eq_control(8'h00),
         .gen3_tx_eq_data(24'd0), .gen3_protocol_eq_complete(1'b0),
+        .eq_req_valid(eq_req_valid), .eq_req_kind(eq_req_kind),
+        .eq_req_preset(eq_req_preset), .eq_req_coeff(eq_req_coeff),
+        .eq_req_ready(eq_req_ready), .eq_busy(eq_busy),
+        .eq_done(eq_done), .eq_result(eq_result),
+        .eq_rsp_preset_sel(eq_rsp_preset_sel),
+        .eq_rsp_coeff(eq_rsp_coeff),
+        .gen3_eq_active(gen3_eq_active), .gen3_eq_phase(gen3_eq_phase),
+        .gen3_eq_failed(gen3_eq_failed),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),
         .phy_txdata_valid(phy_txdata_valid),
         .phy_txstart_block(phy_txstart_block),
@@ -433,10 +461,13 @@ module kcu105_pcie_ep_gen1_top #(
         .os_eq_data(os_eq_data)
     );
 
+    // K15 reaches a stable Gen3 L0 with an idle-only 128b/130b stream. Keep
+    // the Gen1 DLL/TLP core offline until K16 supplies a Gen3 data path.
+    wire protocol_link_up = link_up && (phy_active_rate != 2'b10);
     k11a_offline_top #(.K11B2_ILA_DEBUG(K11B2_ILA_DEBUG)) u_protocol_core (
         .pipe_clk(phy_pclk), .pipe_rst_n(pipe_rst_n),
         .core_clk(phy_coreclk), .core_rst_n(core_rst_n),
-        .link_up(link_up), .ltssm_state(ltssm_state),
+        .link_up(protocol_link_up), .ltssm_state(ltssm_state),
         .link_speed(negotiated_speed), .link_width(negotiated_width),
         .hot_reset(hot_reset_seen),
         .dbg_link_loss_trigger(dbg_link_loss_core),
@@ -455,7 +486,8 @@ module kcu105_pcie_ep_gen1_top #(
         .target_link_speed(core_target_link_speed), .cdc_errors(cdc_errors)
     );
 
-    assign mac_tx_valid = mac_tx_valid_core && !speed_traffic_quiesce;
+    assign mac_tx_valid = mac_tx_valid_core && !speed_traffic_quiesce &&
+                          (phy_active_rate != 2'b10);
 
     always @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) heartbeat_count <= 25'd0;
@@ -481,7 +513,8 @@ module kcu105_pcie_ep_gen1_top #(
         core_target_link_speed, dbg_operational_seen, dbg_link_loss_seen,
         dbg_link_loss_pipe, os_malformed, os_link_number, os_lane_number,
         os_training_control, os_tx_complete, os_eq_control, os_eq_data,
-        phy_rate_state, speed_state};
+        phy_rate_state, speed_state, gen3_eq_active, gen3_eq_phase,
+        eq_busy, eq_done, eq_result};
 endmodule
 
 `default_nettype wire

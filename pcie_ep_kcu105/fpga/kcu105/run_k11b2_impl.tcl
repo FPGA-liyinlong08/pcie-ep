@@ -476,7 +476,8 @@ set sv_files [list \
   rtl/phy/kcu105_pcie_phy_wrapper.sv rtl/phy/pcie_gen12_scrambler.sv \
   rtl/phy/pcie_gen1_rx_symbol_aligner.sv rtl/phy/pcie_gen1_os_rx.sv \
   rtl/phy/pcie_gen1_os_tx.sv rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv \
-  rtl/phy/pcie_gen3_os_tx.sv rtl/phy/pcie_gen1_framer.sv \
+  rtl/phy/pcie_gen3_os_tx.sv rtl/phy/pcie_gen3_idle_tx.sv \
+  rtl/phy/pcie_gen3_equalization_ctrl.sv rtl/phy/pcie_gen1_framer.sv \
   rtl/common/pcie_link_loss_trigger.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
   rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \

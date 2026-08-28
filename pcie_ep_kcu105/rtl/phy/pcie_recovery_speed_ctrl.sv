@@ -192,13 +192,13 @@ module pcie_recovery_speed_ctrl #(
                     end else if (rate_op_done) begin
                         timeout_count <= 32'd0;
                         state <= ST_RECOVERY_IDLE;
-                    end else if (timeout_expired) begin
-                        speed_timeout_sticky <= 1'b1;
-                        fallback_taken_sticky <= 1'b1;
-                        timeout_count <= 32'd0;
-                        state <= ST_FALLBACK_REQUEST;
                     end else begin
-                        timeout_count <= timeout_count + 1'b1;
+                        // Once accepted, the raw command owner is the only
+                        // timeout authority for the physical transaction.
+                        // A second semantic timer can expire during the K15
+                        // pre-rate preset/QPLL envelope and overlap fallback
+                        // with an operation that is still in flight.
+                        timeout_count <= 32'd0;
                     end
                 end
                 ST_RECOVERY_IDLE: begin

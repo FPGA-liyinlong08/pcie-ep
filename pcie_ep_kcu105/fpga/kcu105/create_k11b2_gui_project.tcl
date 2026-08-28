@@ -69,6 +69,8 @@ set rtl_files [list \
   [file join $project_dir rtl/phy/pcie_gen3_scrambler32.sv] \
   [file join $project_dir rtl/phy/pcie_gen3_os_rx.sv] \
   [file join $project_dir rtl/phy/pcie_gen3_os_tx.sv] \
+  [file join $project_dir rtl/phy/pcie_gen3_idle_tx.sv] \
+  [file join $project_dir rtl/phy/pcie_gen3_equalization_ctrl.sv] \
   [file join $project_dir rtl/phy/pcie_gen1_framer.sv] \
   [file join $project_dir rtl/common/pcie_link_loss_trigger.sv] \
   [file join $project_dir rtl/phy/pcie_phy_command_ctrl.sv] \

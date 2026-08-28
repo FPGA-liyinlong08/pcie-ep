@@ -24,6 +24,7 @@ b2_stress_mode="${K11B2_STRESS_MODE:-0}"
 k12e_mode="${K12E_VCS:-0}"
 k14_reboot_mode="${K14_REBOOT_VCS:-0}"
 k14_rate_ab_mode="${K14_RATE_AB_VCS:-0}"
+k15_mode="${K15_VCS:-0}"
 k14_ep_tx_rate_id="${K14_EP_TX_RATE_ID:-02}"
 k14_reboot_tx_rate_id="${K14_REBOOT_TX_RATE_ID:-02}"
 k13_enable="${K13_ENABLE:-0}"
@@ -49,11 +50,17 @@ tb_defines=()
 tb_defines+=(+define+K13_RXEQ_BOOTSTRAP_VALUE=${k13_rxeq_bootstrap})
 tb_defines+=(+define+K13_RXEQ_TWO_PASS_VALUE=${k13_rxeq_two_pass})
 if [[ "${b2_mode}" == "1" || "${k14_reboot_mode}" == "1" ||
+      "${k15_mode}" == "1" ||
       "${k14_rate_ab_mode}" == "1" ]]; then
     tb_defines+=(+define+K11B2_DUT)
 fi
-if [[ "${k14_reboot_mode}" == "1" || "${k14_rate_ab_mode}" == "1" ]]; then
+if [[ "${k14_reboot_mode}" == "1" || "${k14_rate_ab_mode}" == "1" ||
+      "${k15_mode}" == "1" ]]; then
     tb_defines+=(+define+K14_REBOOT_VCS)
+fi
+if [[ "${k15_mode}" == "1" ]]; then
+    tb_defines+=(+define+K15_VCS)
+    tb_defines+=("+define+K14_EP_TX_RATE_ID_VALUE=8'h0e")
 fi
 if [[ "${k14_rate_ab_mode}" == "1" ]]; then
     case "${k14_ep_tx_rate_id}" in
@@ -185,6 +192,8 @@ fi
     "${project_dir}/rtl/phy/pcie_gen3_scrambler32.sv" \
     "${project_dir}/rtl/phy/pcie_gen3_os_rx.sv" \
     "${project_dir}/rtl/phy/pcie_gen3_os_tx.sv" \
+    "${project_dir}/rtl/phy/pcie_gen3_idle_tx.sv" \
+    "${project_dir}/rtl/phy/pcie_gen3_equalization_ctrl.sv" \
     "${project_dir}/rtl/phy/pcie_gen1_framer.sv" \
     "${project_dir}/rtl/phy/pcie_phy_command_ctrl.sv" \
     "${project_dir}/rtl/phy/pcie_recovery_speed_ctrl.sv" \
@@ -266,6 +275,28 @@ if [[ "${k14_reboot_mode}" == "1" ]]; then
     fi
     grep -q 'K14_REBOOT_VCS_PASS epochs=2' build/k14_reboot_simulate.log
     echo "K14_REBOOT_VCS_REAL_RP_PASS run_dir=${run_dir}"
+    exit 0
+fi
+
+if [[ "${k15_mode}" == "1" ]]; then
+    k15_plusargs=(+K15_GEN3)
+    if [[ "${k13_trace}" == "1" ]]; then
+        k15_plusargs+=(+K13_TRACE)
+    fi
+    set +e
+    timeout --foreground "${simulation_timeout}" \
+        "${run_dir}/k11b_simv" "${k15_plusargs[@]}" -licqueue \
+        -l build/k15_gen3_simulate.log
+    k15_status=$?
+    set -e
+    if [[ ${k15_status} -eq 124 ]]; then
+        echo "错误：K15 Gen3真实串行仿真超过 ${simulation_timeout} 秒" >&2
+        exit 124
+    elif [[ ${k15_status} -ne 0 ]]; then
+        exit "${k15_status}"
+    fi
+    grep -q 'K15_VCS_PASS epochs=2' build/k15_gen3_simulate.log
+    echo "K15_VCS_REAL_RP_PASS run_dir=${run_dir}"
     exit 0
 fi
 

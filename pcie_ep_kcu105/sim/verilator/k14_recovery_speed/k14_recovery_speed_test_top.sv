@@ -41,6 +41,13 @@ module k14_recovery_speed_test_top (
                        (rate_result != 3'd1);
     wire [1:0] pending_target;
     wire controller_retrain_accept;
+    wire [1:0] phy_txeq_ctrl_w;
+    reg phy_txeq_done_q;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) phy_txeq_done_q <= 1'b0;
+        else phy_txeq_done_q <= (phy_txeq_ctrl_w != 2'b00);
+    end
 
     pcie_partner_retrain_pending u_partner_pending (
         .clk(clk), .rst_n(rst_n),
@@ -89,10 +96,18 @@ module k14_recovery_speed_test_top (
         .rate_req_ready(rate_req_ready), .rate_busy(rate_busy),
         .rate_done(rate_done), .rate_result(rate_result),
         .active_rate(active_rate), .rate_state(rate_state),
+        .eq_req_valid(1'b0), .eq_req_kind(3'd0),
+        .eq_req_preset(4'd0), .eq_req_coeff(18'd0),
+        .eq_req_ready(), .eq_busy(), .eq_done(), .eq_result(),
+        .eq_rsp_preset_sel(), .eq_rsp_coeff(),
         .phy_phystatus(phy_phystatus), .phy_rxstatus(3'b000),
+        .phy_txeq_fs(6'd0), .phy_txeq_lf(6'd0),
+        .phy_txeq_new_coeff(18'd0), .phy_txeq_done(phy_txeq_done_q),
+        .phy_rxeq_preset_sel(1'b0), .phy_rxeq_new_txcoeff(18'd0),
+        .phy_rxeq_adapt_done(1'b0), .phy_rxeq_done(1'b0),
         .phy_powerdown(phy_powerdown), .phy_txdetectrx(phy_txdetectrx),
         .phy_txelecidle(phy_txelecidle), .phy_rate(phy_rate),
-        .phy_txeq_ctrl(), .phy_txeq_preset(), .phy_txeq_coeff(),
+        .phy_txeq_ctrl(phy_txeq_ctrl_w), .phy_txeq_preset(), .phy_txeq_coeff(),
         .phy_rxeq_ctrl(), .phy_rxeq_txpreset(),
         .as_mac_in_detect(as_mac_in_detect),
         .as_cdr_hold_req(as_cdr_hold_req), .phy_txcompliance(),

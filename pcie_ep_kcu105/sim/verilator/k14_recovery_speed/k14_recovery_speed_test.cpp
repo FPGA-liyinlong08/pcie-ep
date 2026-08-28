@@ -56,6 +56,10 @@ static void start_gen3(Vk14_recovery_speed_test_top &dut) {
     tick(dut);
     dut.ltssm_speed_ready = 0;
     assert(dut.speed_state == 3);
+    // K15 performs the mandatory TX preset/clear transaction before entering
+    // the unchanged K14 Golden release state.
+    for (int cycle = 0; cycle < 8 && dut.rate_state != 1; ++cycle)
+        tick(dut);
     assert(dut.rate_state == 1);
 }
 
