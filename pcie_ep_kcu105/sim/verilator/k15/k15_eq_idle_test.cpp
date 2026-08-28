@@ -98,8 +98,16 @@ int main(int argc, char **argv) {
     require(d.training_start_block, "TS starts after initial SKP");
     require(d.training_sync_header == 0x1, "TS ordered-set header");
     require((d.training_data & 0xff) == 0x1e, "TS1 follows initial SKP");
-    for (int i = 0; i < 4; ++i)
-        tick(d); // complete one TS block so the idle path inherits its LFSR
+    tick(d); // TS word 1
+    tick(d); // TS word 2
+    tick(d); // TS word 3 carries the running-DC-balance substitution
+    const unsigned ts_tail = d.training_data;
+    require(((ts_tail >> 16) == 0x0820) ||
+            ((ts_tail >> 16) == 0xf7df) ||
+            ((ts_tail >> 24) == 0x08) ||
+            ((ts_tail >> 24) == 0xf7),
+            "TS tail running-DC-balance substitution");
+    tick(d); // complete one TS block so the idle path inherits its LFSR
     d.training_enable = 0;
     d.idle_enable = 1;
     int idle_pulses = 0;

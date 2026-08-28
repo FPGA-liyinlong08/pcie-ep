@@ -1421,6 +1421,8 @@ module board;
     integer k15_ep_tx_word_count;
     integer k15_rp_rx_valid_beats;
     integer k15_rp_rx_decoded_ts;
+    integer k15_ep_serial_edges;
+    time k15_ep_serial_last_edge;
     reg k15_seen_initial_capability;
     reg k15_seen_eq_phase0;
     reg k15_seen_eq_phase1;
@@ -1438,6 +1440,22 @@ module board;
     wire [7:0] k15_rp_rx_control;
     wire [7:0] k15_rp_rx_eq_control;
     wire [23:0] k15_rp_rx_eq_data;
+
+    // The standalone PHY and the integrated XDMA endpoint can present an
+    // identical PIPE stream while serializing it at different effective
+    // rates.  Capture a bounded set of post-switch edge intervals so a PCS
+    // lock failure is distinguishable from an ordered-set decode failure.
+    always @(ep_txp) begin
+        if ($test$plusargs("K15_GEN3") &&
+            (EP.DUT.phy_active_rate == 2'b10) &&
+            (k15_ep_serial_edges < 32)) begin
+            $display("K15_EP_SERIAL_EDGE n=%0d time_ps=%0t delta_ps=%0t value=%0d",
+                     k15_ep_serial_edges, $time,
+                     $time - k15_ep_serial_last_edge, ep_txp);
+            k15_ep_serial_last_edge = $time;
+            k15_ep_serial_edges = k15_ep_serial_edges + 1;
+        end
+    end
 
     always @(EP.DUT.phy_rate or EP.DUT.phy_txelecidle or
              EP.DUT.phy_phystatus or EP.DUT.phy_txeq_ctrl or
@@ -1511,6 +1529,8 @@ module board;
             k15_last_ep_state <= 6'h3f;
             k15_eq_trace_count <= 0;
             k15_ep_tx_word_count <= 0;
+            k15_ep_serial_edges = 0;
+            k15_ep_serial_last_edge = 0;
         end else if ($test$plusargs("K15_GEN3")) begin
             if ((EP.DUT.phy_active_rate == 2'b10) &&
                 EP.DUT.phy_txdata_valid &&

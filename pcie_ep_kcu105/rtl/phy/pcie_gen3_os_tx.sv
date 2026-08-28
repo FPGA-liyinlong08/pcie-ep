@@ -62,14 +62,16 @@ module pcie_gen3_os_tx (
     function automatic [2:0] popcount4;
         input [3:0] value;
         begin
-            popcount4 = value[0] + value[1] + value[2] + value[3];
+            popcount4 = {2'b0, value[0]} + {2'b0, value[1]} +
+                        {2'b0, value[2]} + {2'b0, value[3]};
         end
     endfunction
 
     function automatic [4:0] popcount8;
         input [7:0] value;
         begin
-            popcount8 = popcount4(value[3:0]) + popcount4(value[7:4]);
+            popcount8 = {2'b0, popcount4(value[3:0])} +
+                        {2'b0, popcount4(value[7:4])};
         end
     endfunction
 
@@ -81,15 +83,17 @@ module pcie_gen3_os_tx (
         reg [6:0] included_bits;
         reg signed [11:0] next_balance;
         begin
-            ones = (included_bytes[0] ? popcount8(transmitted_data[7:0]) : 7'd0) +
-                   (included_bytes[1] ? popcount8(transmitted_data[15:8]) : 7'd0) +
-                   (included_bytes[2] ? popcount8(transmitted_data[23:16]) : 7'd0) +
-                   (included_bytes[3] ? popcount8(transmitted_data[31:24]) : 7'd0);
+            ones = (included_bytes[0] ? {2'b0, popcount8(transmitted_data[7:0])} : 7'd0) +
+                   (included_bytes[1] ? {2'b0, popcount8(transmitted_data[15:8])} : 7'd0) +
+                   (included_bytes[2] ? {2'b0, popcount8(transmitted_data[23:16])} : 7'd0) +
+                   (included_bytes[3] ? {2'b0, popcount8(transmitted_data[31:24])} : 7'd0);
             included_bits = (included_bytes[0] ? 7'd8 : 7'd0) +
                             (included_bytes[1] ? 7'd8 : 7'd0) +
                             (included_bytes[2] ? 7'd8 : 7'd0) +
                             (included_bytes[3] ? 7'd8 : 7'd0);
-            next_balance = current_balance + ((ones * 2) - included_bits);
+            next_balance = $signed({current_balance[10], current_balance}) +
+                           $signed({4'b0, ones, 1'b0}) -
+                           $signed({5'b0, included_bits});
             if (next_balance > 511)
                 update_dc_balance = 11'sd511;
             else if (next_balance < -511)
@@ -159,9 +163,11 @@ module pcie_gen3_os_tx (
                 previous_mode <= mode;
                 word_index <= 2'd1;
                 lfsr_state <= lfsr_next;
+                dc_balance <= update_dc_balance(dc_balance, out_data, 4'b1110);
             end else if (word_index == 2'd3) begin
                 word_index <= 2'd0;
                 lfsr_state <= lfsr_next;
+                dc_balance <= update_dc_balance(dc_balance, out_data, 4'b1111);
                 if (ts_interval_count == 6'd31) begin
                     stream_state <= SEND_EIEOS;
                     skp_after_eieos <= 1'b0;
@@ -172,6 +178,10 @@ module pcie_gen3_os_tx (
             end else begin
                 word_index <= word_index + 1'b1;
                 lfsr_state <= lfsr_next;
+                dc_balance <= update_dc_balance(
+                    dc_balance, out_data,
+                    (active_index == 2'd0) ? 4'b1110 : 4'b1111
+                );
             end
         end
     end

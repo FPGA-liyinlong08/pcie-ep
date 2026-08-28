@@ -263,3 +263,55 @@ Endpoint 仍不在总线设备列表中。远端 `dmesg` 从 `15:25:53` 到 `15:
 但 Gen1 Polling.Config 的 TS/接收或后续配置训练没有推进到 Gen1 L0，且伴随持续
 Physical Layer RxErr**。下一轮应增加 fallback 后的 Gen1 TS1/TS2、`RxValid`、
 `os_ts1_valid/os_ts2_valid` 和 LTSSM transition ILA 探针。
+
+## 9. `aca2308` 后的 VCS 优先复核与 XDMA demo 对照
+
+本轮首先复跑当前 HEAD 的严格 `make k15-vcs`，并以仓库中的官方 XDMA example
+通过日志作为 Root Port golden。XDMA example 能完成 8.0 GT/s 测试，因此不再把
+“RP 不支持或不会请求 Gen3”作为主假设。官方 example 使用
+`PL_SIM_FAST_LINK_TRAINING=TRUE` 和 `PL_EQ_BYPASS_PHASE23=TRUE`，只能证明 RP、串行
+通路及 Phase 0/1 快速路径可工作，不能用它替代本项目 Phase 2/3 的严格 Gate。
+
+对比发现 `aca2308` 的 TX 时序优化引入了一个功能回归：
+`pcie_gen3_os_tx.sv` 的 byte popcount tree 和 `dc_balance` 寄存器仍在，但所有
+`dc_balance <= update_dc_balance(...)` 状态更新被误删。其结果是 TS symbols 14/15
+不再根据累计 DC balance 执行 substitution；soft EP 曾发出 `4d89054e` 等错误尾字，
+而 XDMA golden 使用 `08xx....`/互补形式的 substitution。
+
+现已在 mode 切换、普通 TS word 和 TS block 尾部恢复 running-DC 更新，并在
+`k15_eq_idle_test.cpp` 增加首个 TS 尾字 substitution 断言。修复后的严格 VCS
+可见 `K15_EP_TX_PIPE ... data=0820054e`，定向及静态门禁通过：
+
+```text
+K15_EQ_PHASES_DIRECTED_PASS
+K15_GEN3_IDLE_STREAM_PASS blocks=19
+K15_EQ_EIEOS_SKP_TS_PASS
+PHY_COMMAND_CTRL_EQUIVALENCE_PASS
+K15_PHY_EQ_SEMANTIC_PASS
+PHY_COMMAND_OWNERSHIP_PASS
+```
+
+这项回归会直接影响真实 partner 对 soft EP Gen3 TS 的接受，因而与实板进入
+Phase 2 后不前进高度相关。下一块实板 bit 必须包含此修复并重新跑实现时序；不能
+用删除协议状态更新的方式换取 WNS。当前尚未生成新 bit，故不能宣称实板问题已关闭。
+
+严格 VCS 在修复后仍停于较早的独立边界：soft EP 已收到并解码 RP Phase 0/1 TS，
+也在 32-bit PIPE TX 上发出修正后的 EIEOS/SKP/TS，但集成 RP 的接收侧从未产生第一个
+Gen3 `RXVALID`：
+
+```text
+K15_VCS_BLOCKED_RP_EQ_RESPONSE_NOT_CONSUMED
+  rp_rxvalid_seen=0 rp_rxvalid_beats=0 rp_decoded_ts=0
+```
+
+新增的有界串行边沿记录测得最小相邻翻转间隔为 `125 ps`，证明 standalone PHY
+实际按 8.0 GT/s 串行化，而不是 4.0 GT/s 的 PROGDIV/时钟配置错误。因此当前 VCS
+第一未闭合点精确为：**soft EP standalone PHY 串行输出到 integrated XDMA RP PCS
+的首个 Gen3 block acquisition**，发生在 RP 消费 EQ response 和进入真实 Phase 2
+之前。K13 的 local/external loopback 日志也曾出现同类 Gen3 `RXVALID=0`，旧问题并未
+形成可复用的闭环修复。
+
+保持严格 Gate：不 force `RXVALID`，不注入 TS，不旁路 Phase 2/3，不以 timeout
+自推进。VCS 后续只继续对照 golden GT/PIPE contract、Sync Header 和 PCS reset/block
+lock 时序；RTL EQ Phase 2 的实板复测则以包含 running-DC 修复且 timing-clean 的新 bit
+为准，两条证据链分开记录。
