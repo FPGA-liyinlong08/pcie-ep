@@ -219,3 +219,47 @@ physical-layer `RxErr`，该现象与 VCS 中 Phase-1 EQ response 未被 RP 消�
 当前剩余最差路径已从 Gen3 scrambler/DC-balance 路径转移到普通 Gen1
 framer→scrambler→OS TX→GT TXDATA 路径；因此优化明显改善了逻辑级数和 WNS，但
 `-0.129 ns` 仍未达到 timing-clean，后续生产 bit 仍需继续收敛时序。
+
+## 8. fallback 后 Gen1 重训现象（2026-08-28）
+
+为验证“Phase 2 后没有回退”是否只是 ILA 观察窗口问题，先重新下载同一实验 bit
+清除 sticky 状态，再将 ILA 触发条件改为
+`k14_timeout_fallback_w == 1`，随后执行一次远端 reboot。新鲜捕获为：
+
+`fpga/kcu105/build_k15_recovery_speed_hw0e_popcount_opt/capture_fallback_fresh/20260828_152630_k14_recovery_speed.csv`
+
+捕获结果：
+
+```text
+k14_timeout_fallback_w = 1
+k14_phy_rate_w         = 0       // PHY 已回到 Gen1
+k14_speed_state_w      = ST_L0  // K14 速率控制器内部状态
+k14_ltssm_state_w      = 0x03   // POLLING_CONFIG
+k14_gen1_fallback_success_w = 0 // 脉冲未落在捕获窗口
+```
+
+因此确认 fallback 已经发生；但 `k14_speed_state=ST_L0` 不能等同于 PCIe LTSSM
+L0。EP 在捕获末端实际停留在 `POLLING_CONFIG(0x03)`，没有完成 Gen1
+`CFG_* -> L0`，所以 Linux 仍未枚举 `01:00.0`。
+
+旧的 `capture_reboot/20260828_144429...csv` 只在 Gen3 rate 成功事件处触发，8192
+采样约对应 32.8 us，而硬件 speed timeout 约为 4 ms，故旧捕获没有看到 fallback
+并不能证明 fallback 未执行。第一次使用 `arm-only` 的复核还因 sticky fallback
+信号未清除而立即触发，已废弃；本节只采用重新下载后得到的新鲜捕获。
+
+本轮 reboot 后 Root Port 状态为：
+
+```text
+LnkSta: 2.5GT/s x1, Train+, DLActive+
+LnkSta2: EqualizationComplete-, EqualizationPhase1/2/3-
+CESta: RxErr-, BadTLP-, BadDLLP-, Rollover-, Timeout-
+```
+
+Endpoint 仍不在总线设备列表中。远端 `dmesg` 从 `15:25:53` 到 `15:28:04` 共统计
+111 次 `Corrected, type=Physical Layer, [0] RxErr`，说明 fallback 后 RP 仍持续看到
+接收层错误。当前未观察到 BadTLP、BadDLLP 或 Rollover。
+
+本次结果将未闭合边界从“Gen3 fallback 是否触发”进一步收窄为：**fallback 已触发，
+但 Gen1 Polling.Config 的 TS/接收或后续配置训练没有推进到 Gen1 L0，且伴随持续
+Physical Layer RxErr**。下一轮应增加 fallback 后的 Gen1 TS1/TS2、`RxValid`、
+`os_ts1_valid/os_ts2_valid` 和 LTSSM transition ILA 探针。
