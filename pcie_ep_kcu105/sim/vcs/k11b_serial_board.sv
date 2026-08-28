@@ -404,10 +404,12 @@ module board;
         integer wait_cycles;
         integer rx_cycles;
         reg gen3_rx_seen;
+        reg gt_loopback_forced;
         if ($test$plusargs("K15_LOCAL_PHY_LOOPBACK")) begin
             wait_cycles = 0;
             rx_cycles = 0;
             gen3_rx_seen = 1'b0;
+            gt_loopback_forced = 1'b0;
             wait (sys_rst_n === 1'b1);
             while ((EP.DUT.phy_active_rate != 2'b10) &&
                    (wait_cycles < 1_500_000)) begin
@@ -421,10 +423,20 @@ module board;
                 $finish;
             end
 
-            force ep_rxp = ep_txp;
-            force ep_rxn = ep_txn;
-            $display("K15_LOCAL_PHY_LOOPBACK_ENABLE time_ps=%0t rate=%02b",
-                     $time, EP.DUT.phy_active_rate);
+            if ($test$plusargs("K15_GT_LOOPBACK")) begin
+                // Ultrascale loopback encoding: 001 is near-end PCS, which
+                // keeps the test at the Gen3 PCS boundary without requiring
+                // an external serial channel model.
+                force EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.GT_LOOPBACK = 3'b001;
+                gt_loopback_forced = 1'b1;
+                $display("K15_LOCAL_PHY_LOOPBACK_ENABLE mode=gt_internal time_ps=%0t rate=%02b",
+                         $time, EP.DUT.phy_active_rate);
+            end else begin
+                force ep_rxp = ep_txp;
+                force ep_rxn = ep_txn;
+                $display("K15_LOCAL_PHY_LOOPBACK_ENABLE mode=serial_pins time_ps=%0t rate=%02b",
+                         $time, EP.DUT.phy_active_rate);
+            end
             while ((EP.DUT.phy_active_rate == 2'b10) &&
                    !gen3_rx_seen && (rx_cycles < 100_000)) begin
                 @(posedge EP.DUT.phy_pclk);
@@ -434,12 +446,17 @@ module board;
                      EP.DUT.phy_rxstart_block))
                     gen3_rx_seen = 1'b1;
             end
-            $display("K15_LOCAL_PHY_LOOPBACK_RESULT wait=%0d rx_cycles=%0d gen3_rx_seen=%0d active_rate=%02b rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x rxstatus=%03b cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d rate_idle=%0d",
+            $display("K15_LOCAL_PHY_LOOPBACK_RESULT wait=%0d rx_cycles=%0d gen3_rx_seen=%0d active_rate=%02b rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x rxstatus=%03b rxelecidle=%0d rxsyncedone=%0d rst_fsm=%0d rst_idle=%0d prst_n=%0d rrst_n=%0d cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d rate_idle=%0d",
                      wait_cycles, rx_cycles, gen3_rx_seen,
                      EP.DUT.phy_active_rate, EP.DUT.phy_rxvalid,
                      EP.DUT.phy_rxdata_valid, EP.DUT.phy_rxstart_block,
                      EP.DUT.phy_rxsync_header, EP.DUT.phy_rxdata,
-                     EP.DUT.phy_rxstatus,
+                     EP.DUT.phy_rxstatus, EP.DUT.phy_rxelecidle,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pciesynctxsyncdone,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.phy_rst_i.fsm,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.rst_idle,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.prst_n,
+                     EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.rrst_n,
                      EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxcdrlock,
                      EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_rxresetdone,
                      EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_pcierategen3,
@@ -449,8 +466,12 @@ module board;
                 $display("K15_LOCAL_PHY_LOOPBACK_PASS");
             else
                 $display("K15_LOCAL_PHY_LOOPBACK_FAIL");
-            release ep_rxp;
-            release ep_rxn;
+            if (gt_loopback_forced)
+                release EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.GT_LOOPBACK;
+            else begin
+                release ep_rxp;
+                release ep_rxn;
+            end
             $finish;
         end
     end

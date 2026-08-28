@@ -467,3 +467,19 @@ K15_LOCAL_PHY_LOOPBACK_FAIL
 扩展了 monitor、增加了回环开关，并让严格 K15 gate 在回环模式下不因预期 fallback
 提前中止。后续应继续检查本工程 Gen3 TX/PCS→standalone GT RX 的 block-lock、
 reset/clock contract 与 EQ 控制时序，再决定是否做可逆的重新生成 IP A/B。
+
+随后启用 GT wizard 的 near-end PCS loopback（`GT_LOOPBACK=3'b001`），不再依赖
+外部 serial pin force，结果仍然失败：
+
+```text
+K15_LOCAL_PHY_LOOPBACK_ENABLE mode=gt_internal time_ps=379087529 rate=10
+K15_LOCAL_PHY_LOOPBACK_RESULT ... gen3_rx_seen=0 active_rate=00
+  rxvalid=0 data_valid=0 start=0 rxstatus=000 rxelecidle=0
+  rxsyncedone=1 rst_fsm=0 rst_idle=1 prst_n=1 rrst_n=1 cdrlock=1 rxresetdone=1
+K15_LOCAL_PHY_LOOPBACK_FAIL
+```
+
+因此当前回环证据已经覆盖外部 serial 和 GT near-end PCS 两条路径：Gen3 rate、
+CDR、resetdone、sync done 都成立，但 RX PCS 没有产生有效 block。下一轮优先对照
+XDMA 的 GT 输入控制字段（`TXDATAK=0`、首 beat `Sync Header=01`、后续 beat
+`00`、`TXELECIDLE`）及其时序，而不是继续修改 RP 或生成 IP。

@@ -26,6 +26,7 @@ k14_reboot_mode="${K14_REBOOT_VCS:-0}"
 k14_rate_ab_mode="${K14_RATE_AB_VCS:-0}"
 k15_mode="${K15_VCS:-0}"
 k15_local_phy_loopback="${K15_LOCAL_PHY_LOOPBACK:-0}"
+k15_gt_loopback="${K15_GT_LOOPBACK:-0}"
 k15_continue_after_fallback="${K15_CONTINUE_AFTER_FALLBACK:-0}"
 k14_ep_tx_rate_id="${K14_EP_TX_RATE_ID:-02}"
 k14_reboot_tx_rate_id="${K14_REBOOT_TX_RATE_ID:-02}"
@@ -284,6 +285,9 @@ if [[ "${k15_mode}" == "1" ]]; then
     k15_plusargs=(+K15_GEN3)
     if [[ "${k15_local_phy_loopback}" == "1" ]]; then
         k15_plusargs+=(+K15_LOCAL_PHY_LOOPBACK)
+        if [[ "${k15_gt_loopback}" == "1" ]]; then
+            k15_plusargs+=(+K15_GT_LOOPBACK)
+        fi
     fi
     if [[ "${k15_local_phy_loopback}" == "1" ]]; then
         k15_plusargs+=(+K15_CONTINUE_AFTER_FALLBACK)
