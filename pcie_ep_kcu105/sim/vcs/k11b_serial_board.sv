@@ -1413,6 +1413,7 @@ module board;
 `ifdef K15_VCS
     localparam integer K15_EPOCH_TIMEOUT_CYCLES = 3_000_000;
     localparam integer K15_L0_STABLE_CYCLES = 256;
+    localparam integer K15_GEN1_RECOVERY_TIMEOUT_CYCLES = 3_000_000;
     integer k15_epoch;
     integer k15_wait_cycles;
     integer k15_l0_stable;
@@ -1632,7 +1633,57 @@ module board;
                              RP.cfg_ltssm_state, EP.DUT.ltssm_state,
                              EP.DUT.u_ltssm_mac.k15_tx_eq_control,
                              EP.DUT.u_ltssm_mac.k15_tx_eq_data);
-                    $fatal(1, "K15_UNEXPECTED_SPEED_TIMEOUT_FALLBACK");
+                    if (!$test$plusargs("K15_CONTINUE_AFTER_FALLBACK"))
+                        $fatal(1, "K15_UNEXPECTED_SPEED_TIMEOUT_FALLBACK");
+
+                    // Diagnostic mode: do not stop at the Gen3 failure.  The
+                    // strict K15 gate above remains the default; this branch
+                    // only answers whether the endpoint and RP recover to a
+                    // stable Gen1 link after the failed higher-rate attempt.
+                    k15_wait_cycles = 0;
+                    k15_l0_stable = 0;
+                    while ((k15_wait_cycles < K15_GEN1_RECOVERY_TIMEOUT_CYCLES) &&
+                           (k15_l0_stable < K15_L0_STABLE_CYCLES)) begin
+                        // The endpoint PHY clock may be stopped or held while
+                        // the fallback rate command is being applied.  Use
+                        // the always-running board reference clock for the
+                        // diagnostic timeout; otherwise this monitor itself
+                        // can deadlock exactly at the fallback boundary.
+                        @(posedge refclk_p);
+                        k15_wait_cycles = k15_wait_cycles + 1;
+                        if ((k15_wait_cycles % 100000) == 0)
+                            $display("K15_GEN1_RECOVERY_WAIT epoch=%0d wait=%0d ep_state=%0h rp_state=%0h active_rate=%02b dll=%0d rp_link=%0d rp_phy=%02b",
+                                     k15_epoch, k15_wait_cycles,
+                                     EP.DUT.ltssm_state, RP.cfg_ltssm_state,
+                                     EP.DUT.phy_active_rate,
+                                     EP.DUT.dll_active, RP.user_lnk_up,
+                                     RP.cfg_phy_link_status);
+                        if ((EP.DUT.link_up === 1'b1) &&
+                            (EP.DUT.dll_active === 1'b1) &&
+                            (EP.DUT.phy_active_rate === 2'b00) &&
+                            (EP.DUT.negotiated_speed === 2'b00) &&
+                            (RP.cfg_ltssm_state === 6'h10) &&
+                            (RP.cfg_current_speed === 2'b01) &&
+                            (RP.cfg_phy_link_status === 2'b11) &&
+                            (RP.user_lnk_up === 1'b1))
+                            k15_l0_stable = k15_l0_stable + 1;
+                        else
+                            k15_l0_stable = 0;
+                    end
+
+                    if (k15_l0_stable >= K15_L0_STABLE_CYCLES) begin
+                        $display("K15_GEN1_RECOVERY_PASS_AFTER_FALLBACK epoch=%0d wait=%0d stable=%0d ep_state=%0h rp_state=%0h",
+                                 k15_epoch, k15_wait_cycles, k15_l0_stable,
+                                 EP.DUT.ltssm_state, RP.cfg_ltssm_state);
+                        $finish;
+                    end else begin
+                        $display("K15_GEN1_RECOVERY_FAIL_AFTER_FALLBACK epoch=%0d wait=%0d stable=%0d ep_state=%0h rp_state=%0h active_rate=%02b dll=%0d rp_link=%0d rp_phy=%02b",
+                                 k15_epoch, k15_wait_cycles, k15_l0_stable,
+                                 EP.DUT.ltssm_state, RP.cfg_ltssm_state,
+                                 EP.DUT.phy_active_rate, EP.DUT.dll_active,
+                                 RP.user_lnk_up, RP.cfg_phy_link_status);
+                        $fatal(1, "K15_GEN1_RECOVERY_MISSING");
+                    end
                 end
                 if (!k14_seen_rp_raw_gen3_ts)
                     $fatal(1, "K15_RP_SPEED_CHANGE_MISSING");
@@ -1666,7 +1717,7 @@ module board;
                         (EP.DUT.negotiated_speed === 2'b10) &&
                         (RP.cfg_ltssm_state === 6'h10) &&
                         (RP.cfg_current_speed === 2'b11) &&
-                        (RP.cfg_phy_link_status === 1'b1) &&
+                        (RP.cfg_phy_link_status === 2'b11) &&
                         (RP.user_lnk_up === 1'b1))
                         k15_l0_stable = k15_l0_stable + 1;
                     else
