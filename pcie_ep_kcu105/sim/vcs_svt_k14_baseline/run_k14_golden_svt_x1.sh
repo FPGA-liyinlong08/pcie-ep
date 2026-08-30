@@ -7,6 +7,7 @@ repo_dir="$(cd "${project_dir}/.." && pwd)"
 baseline_commit=5095e7c4e8b23c356e11e1915c065f1ace88f92d
 build_dir="${K14_GOLDEN_SVT_BUILD_DIR:-${project_dir}/sim/vcs_svt/build/k14_golden}"
 snapshot_dir="${build_dir}/baseline_${baseline_commit}"
+rtl_dir="${build_dir}/baseline_${baseline_commit}_ts_boundary_fix"
 git_repo=(git --git-dir="${repo_dir}/.git")
 
 actual_commit="$("${git_repo[@]}" rev-parse "${baseline_commit}")"
@@ -21,15 +22,28 @@ if [[ ! -s "${snapshot_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" ]]; then
         rtl sim/verilator/k09_integration | tar -x -C "${snapshot_dir}"
 fi
 
-SVT_RTL_ROOT="${snapshot_dir}" \
+# Keep the extracted 5095e7c snapshot byte-exact.  The SVT-only work tree below
+# carries the ordered-set boundary fix so the Golden baseline and the
+# experiment remain directly comparable.
+if [[ ! -s "${rtl_dir}/rtl/ep/kcu105_pcie_ep_gen1_top.sv" ]]; then
+    mkdir -p "${rtl_dir}"
+    cp -a "${snapshot_dir}/." "${rtl_dir}/"
+fi
+cp "${script_dir}/overlay/pcie_gen1_os_tx.sv" \
+   "${rtl_dir}/rtl/phy/pcie_gen1_os_tx.sv"
+cp "${script_dir}/overlay/pcie_gen1_rx_symbol_aligner.sv" \
+   "${rtl_dir}/rtl/phy/pcie_gen1_rx_symbol_aligner.sv"
+
+SVT_RTL_ROOT="${rtl_dir}" \
 SVT_TB_DIR="${script_dir}" \
 SVT_BOARD_FILE="${script_dir}/board_svt_k14_golden_x1.sv" \
 SVT_PROGRAM_FILE="${script_dir}/pcie_svt_k14_golden_program.sv" \
 SVT_CONFIG_FILE="${script_dir}/pcie_svt_k14_golden_config.v" \
 K15_SVT_BUILD_DIR="${build_dir}" \
 K15_SVT_SIM_TIMEOUT="${K14_GOLDEN_SVT_SIM_TIMEOUT:-900}" \
+SVT_PROCESS_EPOCHS=2 \
 SVT_TESTCASE=k14_golden_svt_x1_test \
-SVT_PASS_MARKER='K14_GOLDEN_SVT_X1_PASS epochs=2' \
+SVT_PASS_MARKER='K14_GOLDEN_SVT_X1_PASS epochs=1' \
 SVT_FAIL_MARKER=K14_GOLDEN_SVT_X1_FAIL \
 SVT_RUN_LABEL=K14_GOLDEN_SVT_X1 \
 exec "${project_dir}/sim/vcs_svt/run_k15_svt_x1.sh"

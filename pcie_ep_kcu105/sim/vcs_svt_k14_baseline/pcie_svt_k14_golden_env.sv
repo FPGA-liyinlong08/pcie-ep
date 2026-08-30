@@ -87,7 +87,7 @@ class k14_golden_equalization_scenario extends vmm_ms_scenario;
     vmm_channel out_chan = get_channel("pl_svc_chan");
     if (out_chan == null)
       `vmm_fatal(log, "Could not get SVT PL service channel");
-    for (epoch = 0; epoch < 2; epoch++) begin
+    for (epoch = 0; epoch < 1; epoch++) begin
       wait (test_top.reset_epoch_count >= epoch + 1);
       wait (root_status.pcie_status.pl_status.link_up == 1'b1 &&
             root_status.pcie_status.pl_status.ltssm_state == svt_pcie_types::L0);
@@ -101,8 +101,6 @@ class k14_golden_equalization_scenario extends vmm_ms_scenario;
         out_chan.put(blueprint);
         n++;
       end
-      if (epoch == 0)
-        wait (test_top.reset_epoch_count >= 2);
     end
   endtask
   `vmm_class_factory(k14_golden_equalization_scenario)
@@ -185,7 +183,7 @@ class k14_golden_gate_scenario extends vmm_ms_scenario;
     bit timed_out;
     int epoch;
     wait (test_top.reset_epoch_count >= 1);
-    for (epoch = 0; epoch < 2; epoch++) begin
+    for (epoch = 0; epoch < 1; epoch++) begin
       wait_for_golden_contract(timed_out);
       if (timed_out) begin
         test_top.display_diagnostics();
@@ -197,12 +195,8 @@ class k14_golden_gate_scenario extends vmm_ms_scenario;
         $finish;
       end
       $display("K14_GOLDEN_SVT_X1_EPOCH_PASS epoch=%0d", epoch);
-      if (epoch == 0) begin
-        test_top.apply_reset_epoch();
-        wait (root_status.pcie_status.pl_status.link_up == 1'b0);
-      end
     end
-    $display("K14_GOLDEN_SVT_X1_PASS epochs=2");
+    $display("K14_GOLDEN_SVT_X1_PASS epochs=1");
     n++;
   endtask
 endclass

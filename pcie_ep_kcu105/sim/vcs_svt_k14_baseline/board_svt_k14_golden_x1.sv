@@ -39,6 +39,8 @@ module test_top;
     reg seen_timeout_fallback;
     reg seen_gen1_fallback_phystatus;
 
+    integer recovery_rx_debug_count;
+    reg [5:0] previous_ep_ltssm_state;
     wire qpll1lock =
         DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.qpll1lock_out[0];
 
@@ -113,6 +115,38 @@ module test_top;
         .tx_datap_2(vip_txp[2]), .tx_datan_2(vip_txn[2]),
         .tx_datap_3(vip_txp[3]), .tx_datan_3(vip_txn[3])
     );
+
+    // Keep this monitor in the independent SVT board: it compares what the
+    // serial VIP transmits with what the K14 PIPE/OS detector actually sees.
+    always @(posedge DUT.phy_pclk or negedge ep_perst_n) begin
+        if (!ep_perst_n) begin
+            recovery_rx_debug_count <= 0;
+            previous_ep_ltssm_state <= 6'h3f;
+        end else begin
+            if (ep_ltssm_state != previous_ep_ltssm_state) begin
+                $display("K14_GOLDEN_SVT_EP_STATE old=%0h new=%0h time_ps=%0t",
+                         previous_ep_ltssm_state, ep_ltssm_state, $time);
+                previous_ep_ltssm_state <= ep_ltssm_state;
+            end
+            if ((ep_ltssm_state == 6'd10) &&
+                DUT.u_ltssm_mac.rx_raw_aligned_valid &&
+                (DUT.u_ltssm_mac.rx_raw_aligned_datak != 2'b00) &&
+                (recovery_rx_debug_count < 24)) begin
+                $display("K14_GOLDEN_SVT_L0_RX_K data=%04h datak=%02b time_ps=%0t",
+                         DUT.u_ltssm_mac.rx_raw_aligned_data,
+                         DUT.u_ltssm_mac.rx_raw_aligned_datak, $time);
+                recovery_rx_debug_count <= recovery_rx_debug_count + 1;
+            end
+            if (DUT.u_ltssm_mac.gen1_os_ts1_valid &&
+                (ep_ltssm_state >= 6'd10) &&
+                (ep_ltssm_state <= 6'd12))
+                $display("K14_GOLDEN_SVT_EP_RX_TS1 state=%0h link=%02h lane=%02h rate=%02h ctrl=%02h time_ps=%0t",
+                         ep_ltssm_state, DUT.u_ltssm_mac.gen1_os_link_number,
+                         DUT.u_ltssm_mac.gen1_os_lane_number,
+                         DUT.u_ltssm_mac.gen1_os_rate_id,
+                         DUT.u_ltssm_mac.gen1_os_training_control, $time);
+        end
+    end
 
     always @(posedge DUT.phy_pclk or negedge ep_perst_n) begin
         if (!ep_perst_n) begin

@@ -19,6 +19,11 @@ afifo="${project_dir}/rtl/vendor/wb2axip/afifo.v"
 license_server="${VCS_LICENSE_SERVER:-27000@wx-linux}"
 license_timeout="${VCS_LICENSE_TIMEOUT:-300}"
 simulation_timeout="${K15_SVT_SIM_TIMEOUT:-900}"
+process_epochs="${SVT_PROCESS_EPOCHS:-1}"
+if ! [[ "${process_epochs}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "SVT_PROCESS_EPOCHS must be a positive integer" >&2
+    exit 64
+fi
 license_lmutil="${VCS_LICENSE_LMUTIL:-/home/questasim/linux_x86_64/lmutil}"
 svt_testcase="${SVT_TESTCASE:-k15_svt_x1_test}"
 svt_pass_marker="${SVT_PASS_MARKER:-K15_SVT_X1_PASS epochs=2}"
@@ -201,19 +206,28 @@ elif [[ ${elaborate_status} -ne 0 ]]; then
     exit "${elaborate_status}"
 fi
 
-set +e
-timeout --foreground "${simulation_timeout}" "${run_dir}/k15_svt_x1_simv" \
-    -licqueue "+vmm_test=${svt_testcase}" +vmm_log_nowarn_at_200 run \
-    -l "${build_dir}/simulate.log"
-simulation_status=$?
-set -e
-if [[ ${simulation_status} -eq 124 ]]; then
-    echo "K15 SVT simulation timeout after ${simulation_timeout}s" >&2; exit 124
-elif [[ ${simulation_status} -ne 0 ]]; then
-    exit "${simulation_status}"
-fi
-grep -Fq "${svt_pass_marker}" "${build_dir}/simulate.log"
-if grep -Fq "${svt_fail_marker}" "${build_dir}/simulate.log"; then
-    echo "${svt_run_label} gate reported failure" >&2; exit 1
-fi
-echo "${svt_run_label}_VCS_PASS run_dir=${run_dir} simlib=${simlib_dir}"
+for ((process_epoch = 0; process_epoch < process_epochs; process_epoch++)); do
+    if [[ ${process_epochs} -eq 1 ]]; then
+        process_log="${build_dir}/simulate.log"
+    else
+        process_log="${build_dir}/simulate.process_${process_epoch}.log"
+    fi
+    set +e
+    timeout --foreground "${simulation_timeout}" "${run_dir}/k15_svt_x1_simv" \
+        -licqueue "+vmm_test=${svt_testcase}" +vmm_log_nowarn_at_200 run \
+        -l "${process_log}"
+    simulation_status=$?
+    set -e
+    if [[ ${simulation_status} -eq 124 ]]; then
+        echo "K15 SVT simulation timeout after ${simulation_timeout}s" >&2; exit 124
+    elif [[ ${simulation_status} -ne 0 ]]; then
+        exit "${simulation_status}"
+    fi
+    grep -Fq "${svt_pass_marker}" "${process_log}"
+    if grep -Fq "${svt_fail_marker}" "${process_log}"; then
+        echo "${svt_run_label} gate reported failure in process ${process_epoch}" >&2
+        exit 1
+    fi
+    echo "${svt_run_label}_PROCESS_PASS process=${process_epoch} log=${process_log}"
+done
+echo "${svt_run_label}_VCS_PASS processes=${process_epochs} run_dir=${run_dir} simlib=${simlib_dir}"
