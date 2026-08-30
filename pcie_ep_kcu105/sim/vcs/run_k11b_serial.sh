@@ -52,7 +52,7 @@ case "${k13_retrain_source}" in
         exit 64
         ;;
 esac
-afifo="/home/wx/Documents/AXI/prj_wb2axip_master/wb2axip-master/rtl/afifo.v"
+afifo="${AFIFO_RTL:-${project_dir}/rtl/vendor/wb2axip/afifo.v}"
 tb_defines=()
 tb_defines+=(+define+K13_RXEQ_BOOTSTRAP_VALUE=${k13_rxeq_bootstrap})
 tb_defines+=(+define+K13_RXEQ_TWO_PASS_VALUE=${k13_rxeq_two_pass})

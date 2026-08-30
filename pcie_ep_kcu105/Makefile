@@ -321,6 +321,12 @@ k14-direct-sim:
 k14-reboot-vcs:
 	./sim/vcs/run_k14_reboot.sh
 
+k14-svt-vcs:
+	./sim/vcs_svt/run_k14_svt_x1.sh
+
+k14-golden-svt-vcs:
+	./sim/vcs_svt_k14_baseline/run_k14_golden_svt_x1.sh
+
 k14-reboot-sim:
 	$(MAKE) k14-direct-sim
 	$(MAKE) k14-reboot-vcs
@@ -330,6 +336,9 @@ k15-static: k15-directed-test phy-command-ctrl-test k15-phy-ab-test \
 
 k15-vcs:
 	./sim/vcs/run_k15_gen3.sh
+
+k15-svt-vcs:
+	./sim/vcs_svt/run_k15_svt_x1.sh
 
 k15-vcs-ab-matrix:
 	./sim/vcs/run_k15_ab_matrix.sh
