@@ -67,13 +67,23 @@ module pcie_gen3_idle_tx (
         sync_header = 2'b00;
         out_data = 32'd0;
         if (state == SEND_SDS) begin
+`ifdef K15_AB_HEADER_HELD
             sync_header = out_valid ? SH_ORDERED_SET : 2'b00;
+`else
+            sync_header = out_valid && (word_index == 2'd0) ?
+                          SH_ORDERED_SET : 2'b00;
+`endif
             // Symbol 0 is E1; Symbols 1..15 are 55.  All Symbols bypass
             // scrambling even though they advance the lane LFSR.
             out_data = (word_index == 2'd0) ? 32'h5555_55e1 :
                                               32'h5555_5555;
         end else begin
+`ifdef K15_AB_HEADER_HELD
             sync_header = out_valid ? SH_DATA : 2'b00;
+`else
+            sync_header = out_valid && (word_index == 2'd0) ?
+                          SH_DATA : 2'b00;
+`endif
             out_data = scrambled_zero;
         end
     end

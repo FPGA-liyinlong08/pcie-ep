@@ -68,16 +68,45 @@ module pcie_gen3_equalization_ctrl #(
     wire phase_entry = phase_valid &&
                        (!phase_valid_q || (phase != phase_q));
     wire legal_ts = ts1_valid || ts2_valid;
-    wire peer_phase1_request = ts1_valid &&
-                               (ts_eq_control == 8'h01) &&
-                               (ts_eq_data == 24'h8a0c28);
+    // Symbol 6 carries the equalization phase in EC[1:0].  The rest of the
+    // TS1 tuple is allowed to vary while a partner remains in a phase.
+    wire peer_phase1_ts = ts1_valid &&
+                          (ts_eq_control[1:0] == 2'b01);
+    wire peer_phase2_ts = ts1_valid &&
+                          (ts_eq_control[1:0] == 2'b10);
+    // Phase 2 RX Adapt is driven by a partner TS1 only.  In particular, a
+    // stale Phase-1 TS1 or a TS2 must not launch another PHY adaptation.
+    wire phase_ts = (phase == 2'd1) ? peer_phase1_ts :
+                    (phase == 2'd2) ? peer_phase2_ts : legal_ts;
     wire timeout_expired = timeout_count >= (TIMEOUT_LIMIT - 1);
-    // Gen3 TS equalization tuple places the transmitter preset in the high
-    // nibble of the last EQ byte (symbol 8), i.e. EQ_DATA[23:20].  The low
-    // byte carries FS/LF (for example 8a0c28); using EQ_DATA[3:0] happens to
-    // pass that sample but is not a legal decoder for other partner presets.
-    wire [3:0] peer_preset = (ts_eq_data[23:20] <= 4'd9) ?
-                             ts_eq_data[23:20] : 4'd5;
+    // Symbol 6: Use Preset[7], Transmitter Preset[6:3], Reset EIEOS[2],
+    // and EC[1:0].  EQ_DATA is Symbol 7/8/9, so it cannot carry this preset.
+    wire [3:0] peer_preset = (ts_eq_control[6:3] <= 4'd9) ?
+                             ts_eq_control[6:3] : 4'd5;
+    wire peer_preset_matches = ts_eq_control[7] &&
+                                (ts_eq_control[6:3] == proposal_coeff[3:0]);
+    // PG239 exposes the RX proposal coefficient as pre/main/post in
+    // [17:12]/[11:6]/[5:0].  TS symbols 7/8/9 carry those fields in order.
+    wire peer_coeff_matches = !ts_eq_control[7] &&
+                               (ts_eq_data[5:0] == proposal_coeff[17:12]) &&
+                               (ts_eq_data[13:8] == proposal_coeff[11:6]) &&
+                               (ts_eq_data[21:16] == proposal_coeff[5:0]);
+    wire peer_proposal_matches = peer_phase2_ts &&
+                                  ((proposal_preset_sel &&
+                                    peer_preset_matches) ||
+                                   (!proposal_preset_sel &&
+                                    peer_coeff_matches));
+    wire [7:0] proposal_eq_control = proposal_preset_sel ?
+                                     {1'b1, proposal_coeff[3:0], 1'b0,
+                                      2'b10} :
+                                     {1'b0, 4'b0000, 1'b0, 2'b10};
+    wire [23:0] proposal_eq_data = proposal_preset_sel ?
+                                   // Preset is in Symbol 6; retain the
+                                   // normal EQ tuple in Symbols 7..9.
+                                   24'h000c28 :
+                                   {{2'b00, proposal_coeff[5:0]},
+                                    {2'b00, proposal_coeff[11:6]},
+                                    {2'b00, proposal_coeff[17:12]}};
 
     always @* begin
         eq_req_valid = 1'b0;
@@ -102,12 +131,9 @@ module pcie_gen3_equalization_ctrl #(
                 2'd2: begin
                     // Upstream Port RX Adapt belongs to Phase 2.
                     tx_eq_control = proposal_pending ?
-                                    (proposal_preset_sel ? 8'h22 : 8'h23) :
-                                    8'h21;
+                                    proposal_eq_control : 8'h22;
                     tx_eq_data = proposal_pending ?
-                                 (proposal_preset_sel ?
-                                  {20'd0, proposal_coeff[3:0]} :
-                                  {6'd0, proposal_coeff}) : 24'h000c28;
+                                 proposal_eq_data : 24'h000c28;
                     // Do not launch RX Adapt at phase entry.  The partner's
                     // TS1 carries the requested transmitter preset; wait
                     // until at least one legal TS has been sampled so the
@@ -176,7 +202,7 @@ module pcie_gen3_equalization_ctrl #(
                 operation_state <= OP_IDLE;
             end else begin
                 timeout_count <= timeout_count + 1'b1;
-                if (legal_ts) begin
+                if (phase_ts) begin
                     if (phase_ts_count != 4'hf)
                         phase_ts_count <= phase_ts_count + 1'b1;
                     selected_preset <= peer_preset;
@@ -195,11 +221,10 @@ module pcie_gen3_equalization_ctrl #(
                         if (response_ready && tx_ts_complete)
                             response_sent <= 1'b1;
                         // Hold the 21/000c28 response until the downstream
-                        // port actually leaves its Phase-1 request tuple.
+                        // port actually enters Phase 2 (EC=10).
                         // Counting our own transmitted TSs is not a protocol
                         // acknowledgement and can race a slower partner.
-                        if (response_sent && legal_ts &&
-                            !peer_phase1_request) begin
+                        if (response_sent && peer_phase2_ts) begin
                             phase_done <= 1'b1;
                             operation_state <= OP_COMPLETE;
                         end
@@ -223,7 +248,11 @@ module pcie_gen3_equalization_ctrl #(
                                 operation_state <= OP_FAIL;
                             end
                         end
-                        if (proposal_pending && legal_ts) begin
+                        // A proposal is acknowledged only by a Phase-2 TS1
+                        // reflecting the requested preset/coefficient.  Any
+                        // other TS is still useful on the wire but is not an
+                        // indication that the partner applied the proposal.
+                        if (proposal_pending && peer_proposal_matches) begin
                             proposal_pending <= 1'b0;
                             operation_state <= OP_IDLE;
                         end

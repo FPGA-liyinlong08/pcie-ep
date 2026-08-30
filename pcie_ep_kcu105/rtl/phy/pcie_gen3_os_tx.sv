@@ -2,8 +2,9 @@
 `default_nettype none
 
 // Gen3 32-bit PIPE ordered-set transmitter. On the first Gen3 enable, EIEOS
-// and one SKP establish block alignment/LFSR state before TS1/TS2.  Later
-// periodic EIEOS insertion does not emit another SKP.  SDS is reserved for
+// and one SKP establish block alignment/LFSR state before TS1/TS2. Later
+// periodic EIEOS insertion does not emit another SKP. An independent SKP
+// scheduler bounds the interval to at most 350 training blocks. SDS is for
 // the Ordered-Set-to-Data-Stream transition in Recovery.Idle.
 // Symbols 1..15 of each TS are scrambled while the 1E/2D block identifier
 // remains clear; the LFSR still advances over it and is re-seeded after EIEOS.
@@ -45,18 +46,21 @@ module pcie_gen3_os_tx (
     localparam [22:0] LANE0_SEED = 23'h1dbfbc;
 
     reg [1:0] word_index;
-    reg [1:0] previous_mode;
+    reg [1:0] active_mode;
     reg [1:0] stream_state;
     reg       skp_after_eieos;
     reg [5:0] ts_interval_count;
+    reg [8:0] skp_interval_count;
     reg [22:0] lfsr_state;
     reg signed [10:0] dc_balance;
     reg [6:0] dc_ones_q;
     reg [6:0] dc_included_bits_q;
     reg       dc_count_valid_q;
-    wire [1:0] active_index = (mode != previous_mode) ? 2'd0 : word_index;
-    wire [7:0] identifier = (mode == 2'd1) ? D_TS1 : D_TS2;
-    wire [7:0] os_identifier = (mode == 2'd1) ? OS_TS1 : OS_TS2;
+    // The request is accepted only after word 3 of the active TS block.
+    wire [1:0] output_mode = (active_mode == 2'd0) ? mode : active_mode;
+    wire [1:0] active_index = word_index;
+    wire [7:0] identifier = (output_mode == 2'd1) ? D_TS1 : D_TS2;
+    wire [7:0] os_identifier = (output_mode == 2'd1) ? OS_TS1 : OS_TS2;
     reg [31:0] plain_data;
     wire [31:0] scrambled_data;
     wire [22:0] lfsr_next;
@@ -113,12 +117,12 @@ module pcie_gen3_os_tx (
         .data_out(scrambled_data), .state_out(lfsr_next)
     );
 
-    assign os_complete = enable && (mode != 2'd0) &&
+    assign os_complete = enable && (output_mode != 2'd0) &&
                          (stream_state == SEND_TS) &&
-                         (mode == previous_mode) && (word_index == 2'd3);
+                         (word_index == 2'd3);
     assign word_index_debug = active_index;
     assign lfsr_state_after_word =
-        (enable && (mode != 2'd0) && (stream_state == SEND_TS)) ?
+        (enable && (output_mode != 2'd0) && (stream_state == SEND_TS)) ?
             lfsr_next : lfsr_state;
 
     reg signed [10:0] dc_balance_for_output;
@@ -126,41 +130,38 @@ module pcie_gen3_os_tx (
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             word_index <= 2'd0;
-            previous_mode <= 2'd0;
+            active_mode <= 2'd0;
             stream_state <= SEND_EIEOS;
             skp_after_eieos <= 1'b1;
             ts_interval_count <= 6'd0;
+            skp_interval_count <= 9'd0;
             lfsr_state <= LANE0_SEED;
             dc_balance <= 11'sd0;
             dc_ones_q <= 7'd0;
             dc_included_bits_q <= 7'd0;
             dc_count_valid_q <= 1'b0;
-        end else if (!enable || (mode == 2'd0)) begin
+        end else if (!enable ||
+                     ((active_mode == 2'd0) && (mode == 2'd0))) begin
             word_index <= 2'd0;
-            previous_mode <= mode;
+            active_mode <= 2'd0;
             stream_state <= SEND_EIEOS;
             skp_after_eieos <= 1'b1;
             ts_interval_count <= 6'd0;
+            skp_interval_count <= 9'd0;
             lfsr_state <= LANE0_SEED;
-            // Electrical-idle exit resets the TS running DC balance.
             dc_balance <= 11'sd0;
             dc_ones_q <= 7'd0;
             dc_included_bits_q <= 7'd0;
             dc_count_valid_q <= 1'b0;
         end else begin
-            // Consume the popcount captured for the preceding TS word. This
-            // keeps the scrambler/popcount path separate from the running
-            // balance adder and its saturation logic.
+            if ((active_mode == 2'd0) && (mode != 2'd0))
+                active_mode <= mode;
+
             if (dc_count_valid_q)
                 dc_balance <= update_dc_balance_counts(
                     dc_balance, dc_ones_q, dc_included_bits_q
                 );
             dc_count_valid_q <= 1'b0;
-
-            // Capture the transmitted word's count for the next edge. Keep
-            // the base popcount independent of the word-3 balance decision;
-            // counting out_data here would recreate a dc_balance -> output ->
-            // popcount timing path through the running-balance substitution.
             if (stream_state == SEND_TS) begin
                 dc_ones_q <= output_ones;
                 dc_included_bits_q <= (active_index == 2'd0) ? 7'd24 : 7'd32;
@@ -168,41 +169,68 @@ module pcie_gen3_os_tx (
             end
 
             if (stream_state == SEND_EIEOS) begin
-                previous_mode <= mode;
                 if (word_index == 2'd3) begin
                     word_index <= 2'd0;
-                    stream_state <= skp_after_eieos ? SEND_SKP : SEND_TS;
-                    skp_after_eieos <= 1'b0;
-                    ts_interval_count <= 6'd0;
-                    // EIEOS advances the LFSR but re-initializes it after Symbol 15.
                     lfsr_state <= LANE0_SEED;
+                    ts_interval_count <= 6'd0;
+                    if (mode == 2'd0) begin
+                        active_mode <= 2'd0;
+                        stream_state <= SEND_EIEOS;
+                        skp_after_eieos <= 1'b1;
+                        skp_interval_count <= 9'd0;
+                    end else begin
+                        active_mode <= mode;
+                        if (skp_after_eieos ||
+                            (skp_interval_count >= 9'd349)) begin
+                            stream_state <= SEND_SKP;
+                        end else begin
+                            stream_state <= SEND_TS;
+                            skp_interval_count <= skp_interval_count + 1'b1;
+                        end
+                        skp_after_eieos <= 1'b0;
+                    end
                 end else begin
                     word_index <= word_index + 1'b1;
                 end
             end else if (stream_state == SEND_SKP) begin
-                previous_mode <= mode;
-                // The passing XDMA demo emits the lane-0 SKP body
-                // AA...AA/E1/9D/BF/BC and starts the first TS from the lane seed.
-                lfsr_state <= LANE0_SEED;
+                // SKP bypasses scrambling and does not advance the LFSR.
                 if (word_index == 2'd3) begin
                     word_index <= 2'd0;
-                    stream_state <= SEND_TS;
+                    skp_interval_count <= 9'd0;
+                    if (mode == 2'd0) begin
+                        active_mode <= 2'd0;
+                        stream_state <= SEND_EIEOS;
+                        skp_after_eieos <= 1'b1;
+                    end else begin
+                        active_mode <= mode;
+                        stream_state <= SEND_TS;
+                    end
                 end else begin
                     word_index <= word_index + 1'b1;
                 end
-            end else if (mode != previous_mode) begin
-                previous_mode <= mode;
-                word_index <= 2'd1;
-                lfsr_state <= lfsr_next;
             end else if (word_index == 2'd3) begin
                 word_index <= 2'd0;
                 lfsr_state <= lfsr_next;
-                if (ts_interval_count == 6'd31) begin
+                if (mode == 2'd0) begin
+                    active_mode <= 2'd0;
+                    stream_state <= SEND_EIEOS;
+                    skp_after_eieos <= 1'b1;
+                    ts_interval_count <= 6'd0;
+                    skp_interval_count <= 9'd0;
+                end else if (skp_interval_count >= 9'd349) begin
+                    active_mode <= mode;
+                    stream_state <= SEND_SKP;
+                    skp_interval_count <= 9'd0;
+                end else if (ts_interval_count == 6'd31) begin
+                    active_mode <= mode;
                     stream_state <= SEND_EIEOS;
                     skp_after_eieos <= 1'b0;
                     ts_interval_count <= 6'd0;
+                    skp_interval_count <= skp_interval_count + 1'b1;
                 end else begin
+                    active_mode <= mode;
                     ts_interval_count <= ts_interval_count + 1'b1;
+                    skp_interval_count <= skp_interval_count + 1'b1;
                 end
             end else begin
                 word_index <= word_index + 1'b1;
@@ -214,7 +242,7 @@ module pcie_gen3_os_tx (
     always @* begin
         plain_data = 32'd0;
         out_data = 32'd0;
-        out_valid = enable && (mode != 2'd0);
+        out_valid = enable && (output_mode != 2'd0);
         start_block = out_valid && (active_index == 2'd0);
         // The PIPE sync header identifies the 128b block, not each 32-bit
         // beat.  XDMA's Gen3 golden path drives 01 only on the first dword
@@ -222,8 +250,12 @@ module pcie_gen3_os_tx (
         // three dwords.  Repeating 01 on every beat prevents the partner PCS
         // from acquiring the 128b/130b block boundary and leaves its
         // RXDATA_VALID low during Recovery.Equalization.
+`ifdef K15_AB_HEADER_HELD
+        sync_header = out_valid ? SH_ORDERED_SET : 2'b00;
+`else
         sync_header = out_valid && (active_index == 2'd0) ?
                       SH_ORDERED_SET : 2'b00;
+`endif
         balanced_data = scrambled_data;
         output_ones = 7'd0;
         if (stream_state == SEND_EIEOS) begin
@@ -263,7 +295,18 @@ module pcie_gen3_os_tx (
                     dc_balance, dc_ones_q, dc_included_bits_q
                 );
             balanced_data = scrambled_data;
-            output_ones = count_ones32(scrambled_data);
+            // Symbol 0 is the clear 1E/2D Ordered-Set identifier.  It is
+            // excluded from the Gen3 TS running-DC counter; counting its
+            // four set bits while declaring only 24 included bits biases the
+            // first word by +8 and selects Symbol-15 substitution one TS too
+            // early.
+            if (active_index == 2'd0)
+                output_ones =
+                    {2'b0, popcount8(scrambled_data[31:24])} +
+                    {2'b0, popcount8(scrambled_data[23:16])} +
+                    {2'b0, popcount8(scrambled_data[15:8])};
+            else
+                output_ones = count_ones32(scrambled_data);
             if (active_index == 2'd3) begin
                 if ($signed(dc_balance_for_output) > 11'sd31) begin
                     balanced_data[31:16] = 16'h0820;
@@ -287,6 +330,13 @@ module pcie_gen3_os_tx (
             end
             out_data = balanced_data;
         end
+`ifdef K15_AB_XILINX_PATTERN
+        // Diagnostic only: reproduce the passing Xilinx standalone example
+        // after its initial EIEOS.  This is not a PCIe training sequence.
+        sync_header = out_valid ? SH_ORDERED_SET : 2'b00;
+        if (stream_state != SEND_EIEOS)
+            out_data = 32'hbeef_cafe;
+`endif
     end
 endmodule
 

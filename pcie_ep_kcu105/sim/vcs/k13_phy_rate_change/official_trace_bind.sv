@@ -105,4 +105,109 @@ bind xilinx_pcie_phy_model k13_official_phy_trace_ep
         .phy_phystatus(phy_phystatus), .as_cdr_hold_req(as_cdr_hold_req)
     );
 
+// Capture the standalone example PIPE contract.  This is a PHY framing
+// golden only: the example sends EIEOS followed by a generic OS pattern,
+// not protocol-complete Gen3 SKP or TS ordered sets.
+module k13_official_pipe_trace #(
+    parameter integer LABEL = 0
+) (
+    input wire clk,
+    input wire [2:0] phy_rate,
+    input wire [31:0] phy_txdata,
+    input wire phy_txdata_valid,
+    input wire phy_txstart_block,
+    input wire [1:0] phy_txsync_header,
+    input wire phy_txelecidle,
+    input wire [31:0] phy_rxdata,
+    input wire phy_rxdata_valid,
+    input wire phy_rxstart_block,
+    input wire [1:0] phy_rxsync_header
+);
+    integer fd;
+    integer tx_sample_count;
+    integer rx_sample_count;
+    initial begin
+        tx_sample_count = 0;
+        rx_sample_count = 0;
+        if (LABEL == 0)
+            fd = $fopen("official_rp_pipe_trace.csv", "w");
+        else
+            fd = $fopen("official_ep_pipe_trace.csv", "w");
+        $fdisplay(fd, "tx_sample,rx_sample,time_ps,rate,txvalid,txstart,txheader,txelecidle,txdata,rxvalid,rxstart,rxheader,rxdata");
+    end
+
+    always @(posedge clk) begin
+        if ((phy_rate[1:0] == 2'b10) &&
+            (((tx_sample_count < 512) && phy_txdata_valid) ||
+             ((rx_sample_count < 512) && phy_rxdata_valid))) begin
+            $fdisplay(fd, "%0d,%0d,%0t,%03b,%0d,%0d,%02b,%0d,%08x,%0d,%0d,%02b,%08x",
+                      tx_sample_count, rx_sample_count, $time, phy_rate,
+                      phy_txdata_valid, phy_txstart_block,
+                      phy_txsync_header, phy_txelecidle, phy_txdata,
+                      phy_rxdata_valid, phy_rxstart_block,
+                      phy_rxsync_header, phy_rxdata);
+            if ((tx_sample_count < 512) && phy_txdata_valid)
+                tx_sample_count = tx_sample_count + 1;
+            if ((rx_sample_count < 512) && phy_rxdata_valid)
+                rx_sample_count = rx_sample_count + 1;
+        end
+    end
+endmodule
+
+bind xilinx_pcie_phy_top k13_official_pipe_trace #(.LABEL(0))
+    official_rp_pipe_trace (
+        .clk(pipe_clk), .phy_rate(phy_rate),
+        .phy_txdata(phy_txdata), .phy_txdata_valid(phy_txdata_valid),
+        .phy_txstart_block(phy_txstart_block),
+        .phy_txsync_header(phy_txsync_header),
+        .phy_txelecidle(phy_txelecidle),
+        .phy_rxdata(phy_rxdata), .phy_rxdata_valid(phy_rxdata_valid),
+        .phy_rxstart_block(phy_rxstart_block),
+        .phy_rxsync_header(phy_rxsync_header)
+    );
+
+bind xilinx_pcie_phy_model k13_official_pipe_trace #(.LABEL(1))
+    official_ep_pipe_trace (
+        .clk(pipe_clk), .phy_rate(phy_rate),
+        .phy_txdata(phy_txdata), .phy_txdata_valid(phy_txdata_valid),
+        .phy_txstart_block(phy_txstart_block),
+        .phy_txsync_header(phy_txsync_header),
+        .phy_txelecidle(phy_txelecidle),
+        .phy_rxdata(phy_rxdata), .phy_rxdata_valid(phy_rxdata_valid),
+        .phy_rxstart_block(phy_rxstart_block),
+        .phy_rxsync_header(phy_rxsync_header)
+    );
+
+// Compare the serialized result with the failing Endpoint trace.  Matching
+// edge deltas prove more than matching PIPE words because they include the
+// generated PHY's 128b/130b gearbox and serializer.
+module k13_official_serial_trace (
+    input wire serial_p,
+    input wire [2:0] phy_rate,
+    input wire phy_txelecidle
+);
+    integer edge_count;
+    time last_edge;
+    initial begin
+        edge_count = 0;
+        last_edge = 0;
+    end
+
+    always @(serial_p) begin
+        if ((phy_rate == 3'b010) && !phy_txelecidle &&
+            (edge_count < 32)) begin
+            $display("K13_OFFICIAL_SERIAL_EDGE n=%0d time_ps=%0t delta_ps=%0t value=%0d",
+                     edge_count, $time, $time - last_edge, serial_p);
+            last_edge = $time;
+            edge_count = edge_count + 1;
+        end
+    end
+endmodule
+
+bind board k13_official_serial_trace official_rp_serial_trace (
+    .serial_p(rp_pci_exp_txp[0]),
+    .phy_rate(PCIE_PHY.phy_rate),
+    .phy_txelecidle(PCIE_PHY.phy_txelecidle)
+);
+
 `default_nettype wire

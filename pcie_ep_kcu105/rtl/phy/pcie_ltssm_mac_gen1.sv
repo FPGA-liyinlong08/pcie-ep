@@ -175,6 +175,12 @@ module pcie_ltssm_mac_gen1 #(
     // A later retrain after Gen1 fallback starts a new Recovery transaction;
     // clear the one-speed-per-recovery guard only on a new semantic request.
     reg        speed_retrain_active_q;
+    // Gen1->Gen3 Recovery.Speed must transmit EIOS at the old rate before
+    // the semantic rate controller may assert TX Electrical Idle.
+    reg        recovery_speed_eios_sent;
+    wire       recovery_needs_gen1_eios = speed_retrain_active &&
+                                               (active_phy_rate == 2'b00) &&
+                                               (recovery_target_rate == 2'b10);
     // standalone PHY的RxElecIdle可能在L0出现很短的瞬态。连续8个pclk才
     // 认定对端进入Electrical Idle，避免本端单方面误入Recovery。
     reg [2:0] rxelecidle_count;
@@ -195,7 +201,9 @@ module pcie_ltssm_mac_gen1 #(
     // EIEOS/LFSR boundary instead of starting in the middle of a TS block.
     wire       gen3_rate_pending = speed_retrain_active &&
                                    (recovery_target_rate == 2'b10) &&
-                                   (ltssm_state == RECOVERY_SPEED);
+                                   (ltssm_state == RECOVERY_SPEED) &&
+                                   (!recovery_needs_gen1_eios ||
+                                    recovery_speed_eios_sent);
     wire       gen3_mode = (active_phy_rate == 2'b10) || gen3_rate_pending;
     wire       eq_phase_valid = (ltssm_state == RECOVERY_EQ_PHASE0) ||
                                 (ltssm_state == RECOVERY_EQ_PHASE1) ||
@@ -279,6 +287,7 @@ module pcie_ltssm_mac_gen1 #(
     wire [1:0]  os_tx_datak;
     wire        os_tx_valid;
     wire        gen1_os_tx_complete;
+    wire        gen1_eios_complete;
     wire [2:0]  tx_os_word_index;
     wire [2:0]  tx_os_active_word_index;
     wire [31:0] gen3_os_tx_data;
@@ -571,14 +580,25 @@ module pcie_ltssm_mac_gen1 #(
         .out_datak        (os_tx_datak),
         .out_valid        (os_tx_valid),
         .os_complete      (gen1_os_tx_complete),
+        .eios_complete    (gen1_eios_complete),
         .word_index_debug (tx_os_word_index),
         .active_word_index_debug(tx_os_active_word_index)
     );
 
     wire [22:0] gen3_os_tx_lfsr_after_word;
+    wire [31:0] gen3_idle_tx_data;
+    wire gen3_idle_tx_valid, gen3_idle_tx_start_block;
+    wire [1:0] gen3_idle_tx_sync_header;
+    wire gen3_idle_block_complete;
+    wire gen3_idle_requested = gen3_mode &&
+                               ((ltssm_state == RECOVERY_IDLE) ||
+                                (ltssm_state == STATE_L0));
+    reg gen3_idle_tx_owner;
+    wire gen3_os_tx_enable = gen3_mode && !gen3_idle_tx_owner;
+    wire gen3_idle_tx_enable = gen3_mode && gen3_idle_tx_owner;
     pcie_gen3_os_tx u_gen3_os_tx (
         .clk(phy_pclk), .rst_n(pipe_rst_n),
-        .enable(gen3_mode && tx_os_enable), .mode(tx_os_mode),
+        .enable(gen3_os_tx_enable), .mode(tx_os_mode),
         .link_number(tx_os_link), .link_is_pad(tx_os_link_pad),
         .lane_number(tx_os_lane), .lane_is_pad(tx_os_lane_pad),
         .n_fts(8'hff), .rate_id(tx_os_rate_id),
@@ -592,13 +612,22 @@ module pcie_ltssm_mac_gen1 #(
         .lfsr_state_after_word(gen3_os_tx_lfsr_after_word)
     );
 
-    wire [31:0] gen3_idle_tx_data;
-    wire gen3_idle_tx_valid, gen3_idle_tx_start_block;
-    wire [1:0] gen3_idle_tx_sync_header;
-    wire gen3_idle_block_complete;
-    wire gen3_idle_tx_enable = gen3_mode &&
-                               ((ltssm_state == RECOVERY_IDLE) ||
-                                (ltssm_state == STATE_L0));
+    // Switch OS/SDS/Data ownership only at a complete 128-bit block. The idle
+    // source tracks the last OS LFSR state while disabled, so the handoff edge
+    // captures the state after word 3 of the final training block.
+    always @(posedge phy_pclk or negedge pipe_rst_n) begin
+        if (!pipe_rst_n) begin
+            gen3_idle_tx_owner <= 1'b0;
+        end else if (!gen3_mode) begin
+            gen3_idle_tx_owner <= 1'b0;
+        end else if (gen3_idle_tx_owner) begin
+            if (!gen3_idle_requested && gen3_idle_block_complete)
+                gen3_idle_tx_owner <= 1'b0;
+        end else if (gen3_idle_requested &&
+                     (gen3_os_tx_complete || !gen3_os_tx_valid)) begin
+            gen3_idle_tx_owner <= 1'b1;
+        end
+    end
     pcie_gen3_idle_tx u_gen3_idle_tx (
         .clk(phy_pclk), .rst_n(pipe_rst_n),
         .enable(gen3_idle_tx_enable),
@@ -698,14 +727,20 @@ module pcie_ltssm_mac_gen1 #(
             RECOVERY_EQ_PHASE2, RECOVERY_EQ_PHASE3:
                                                    tx_os_mode = 2'd1;
             RECOVERY_SPEED: begin
-                tx_os_enable = 1'b0;
+                if (recovery_needs_gen1_eios &&
+                    !recovery_speed_eios_sent) begin
+                    tx_os_enable = 1'b1;
+                    tx_os_mode = 2'd3;
+                end else begin
+                    tx_os_enable = 1'b0;
+                end
             end
             default:                              tx_os_mode = 2'd0;
         endcase
     end
 
     assign phy_txdata         = gen3_mode ?
-        (gen3_idle_tx_enable ? gen3_idle_tx_data : gen3_os_tx_data) :
+        (gen3_idle_tx_owner ? gen3_idle_tx_data : gen3_os_tx_data) :
         {16'd0, tx_scrambled_data};
     // Gen3 128b/130b PIPE does not use the Gen1 K-character bitmap.  The
     // legacy 8b/10b ordered-set generator still drives tx_scrambled_datak
@@ -715,13 +750,13 @@ module pcie_ltssm_mac_gen1 #(
     // block type in TXSYNC_HEADER instead, so TXDATAK must be zero.
     assign phy_txdatak        = gen3_mode ? 2'b00 : tx_scrambled_datak;
     assign phy_txdata_valid   = gen3_mode ?
-        (gen3_idle_tx_enable ? gen3_idle_tx_valid : gen3_os_tx_valid) :
+        (gen3_idle_tx_owner ? gen3_idle_tx_valid : gen3_os_tx_valid) :
         tx_scrambled_valid;
     assign phy_txstart_block  = gen3_mode &&
-        (gen3_idle_tx_enable ? gen3_idle_tx_start_block :
+        (gen3_idle_tx_owner ? gen3_idle_tx_start_block :
                                gen3_os_tx_start_block);
     assign phy_txsync_header  = gen3_mode ?
-        (gen3_idle_tx_enable ? gen3_idle_tx_sync_header :
+        (gen3_idle_tx_owner ? gen3_idle_tx_sync_header :
                                gen3_os_tx_sync_header) : 2'b00;
     assign phy_cmd_profile =
         (ltssm_state == DETECT_QUIET) ? PROFILE_DETECT_QUIET :
@@ -741,7 +776,9 @@ module pcie_ltssm_mac_gen1 #(
                                  (ltssm_state == RECOVERY_SPEED) ||
                                  eq_phase_valid) ? 3'd1 : 3'd0;
     assign negotiated_speed   = active_phy_rate;
-    assign recovery_speed_ready = (ltssm_state == RECOVERY_SPEED);
+    assign recovery_speed_ready = (ltssm_state == RECOVERY_SPEED) &&
+                                  (!recovery_needs_gen1_eios ||
+                                   recovery_speed_eios_sent);
 
     always @(posedge phy_pclk or negedge pipe_rst_n) begin
         if (!pipe_rst_n) begin
@@ -770,8 +807,13 @@ module pcie_ltssm_mac_gen1 #(
             cfg_complete_pending <= 1'b0;
             recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= 1'b0;
+            recovery_speed_eios_sent <= 1'b0;
         end else begin
             hot_reset_seen <= 1'b0;
+            if (ltssm_state != RECOVERY_SPEED)
+                recovery_speed_eios_sent <= 1'b0;
+            else if (!recovery_needs_gen1_eios || gen1_eios_complete)
+                recovery_speed_eios_sent <= 1'b1;
             if (speed_retrain_active && !speed_retrain_active_q)
                 recovery_speed_changed <= 1'b0;
             speed_retrain_active_q <= speed_retrain_active;
@@ -813,6 +855,7 @@ module pcie_ltssm_mac_gen1 #(
                 dbg_l0_seen <= 1'b0;
                 recovery_speed_changed <= 1'b0;
                 speed_retrain_active_q <= 1'b0;
+                recovery_speed_eios_sent <= 1'b0;
             end else begin
                 case (ltssm_state)
                     DETECT_QUIET: begin

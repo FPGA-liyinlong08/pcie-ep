@@ -77,6 +77,7 @@ def drive_defaults(dut):
     dut.phy_rxstart_block.value = 0
     dut.phy_rxsync_header.value = 0
     dut.active_phy_rate.value = 0
+    dut.recovery_target_rate.value = 0
     dut.phy_rxvalid.value = 0
     dut.phy_phystatus.value = 0
     dut.phy_rxelecidle.value = 1
@@ -527,6 +528,7 @@ async def retrain_uses_ltssm_recovery_speed_boundary(dut):
 
     await writable_phase()
     dut.speed_retrain_active.value = 1
+    dut.recovery_target_rate.value = 2
     dut.force_recovery.value = 1
     await wait_state(dut, RECOVERY_RCVRLOCK)
     await send_ts(dut, 1, 8, link=0, lane=0)
@@ -534,9 +536,26 @@ async def retrain_uses_ltssm_recovery_speed_boundary(dut):
     await send_ts(dut, 2, 8, link=0, lane=0)
     await wait_state(dut, RECOVERY_SPEED)
 
+    # Finish the active TS2 first, then transmit one complete Gen1 EIOS.
+    # The raw rate owner must not be released until the second EIOS beat.
+    assert int(dut.recovery_speed_ready.value) == 0
+    assert int(dut.negotiated_width.value) == 1
+    for _ in range(16):
+        assert int(dut.phy_txelecidle.value) == 0
+        if (int(dut.phy_txdata.value) & 0xFFFF) == 0x7CBC:
+            break
+        await tick(dut)
+    else:
+        raise AssertionError("Recovery.Speed did not transmit EIOS")
+    assert int(dut.phy_txdatak.value) == 0b11
+    assert int(dut.recovery_speed_ready.value) == 0
+    await tick(dut)
+    assert (int(dut.phy_txdata.value) & 0xFFFF) == 0x7C7C
+    assert int(dut.phy_txdatak.value) == 0b11
+    assert int(dut.recovery_speed_ready.value) == 0
+    await tick(dut)
     assert int(dut.recovery_speed_ready.value) == 1
     assert int(dut.phy_txdata_valid.value) == 0
-    assert int(dut.negotiated_width.value) == 1
     await tick(dut, 4)
     assert int(dut.ltssm_state.value) == RECOVERY_SPEED
 

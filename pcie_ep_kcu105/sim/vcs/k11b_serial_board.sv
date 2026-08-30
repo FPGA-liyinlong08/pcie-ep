@@ -403,11 +403,13 @@ module board;
     initial begin : k15_local_phy_loopback
         integer wait_cycles;
         integer rx_cycles;
+        integer flush_cycles;
         reg gen3_rx_seen;
         reg gt_loopback_forced;
         if ($test$plusargs("K15_LOCAL_PHY_LOOPBACK")) begin
             wait_cycles = 0;
             rx_cycles = 0;
+            flush_cycles = 0;
             gen3_rx_seen = 1'b0;
             gt_loopback_forced = 1'b0;
             wait (sys_rst_n === 1'b1);
@@ -437,17 +439,30 @@ module board;
                 $display("K15_LOCAL_PHY_LOOPBACK_ENABLE mode=serial_pins time_ps=%0t rate=%02b",
                          $time, EP.DUT.phy_active_rate);
             end
+            // The Endpoint was receiving the RP stream before the force.
+            // Flush that data before judging the loopback, then require the
+            // first dword of our diagnostic beefcafe OS instead of accepting
+            // any stale RXVALID beat as success.  The official example may
+            // acquire block lock after the first EIEOS beat, so EIEOS itself
+            // is not a reliable start marker.
             while ((EP.DUT.phy_active_rate == 2'b10) &&
-                   !gen3_rx_seen && (rx_cycles < 100_000)) begin
+                   (flush_cycles < 64)) begin
+                @(posedge EP.DUT.phy_pclk);
+                flush_cycles = flush_cycles + 1;
+            end
+            while ((EP.DUT.phy_active_rate == 2'b10) &&
+                   !gen3_rx_seen && (rx_cycles < 10_000)) begin
                 @(posedge EP.DUT.phy_pclk);
                 rx_cycles = rx_cycles + 1;
                 if ((EP.DUT.phy_active_rate == 2'b10) &&
-                    (EP.DUT.phy_rxvalid || EP.DUT.phy_rxdata_valid ||
-                     EP.DUT.phy_rxstart_block))
+                    EP.DUT.phy_rxvalid && EP.DUT.phy_rxdata_valid &&
+                    EP.DUT.phy_rxstart_block &&
+                    (EP.DUT.phy_rxsync_header == 2'b01) &&
+                    (EP.DUT.phy_rxdata == 32'hbeef_cafe))
                     gen3_rx_seen = 1'b1;
             end
-            $display("K15_LOCAL_PHY_LOOPBACK_RESULT wait=%0d rx_cycles=%0d gen3_rx_seen=%0d active_rate=%02b rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x rxstatus=%03b rxelecidle=%0d rxsyncedone=%0d rst_fsm=%0d rst_idle=%0d prst_n=%0d rrst_n=%0d cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d rate_idle=%0d",
-                     wait_cycles, rx_cycles, gen3_rx_seen,
+            $display("K15_LOCAL_PHY_LOOPBACK_RESULT wait=%0d flush=%0d rx_cycles=%0d gen3_rx_seen=%0d active_rate=%02b rxvalid=%0d data_valid=%0d start=%0d header=%02b data=%08x rxstatus=%03b rxelecidle=%0d rxsyncedone=%0d rst_fsm=%0d rst_idle=%0d prst_n=%0d rrst_n=%0d cdrlock=%0d rxresetdone=%0d rate_gen3=%0d user_gen3_rdy=%0d rate_idle=%0d",
+                     wait_cycles, flush_cycles, rx_cycles, gen3_rx_seen,
                      EP.DUT.phy_active_rate, EP.DUT.phy_rxvalid,
                      EP.DUT.phy_rxdata_valid, EP.DUT.phy_rxstart_block,
                      EP.DUT.phy_rxsync_header, EP.DUT.phy_rxdata,
@@ -1572,6 +1587,7 @@ module board;
     reg k15_seen_gen3_l0;
     reg k15_seen_eq_failure;
     reg k15_seen_rp_gen3_rxdata_valid;
+    reg k15_seen_rp_eq_phase2;
     reg [5:0] k15_last_ep_state;
     wire k15_rp_rx_ts1;
     wire k15_rp_rx_ts2;
@@ -1782,6 +1798,7 @@ module board;
             k15_seen_recovery_idle <= 1'b0;
             k15_seen_gen3_l0 <= 1'b0;
             k15_seen_eq_failure <= 1'b0;
+            k15_seen_rp_eq_phase2 <= 1'b0;
             k15_last_ep_state <= 6'h3f;
             k15_eq_trace_count <= 0;
             k15_ep_tx_word_count <= 0;
@@ -1796,10 +1813,12 @@ module board;
                 // beats.  Only the first beat advertises the ordered-set
                 // sync header (01); continuation beats must be 00, matching
                 // the XDMA golden EP and the receiver PCS contract.
+`ifndef K15_AB_HEADER_HELD
                 if (!EP.DUT.phy_txstart_block &&
                     (EP.DUT.phy_txsync_header != 2'b00))
                     $fatal(1, "K15_GEN3_CONTINUATION_SYNC_HEADER_BAD header=%02b",
                            EP.DUT.phy_txsync_header);
+`endif
                 $display("K15_EP_TX_PIPE n=%0d time_ps=%0t state=%0h data=%08x valid=%0d start=%0d header=%02b gt_data=%08x gt_ctrl=%04x rate_gen3=%0d user_gen3_rdy=%0d txresetdone=%0d txuserrdy=%0d gttxreset=%0d syncstart=%0d pcs_syncdone=%0d txphalign=%0d txsyncdone=%0d",
                          k15_ep_tx_word_count, $time, EP.DUT.ltssm_state,
                          EP.DUT.phy_txdata, EP.DUT.phy_txdata_valid,
@@ -1829,6 +1848,8 @@ module board;
 
             if (EP.DUT.ltssm_state == 6'h28)
                 k15_seen_eq_phase0 <= 1'b1;
+            if (RP.cfg_ltssm_state == 6'h2a)
+                k15_seen_rp_eq_phase2 <= 1'b1;
             if ((EP.DUT.ltssm_state == 6'h29) && !k15_seen_eq_phase1) begin
                 k15_seen_eq_phase1 <= 1'b1;
                 $display("K15_EQ_PHASE0_DONE epoch=%0d time_ps=%0t", k15_epoch, $time);
@@ -1877,11 +1898,71 @@ module board;
         end
     end
 
+    initial begin : k15_phase2_milestone_test
+        if ($test$plusargs("K15_PHASE2_ONLY")) begin
+            k15_wait_cycles = 0;
+            wait (sys_rst_n === 1'b1);
+            while (!(k15_seen_initial_capability &&
+                     k14_seen_rp_raw_gen3_ts &&
+                     k14_seen_partner_accept &&
+                     k14_seen_gen3_rate &&
+                     k14_seen_gen3_phystatus &&
+                     k14_seen_qpll_lock &&
+                     k15_seen_eq_phase0 &&
+                     k15_seen_eq_phase1 &&
+                     k15_seen_eq_phase2 &&
+                     k15_seen_rp_eq_phase2 &&
+                     k15_seen_rp_gen3_rxdata_valid &&
+                     (k15_rp_rx_decoded_ts > 0)) &&
+                   !EP.DUT.g_gen3_rate_change.speed_timeout_sticky &&
+                   !EP.DUT.g_gen3_rate_change.speed_fallback_sticky &&
+                   !k15_seen_eq_failure &&
+                   (k15_wait_cycles < K15_EPOCH_TIMEOUT_CYCLES)) begin
+                @(posedge refclk_p);
+                k15_wait_cycles = k15_wait_cycles + 1;
+            end
+
+            if (k15_seen_initial_capability &&
+                k14_seen_rp_raw_gen3_ts &&
+                k14_seen_partner_accept &&
+                k14_seen_gen3_rate &&
+                k14_seen_gen3_phystatus &&
+                k14_seen_qpll_lock &&
+                k15_seen_eq_phase0 &&
+                k15_seen_eq_phase1 &&
+                k15_seen_eq_phase2 &&
+                k15_seen_rp_eq_phase2 &&
+                k15_seen_rp_gen3_rxdata_valid &&
+                (k15_rp_rx_decoded_ts > 0) &&
+                !EP.DUT.g_gen3_rate_change.speed_timeout_sticky &&
+                !EP.DUT.g_gen3_rate_change.speed_fallback_sticky &&
+                !k15_seen_eq_failure) begin
+                $display("K15_XILINX_RP_PHASE2_PASS wait=%0d ep_state=%0h rp_state=%0h rp_rxvalid_beats=%0d rp_decoded_ts=%0d",
+                         k15_wait_cycles, EP.DUT.ltssm_state,
+                         RP.cfg_ltssm_state, k15_rp_rx_valid_beats,
+                         k15_rp_rx_decoded_ts);
+                $finish;
+            end
+
+            k15_report_ab_latency();
+            $display("K15_XILINX_RP_PHASE2_FAIL wait=%0d ep_state=%0h rp_state=%0h ep_p2=%0d rp_p2=%0d rp_rxvalid=%0d rp_rxvalid_beats=%0d rp_decoded_ts=%0d timeout=%0d fallback=%0d eq_failed=%0d",
+                     k15_wait_cycles, EP.DUT.ltssm_state, RP.cfg_ltssm_state,
+                     k15_seen_eq_phase2, k15_seen_rp_eq_phase2,
+                     k15_seen_rp_gen3_rxdata_valid, k15_rp_rx_valid_beats,
+                     k15_rp_rx_decoded_ts,
+                     EP.DUT.g_gen3_rate_change.speed_timeout_sticky,
+                     EP.DUT.g_gen3_rate_change.speed_fallback_sticky,
+                     k15_seen_eq_failure);
+            $fatal(1, "K15_XILINX_RP_PHASE2_MISSING");
+        end
+    end
+
     initial begin : k15_autonomous_gen3_test
         k15_epoch = 0;
         k15_wait_cycles = 0;
         k15_l0_stable = 0;
-        if ($test$plusargs("K15_GEN3")) begin
+        if ($test$plusargs("K15_GEN3") &&
+            !$test$plusargs("K15_PHASE2_ONLY")) begin
             wait (sys_rst_n === 1'b1);
             for (k15_epoch = 0; k15_epoch < 2; k15_epoch = k15_epoch + 1) begin
                 k15_wait_cycles = 0;

@@ -2,7 +2,16 @@
 set -euo pipefail
 
 VCS_HOME="${VCS_HOME:-/home/synopsys/vcs-mx/O-2018.09-SP2}"
-SIMLIB_DIR="${XILINX_VCS_SIMLIB:-/home/wx/Documents/vcs_compile_simlib}"
+if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
+    SIMLIB_DIR="${XILINX_VCS_SIMLIB}"
+elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
+    SIMLIB_DIR="${VIVADO_SIMLIB}"
+elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
+    SIMLIB_DIR=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
+else
+    echo "错误：找不到 Vivado VCS simlib；请设置 XILINX_VCS_SIMLIB 或 VIVADO_SIMLIB" >&2
+    exit 66
+fi
 
 export VCS_HOME
 export VCS_ARCH_OVERRIDE=linux

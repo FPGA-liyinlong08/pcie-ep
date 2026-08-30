@@ -29,6 +29,8 @@ svt_testcase="${SVT_TESTCASE:-k15_svt_x1_test}"
 svt_pass_marker="${SVT_PASS_MARKER:-K15_SVT_X1_PASS epochs=2}"
 svt_fail_marker="${SVT_FAIL_MARKER:-K15_SVT_X1_FAIL}"
 svt_run_label="${SVT_RUN_LABEL:-K15_SVT_X1}"
+phase2_only="${K15_SVT_PHASE2_ONLY:-0}"
+header_held_ab="${K15_SVT_HEADER_HELD_AB:-0}"
 
 if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
     simlib_dir="${XILINX_VCS_SIMLIB}"
@@ -37,7 +39,8 @@ elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
 elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
     simlib_dir=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
 else
-    simlib_dir=/home/wx/Documents/vcs_compile_simlib
+    echo "missing Vivado VCS simlib; set XILINX_VCS_SIMLIB or VIVADO_SIMLIB" >&2
+    exit 66
 fi
 
 for required in "${vcs_home}/bin/vcs" "${vcs_home}/bin/vlogan" \
@@ -169,7 +172,12 @@ for source in "${rtl_sources[@]}"; do
         rtl_paths+=("${rtl_root}/${source}")
     fi
 done
+rtl_defines=()
+if [[ "${header_held_ab}" == "1" ]]; then
+    rtl_defines+=(+define+K15_AB_HEADER_HELD)
+fi
 run_logged "${vcs_home}/bin/vlogan" -full64 -sverilog -work xil_defaultlib \
+    "${rtl_defines[@]}" \
     "${rtl_paths[@]}" "${vivado_home}/data/verilog/src/glbl.v"
 
 vlog_common=(
@@ -206,6 +214,11 @@ elif [[ ${elaborate_status} -ne 0 ]]; then
     exit "${elaborate_status}"
 fi
 
+simulation_plusargs=()
+if [[ "${phase2_only}" == "1" ]]; then
+    simulation_plusargs+=(+K15_PHASE2_ONLY)
+fi
+
 for ((process_epoch = 0; process_epoch < process_epochs; process_epoch++)); do
     if [[ ${process_epochs} -eq 1 ]]; then
         process_log="${build_dir}/simulate.log"
@@ -214,7 +227,8 @@ for ((process_epoch = 0; process_epoch < process_epochs; process_epoch++)); do
     fi
     set +e
     timeout --foreground "${simulation_timeout}" "${run_dir}/k15_svt_x1_simv" \
-        -licqueue "+vmm_test=${svt_testcase}" +vmm_log_nowarn_at_200 run \
+        -licqueue "+vmm_test=${svt_testcase}" +vmm_log_nowarn_at_200 \
+        "${simulation_plusargs[@]}" run \
         -l "${process_log}"
     simulation_status=$?
     set -e
@@ -226,6 +240,11 @@ for ((process_epoch = 0; process_epoch < process_epochs; process_epoch++)); do
     grep -Fq "${svt_pass_marker}" "${process_log}"
     if grep -Fq "${svt_fail_marker}" "${process_log}"; then
         echo "${svt_run_label} gate reported failure in process ${process_epoch}" >&2
+        exit 1
+    fi
+    if [[ "${phase2_only}" == "1" ]] &&
+       grep -Eq "phy_recovery_speed_electrical_idle_with_no_eios|phy_data_block_before_sds|phy_max_rx_skp_interval" "${process_log}"; then
+        echo "${svt_run_label} protocol monitor reported a pre-Phase2 failure" >&2
         exit 1
     fi
     echo "${svt_run_label}_PROCESS_PASS process=${process_epoch} log=${process_log}"

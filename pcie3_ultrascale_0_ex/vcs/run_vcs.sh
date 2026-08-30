@@ -12,10 +12,20 @@ TESTNAME=${TESTNAME:-pio_writeReadBack_test0}
 WAVEFORM=${WAVEFORM:-0}
 TRACE_LTSSM=${TRACE_LTSSM:-0}
 
-VCS_ROOT=${VCS_ROOT:-/home/synopsys/vcs-mx/O-2018.09-SP2}
+VCS_ROOT=${VCS_ROOT:-${VCS_HOME:-/home/synopsys/vcs-mx/O-2018.09-SP2}}
 VIVADO_ROOT=${VIVADO_ROOT:-/home/Xilinx/Vivado/2021.2}
-SIMLIB_DIR=${XILINX_VCS_SIMLIB:-/home/wx/Documents/vcs_compile_simlib}
 LICENSE_SERVER=${VCS_LICENSE_SERVER:-27000@wx-linux}
+
+if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
+  SIMLIB_DIR="${XILINX_VCS_SIMLIB}"
+elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
+  SIMLIB_DIR="${VIVADO_SIMLIB}"
+elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
+  SIMLIB_DIR=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
+else
+  echo "ERROR: Vivado VCS simlib not found; set XILINX_VCS_SIMLIB or VIVADO_SIMLIB" >&2
+  exit 66
+fi
 
 export VCS_HOME="$VCS_ROOT"
 export VCS_ARCH_OVERRIDE=${VCS_ARCH_OVERRIDE:-linux}
@@ -48,21 +58,25 @@ cd "$BUILD_DIR"
 
 if [[ "${1:-}" == "clean" ]]; then
   rm -rf "$BUILD_DIR/vcs_lib" csrc board_simv board_simv.daidir ucli.key 64
-  rm -f vlogan.log elaborate.log simulate.log waveform.log pcie_training.vcd synopsys_sim.setup
+  rm -f vlogan.log elaborate.log simulate.log waveform.log pcie_training.vcd
   mkdir -p "$BUILD_DIR/vcs_lib/xil_defaultlib"
 fi
 
-cat > synopsys_sim.setup <<'EOF'
-xil_defaultlib : ./vcs_lib/xil_defaultlib
-WORK          : xil_defaultlib
-EOF
-printf 'OTHERS = %s/synopsys_sim.setup\n' "$SIMLIB_DIR" >> synopsys_sim.setup
+SETUP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pcie3_rp_vcs_setup.XXXXXX")
+SETUP_FILE="$SETUP_DIR/synopsys_sim.setup"
+printf 'WORK > DEFAULT\nDEFAULT : %s\nxil_defaultlib : %s\nOTHERS=%s/synopsys_sim.setup\n' \
+  "$BUILD_DIR/vcs_lib/xil_defaultlib" "$BUILD_DIR/vcs_lib/xil_defaultlib" \
+  "$SIMLIB_DIR" > "$SETUP_FILE"
+export SYNOPSYS_SIM_SETUP="$SETUP_FILE"
+echo "[VCS] simlib=$SIMLIB_DIR setup=$SETUP_FILE"
 
-mapfile -d '' GT_FILES < <(find "$GT_STATIC_DIR" \
-  -maxdepth 1 -type f -name 'gtwizard_ultrascale_v1_7*.v' -print0 | sort -z)
-mapfile -d '' IP_SIM_FILES < <(find "$IP_SIM_DIR" -maxdepth 1 -type f -name '*.v' -print0 | sort -z)
-mapfile -d '' IP_SOURCE_FILES < <(find "$IP_SOURCE_DIR" -maxdepth 1 -type f -name '*.v' -print0 | sort -z)
-mapfile -d '' TB_FILES < <(find "$IMPORT_DIR" -maxdepth 1 -type f -name '*.v' -print0 | sort -z)
+# The installed Bash predates mapfile -d.  These generated directories have
+# no whitespace in file names, and Bash glob expansion is lexically ordered,
+# so arrays keep the same deterministic source ordering without Bash 4.4.
+GT_FILES=("$GT_STATIC_DIR"/gtwizard_ultrascale_v1_7*.v)
+IP_SIM_FILES=("$IP_SIM_DIR"/*.v)
+IP_SOURCE_FILES=("$IP_SOURCE_DIR"/*.v)
+TB_FILES=("$IMPORT_DIR"/*.v)
 
 echo "[VCS] compiling XPM and PCIe/testbench sources"
 vlogan -full64 -sverilog +v2k +define+XILINX_SIM +incdir+"$IMPORT_DIR" -work xil_defaultlib \

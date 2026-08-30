@@ -144,10 +144,11 @@ module pcie_k13_production_ctrl #(
     reg [3:0]  phase1_initial_tx_count;
     reg        phase1_response_ready;
     reg        peer_eq_exit_seen;
+    // Phase identity is carried by Symbol 6 EC[1:0]; FS/LF and coefficient
+    // fields may vary while the partner remains in Phase 1.
     wire peer_phase1_ts = ts_valid && ts_complete && ts_is_ts1 &&
                           (ts_rate == 2'b10) &&
-                          (ts_eq_control == 8'h01) &&
-                          (ts_eq_data == 24'h8a0c28);
+                          (ts_eq_control[1:0] == 2'b01);
     wire peer_post_eq_ts = ts_valid && ts_complete &&
                            (ts_rate == 2'b10) &&
                            (ts_lane == expected_lane) &&

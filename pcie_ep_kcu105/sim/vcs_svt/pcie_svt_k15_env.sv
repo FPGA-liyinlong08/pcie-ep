@@ -215,6 +215,43 @@ class k15_svt_x1_scenario extends vmm_ms_scenario;
     bit timed_out;
     int epoch;
     wait (test_top.reset_epoch_count >= 1);
+    if ($test$plusargs("K15_PHASE2_ONLY")) begin
+      timed_out = 0;
+      fork
+        begin
+          wait (test_top.seen_eq_phase2);
+        end
+        begin
+          #1800000;
+          timed_out = 1;
+        end
+      join_any
+      disable fork;
+      if (timed_out) begin
+        test_top.display_diagnostics();
+        $display("K15_SVT_PHASE2_FAIL reason=phase2_timeout");
+        `vmm_error(log, "K15 SVT did not reach Equalization Phase2");
+        n++;
+        return;
+      end
+      if (!(test_top.seen_partner_accept && test_top.seen_gen3_rate &&
+            test_top.seen_gen3_phystatus && test_top.seen_eq_phase0 &&
+            test_top.seen_eq_phase1 && test_top.seen_eq_phase2) ||
+          test_top.DUT.g_gen3_rate_change.speed_timeout_sticky ||
+          test_top.DUT.g_gen3_rate_change.speed_fallback_sticky ||
+          test_top.DUT.gen3_eq_failed) begin
+        test_top.display_diagnostics();
+        $display("K15_SVT_PHASE2_FAIL reason=strict_gate");
+        `vmm_error(log, "K15 SVT Phase2 strict gate failed");
+        n++;
+        return;
+      end
+      $display("K15_SVT_PHASE2_PASS root_state=%0d ep_state=%0h",
+               root_status.pcie_status.pl_status.ltssm_state,
+               test_top.DUT.ltssm_state);
+      n++;
+      return;
+    end
     for (epoch = 0; epoch < 2; epoch++) begin
       wait_for_gen3_x1(timed_out);
       if (timed_out) begin

@@ -19,6 +19,7 @@ module k15_eq_idle_test_top (
     input  wire [17:0] eq_rsp_coeff,
     input  wire idle_enable,
     input  wire training_enable,
+    input  wire [1:0] training_mode,
     output wire eq_req_valid,
     output wire [2:0] eq_req_kind,
     output wire [3:0] eq_req_preset,
@@ -83,11 +84,12 @@ module k15_eq_idle_test_top (
     );
 
     pcie_gen3_os_tx u_training_tx (
-        .clk(clk), .rst_n(rst_n), .enable(training_enable), .mode(2'd1),
-        .link_number(8'd0), .link_is_pad(1'b0),
+        .clk(clk), .rst_n(rst_n), .enable(training_enable),
+        .mode(training_mode),
+        .link_number(8'h9f), .link_is_pad(1'b0),
         .lane_number(8'd0), .lane_is_pad(1'b0), .n_fts(8'hff),
         .rate_id(8'h0e), .training_control(8'h00),
-        .eq_control(8'h21), .eq_data(24'h000c28),
+        .eq_control(8'h20), .eq_data(24'h802800),
         .out_data(training_data), .out_valid(training_valid),
         .start_block(training_start_block),
         .sync_header(training_sync_header),

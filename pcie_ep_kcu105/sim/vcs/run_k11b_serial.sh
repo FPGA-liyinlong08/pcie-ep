@@ -5,8 +5,26 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "${script_dir}/../.." && pwd)"
 vcs_home="${VCS_HOME:-/home/synopsys/vcs-mx/O-2018.09-SP2}"
 vivado_home="${VIVADO_HOME:-/home/Xilinx/Vivado/2021.2}"
-simlib_dir="${XILINX_VCS_SIMLIB:-/home/wx/Documents/vcs_compile_simlib}"
-rp_dir="${K11B_RP_IMPORTS:-/home/wx/Documents/XDMA/xdma_dec_250922/imports}"
+if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
+    simlib_dir="${XILINX_VCS_SIMLIB}"
+elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
+    simlib_dir="${VIVADO_SIMLIB}"
+elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
+    simlib_dir=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
+else
+    echo "错误：找不到 Vivado VCS simlib；请设置 XILINX_VCS_SIMLIB 或 VIVADO_SIMLIB" >&2
+    exit 66
+fi
+if [[ -n "${K11B_RP_IMPORTS:-}" ]]; then
+    rp_dir="${K11B_RP_IMPORTS}"
+elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/imports/pcie3_uscale_rp_top.v ]]; then
+    rp_dir=/home/ICer/Vivado_prj/xdma_0_ex/imports
+elif [[ -f /home/ICer/pcie-ep/pcie3_ultrascale_0_ex/imports/pcie3_uscale_rp_top.v ]]; then
+    rp_dir=/home/ICer/pcie-ep/pcie3_ultrascale_0_ex/imports
+else
+    echo "错误：找不到 Xilinx RP imports；请设置 K11B_RP_IMPORTS" >&2
+    exit 66
+fi
 g2_gen1_only="${G2_GEN1_ONLY:-0}"
 if [[ "${g2_gen1_only}" == "1" ]]; then
     phy_ip_root="ip_g2_gen1"
@@ -25,6 +43,9 @@ k12e_mode="${K12E_VCS:-0}"
 k14_reboot_mode="${K14_REBOOT_VCS:-0}"
 k14_rate_ab_mode="${K14_RATE_AB_VCS:-0}"
 k15_mode="${K15_VCS:-0}"
+k15_phase2_only="${K15_PHASE2_ONLY:-0}"
+k15_header_held_ab="${K15_HEADER_HELD_AB:-0}"
+k15_xilinx_pattern_ab="${K15_XILINX_PATTERN_AB:-0}"
 k15_local_phy_loopback="${K15_LOCAL_PHY_LOOPBACK:-0}"
 k15_gt_loopback="${K15_GT_LOOPBACK:-0}"
 k15_continue_after_fallback="${K15_CONTINUE_AFTER_FALLBACK:-0}"
@@ -72,6 +93,13 @@ if [[ "${k15_mode}" == "1" ]]; then
     tb_defines+=("+define+K15_AB_PRERATE_TXEQ_VALUE=${k15_ab_prerate_txeq}")
     tb_defines+=("+define+K15_AB_PRERATE_DWELL_VALUE=${k15_ab_prerate_dwell}")
     tb_defines+=("+define+K15_AB_PRERATE_PRESET_VALUE=${k15_ab_prerate_preset}")
+    if [[ "${k15_header_held_ab}" == "1" ||
+          "${k15_xilinx_pattern_ab}" == "1" ]]; then
+        tb_defines+=(+define+K15_AB_HEADER_HELD)
+    fi
+    if [[ "${k15_xilinx_pattern_ab}" == "1" ]]; then
+        tb_defines+=(+define+K15_AB_XILINX_PATTERN)
+    fi
 fi
 if [[ "${k14_rate_ab_mode}" == "1" ]]; then
     case "${k14_ep_tx_rate_id}" in
@@ -291,6 +319,9 @@ fi
 
 if [[ "${k15_mode}" == "1" ]]; then
     k15_plusargs=(+K15_GEN3)
+    if [[ "${k15_phase2_only}" == "1" ]]; then
+        k15_plusargs+=(+K15_PHASE2_ONLY)
+    fi
     if [[ "${k15_local_phy_loopback}" == "1" ]]; then
         k15_plusargs+=(+K15_LOCAL_PHY_LOOPBACK)
         if [[ "${k15_gt_loopback}" == "1" ]]; then
@@ -317,7 +348,10 @@ if [[ "${k15_mode}" == "1" ]]; then
     elif [[ ${k15_status} -ne 0 ]]; then
         exit "${k15_status}"
     fi
-    if [[ "${k15_local_phy_loopback}" == "1" ]]; then
+    if [[ "${k15_phase2_only}" == "1" ]]; then
+        grep -q 'K15_XILINX_RP_PHASE2_PASS' build/k15_gen3_simulate.log
+        echo "K15_XILINX_RP_PHASE2_VCS_PASS run_dir=${run_dir}"
+    elif [[ "${k15_local_phy_loopback}" == "1" ]]; then
         grep -q 'K15_LOCAL_PHY_LOOPBACK_PASS' \
             build/k15_gen3_simulate.log
         echo "K15_LOCAL_PHY_LOOPBACK_PASS run_dir=${run_dir}"

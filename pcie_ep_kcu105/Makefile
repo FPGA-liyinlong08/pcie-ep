@@ -29,7 +29,8 @@
 	k14-rate-id-ab-vcs \
 	k14-direct-sim \
 	k14-reboot-vcs k14-reboot-sim \
-	k15-directed-test k15-static k15-vcs k15 \
+	k15-directed-test k15-static k15-vcs k15-vcs-phase2 k15-svt-vcs \
+	k15-svt-phase2-vcs k15 \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
 	k11b2-ila-hw-program-arm k11b2-ila-hw-capture-wait \
@@ -337,8 +338,14 @@ k15-static: k15-directed-test phy-command-ctrl-test k15-phy-ab-test \
 k15-vcs:
 	./sim/vcs/run_k15_gen3.sh
 
+k15-vcs-phase2:
+	./sim/vcs/run_k15_phase2.sh
+
 k15-svt-vcs:
 	./sim/vcs_svt/run_k15_svt_x1.sh
+
+k15-svt-phase2-vcs:
+	./sim/vcs_svt/run_k15_svt_phase2_x1.sh
 
 k15-vcs-ab-matrix:
 	./sim/vcs/run_k15_ab_matrix.sh

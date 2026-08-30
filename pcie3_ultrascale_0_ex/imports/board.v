@@ -161,6 +161,7 @@ module board;
  integer ep_gen3_pipe_words;
  integer rp_gen3_pipe_words;
  integer ep_gen3_gt_starts;
+ integer ep_gen3_gt_words;
  reg [1:0] ep_last_eq_phase;
  reg [1:0] rp_last_eq_phase;
  wire golden_ep_ts1, golden_ep_ts2, golden_ep_malformed;
@@ -181,6 +182,7 @@ module board;
    ep_gen3_pipe_words = 0;
    rp_gen3_pipe_words = 0;
    ep_gen3_gt_starts = 0;
+   ep_gen3_gt_words = 0;
    ep_last_eq_phase = 2'b11;
    rp_last_eq_phase = 2'b11;
  end
@@ -188,6 +190,18 @@ module board;
  // Compare the hard-IP Endpoint's exact lane-0 GT contract against the soft
  // Endpoint PHY.  Keep the capture bounded to the first startup blocks.
  always @(posedge EP.pcie3_ultrascale_0_i.inst.pipe_clk) begin
+   if (trace_ltssm &&
+       (cfg_ltssm_state == 6'h28) &&
+       EP.pcie3_ultrascale_0_i.inst.gt_pcierategen3_o[0] &&
+       EP.pcie3_ultrascale_0_i.inst.pipe_tx0_data_valid &&
+       (ep_gen3_gt_words < 32)) begin
+     $display("[%t] GOLDEN_EP_TX_BEAT n=%0d start=%0d header=%02b data=%08x",
+              $realtime, ep_gen3_gt_words,
+              EP.pcie3_ultrascale_0_i.inst.pipe_tx0_start_block,
+              EP.pcie3_ultrascale_0_i.inst.pipe_tx0_syncheader,
+              EP.pcie3_ultrascale_0_i.inst.pipe_tx0_data);
+     ep_gen3_gt_words = ep_gen3_gt_words + 1;
+   end
    if (trace_ltssm &&
        EP.pcie3_ultrascale_0_i.inst.pipe_tx0_start_block &&
        (ep_gen3_gt_starts < 24)) begin

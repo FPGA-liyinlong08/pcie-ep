@@ -126,3 +126,30 @@ K02_VCS_REAL_IP_PASS mode=k02_dynamic_txeq_tb
 
 结论：本地 license 解决方法有效；Query B 的后续硬件失败不是由 VCS license
 阻塞造成的。
+
+## 2026-08-30 Xilinx RP simlib 路径
+
+Xilinx Root Port 的 K11-B VCS 流程使用
+`sim/vcs/synopsys_sim.setup`。该文件曾保留另一台电脑的机器相关配置：
+
+```text
+OTHERS=/home/wx/Documents/vcs_compile_simlib/synopsys_sim.setup
+```
+
+在本机上，`check_env.sh` 已能确认有效库位于：
+
+```text
+/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
+```
+
+但 VCS 会优先读取当前 `sim/vcs` 目录下的 setup 文件，因此仅设置
+`XILINX_VCS_SIMLIB` 不能覆盖该旧的 `OTHERS` 引用，表现为：
+
+```text
+Cannot open /home/wx/Documents/vcs_compile_simlib/synopsys_sim.setup
+```
+
+仓库 setup 现已移除机器绝对路径。Xilinx RP 和 SVT 脚本会按
+`XILINX_VCS_SIMLIB`、`VIVADO_SIMLIB`、本机已知路径的顺序选择 simlib，
+为每次运行生成临时 `synopsys_sim.setup` 并设置 `SYNOPSYS_SIM_SETUP`。
+迁移到其他电脑时只需设置环境变量，不应把机器路径提交回仓库 setup。
