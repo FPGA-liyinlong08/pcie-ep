@@ -128,6 +128,7 @@ module board;
     wire       trace_ep_tx_ts1;
     wire       trace_ep_tx_ts2;
     wire       trace_ep_tx_malformed;
+    wire       trace_ep_tx_eieos_start;
     wire [7:0] trace_ep_tx_link;
     wire [7:0] trace_ep_tx_lane;
     wire [7:0] trace_ep_tx_rate;
@@ -157,7 +158,8 @@ module board;
         .link_number(trace_ep_tx_link), .link_is_pad(),
         .lane_number(trace_ep_tx_lane), .lane_is_pad(), .n_fts(),
         .rate_id(trace_ep_tx_rate), .training_control(trace_ep_tx_control),
-        .eq_control(trace_ep_tx_eq_control), .eq_data(trace_ep_tx_eq_data)
+        .eq_control(trace_ep_tx_eq_control), .eq_data(trace_ep_tx_eq_data),
+        .eieos_start(trace_ep_tx_eieos_start)
     );
 
     pcie_gen3_os_rx trace_rp_rx_os_rx (
@@ -1588,6 +1590,7 @@ module board;
     reg k15_seen_eq_failure;
     reg k15_seen_rp_gen3_rxdata_valid;
     reg k15_seen_rp_eq_phase2;
+    reg k15_ep_eieos_tx_seen;
     reg [5:0] k15_last_ep_state;
     wire k15_rp_rx_ts1;
     wire k15_rp_rx_ts2;
@@ -1596,6 +1599,191 @@ module board;
     wire [7:0] k15_rp_rx_control;
     wire [7:0] k15_rp_rx_eq_control;
     wire [23:0] k15_rp_rx_eq_data;
+    wire k15_ep_eieos_tx_start;
+
+    // Event-only timeline probes.  These are deliberately independent of the
+    // Phase-0 envelope sampler below so that a first-high transition cannot be
+    // hidden by an LTSSM-state gate.
+    wire k15_ep_qpll_lock =
+        EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.qpll1lock_out[0];
+    wire k15_rp_pcierategen3 =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierategen3[0];
+    wire k15_rp_rxcdrlock =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.phy_lane[0].gt_channel_int.gt_channel_i.GT_RXCDRLOCK;
+    wire k15_rp_rxresetdone =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_rxresetdone[0];
+    wire k15_rp_rxelecidle =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0];
+    wire k15_rp_rxdata_valid =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0];
+    wire k15_rp_rxstart_block =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0];
+    wire k15_rp_user_gen3_rdy =
+        RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcieusergen3rdy[0];
+
+    reg k15_t_ep_speed_seen;
+    reg k15_t_rp_rcvrlock_seen;
+    reg k15_t_rp_rcvrcfg_seen;
+    reg k15_t_rp_speed_seen;
+    reg k15_t_rp_eq0_seen;
+    reg k15_t_ep_rate_seen;
+    reg k15_t_ep_txei_rise_seen;
+    reg k15_t_ep_txei_fall_seen;
+    reg k15_t_ep_qpll_seen;
+    reg k15_t_ep_phystatus_seen;
+    reg k15_t_rp_rate_seen;
+    reg k15_t_rp_cdr_seen;
+    reg k15_t_rp_rxreset_seen;
+    reg k15_t_rp_rxready_seen;
+    reg k15_t_rp_rxidle_fall_seen;
+    reg k15_t_rp_rxvalid_seen;
+    reg k15_t_rp_rxstart_seen;
+    reg k15_t_rp_user_ready_seen;
+    reg k15_t_ep_txei_prev;
+    reg k15_t_rp_rxidle_prev;
+
+    task automatic k15_timeline_event(input [8*40-1:0] name);
+        begin
+            $display("K15_TIMELINE_EVENT name=%0s time_ps=%0t", name, $time);
+        end
+    endtask
+
+    initial begin
+        k15_t_ep_speed_seen = 1'b0;
+        k15_t_rp_rcvrlock_seen = 1'b0;
+        k15_t_rp_rcvrcfg_seen = 1'b0;
+        k15_t_rp_speed_seen = 1'b0;
+        k15_t_rp_eq0_seen = 1'b0;
+        k15_t_ep_rate_seen = 1'b0;
+        k15_t_ep_txei_rise_seen = 1'b0;
+        k15_t_ep_txei_fall_seen = 1'b0;
+        k15_t_ep_qpll_seen = 1'b0;
+        k15_t_ep_phystatus_seen = 1'b0;
+        k15_t_rp_rate_seen = 1'b0;
+        k15_t_rp_cdr_seen = 1'b0;
+        k15_t_rp_rxreset_seen = 1'b0;
+        k15_t_rp_rxready_seen = 1'b0;
+        k15_t_rp_rxidle_fall_seen = 1'b0;
+        k15_t_rp_rxvalid_seen = 1'b0;
+        k15_t_rp_rxstart_seen = 1'b0;
+        k15_t_rp_user_ready_seen = 1'b0;
+        k15_t_ep_txei_prev = 1'bx;
+        k15_t_rp_rxidle_prev = 1'bx;
+    end
+
+    always @(EP.DUT.ltssm_state) begin
+        if (sys_rst_n && $test$plusargs("K15_GEN3")) begin
+            if ((EP.DUT.ltssm_state == 6'h12) && !k15_t_ep_speed_seen) begin
+                k15_t_ep_speed_seen = 1'b1;
+                k15_timeline_event("EP_enter_Recovery.Speed");
+            end
+        end
+    end
+
+    always @(RP.cfg_ltssm_state) begin
+        if (sys_rst_n && $test$plusargs("K15_GEN3")) begin
+            if ((RP.cfg_ltssm_state == 6'h0c) && !k15_t_rp_rcvrlock_seen) begin
+                k15_t_rp_rcvrlock_seen = 1'b1;
+                k15_timeline_event("RP_enter_Recovery.RcvrLock");
+            end
+            if ((RP.cfg_ltssm_state == 6'h0d) && !k15_t_rp_rcvrcfg_seen) begin
+                k15_t_rp_rcvrcfg_seen = 1'b1;
+                k15_timeline_event("RP_enter_Recovery.RcvrCfg");
+            end
+            if ((RP.cfg_ltssm_state == 6'h0e) && !k15_t_rp_speed_seen) begin
+                k15_t_rp_speed_seen = 1'b1;
+                k15_timeline_event("RP_enter_Recovery.Speed");
+            end
+            if ((RP.cfg_ltssm_state == 6'h28) && !k15_t_rp_eq0_seen) begin
+                k15_t_rp_eq0_seen = 1'b1;
+                k15_timeline_event("RP_enter_EQ.Phase0");
+            end
+        end
+    end
+
+    always @(EP.DUT.phy_rate or EP.DUT.phy_txelecidle or
+             EP.DUT.phy_phystatus or k15_ep_qpll_lock) begin
+        if (sys_rst_n && $test$plusargs("K15_GEN3")) begin
+            if ((EP.DUT.phy_rate === 2'b10) && !k15_t_ep_rate_seen) begin
+                k15_t_ep_rate_seen = 1'b1;
+                k15_timeline_event("EP_PHY_RATE_Gen3");
+            end
+            if (k15_t_ep_speed_seen && (EP.DUT.phy_txelecidle === 1'b1) &&
+                (k15_t_ep_txei_prev === 1'b0) && !k15_t_ep_txei_rise_seen) begin
+                k15_t_ep_txei_rise_seen = 1'b1;
+                k15_timeline_event("EP_TXELECIDLE_rise");
+            end
+            if (k15_t_ep_rate_seen && (EP.DUT.phy_txelecidle === 1'b0) &&
+                (k15_t_ep_txei_prev === 1'b1) && !k15_t_ep_txei_fall_seen) begin
+                k15_t_ep_txei_fall_seen = 1'b1;
+                k15_timeline_event("EP_TXELECIDLE_fall");
+            end
+            if (k15_t_ep_rate_seen && k15_ep_qpll_lock && !k15_t_ep_qpll_seen) begin
+                k15_t_ep_qpll_seen = 1'b1;
+                k15_timeline_event("EP_QPLL_lock");
+            end
+            if (k15_t_ep_rate_seen && EP.DUT.phy_phystatus &&
+                !k15_t_ep_phystatus_seen) begin
+                k15_t_ep_phystatus_seen = 1'b1;
+                k15_timeline_event("EP_PhyStatus");
+            end
+            k15_t_ep_txei_prev = EP.DUT.phy_txelecidle;
+        end
+    end
+
+    always @(k15_rp_pcierategen3 or k15_rp_rxcdrlock or k15_rp_rxresetdone or
+             k15_rp_rxelecidle or k15_rp_rxdata_valid or k15_rp_rxstart_block) begin
+        if (sys_rst_n && $test$plusargs("K15_GEN3")) begin
+            if (k15_rp_pcierategen3 && !k15_t_rp_rate_seen) begin
+                k15_t_rp_rate_seen = 1'b1;
+                k15_timeline_event("RP_PHY_PCIERATEGEN3");
+            end
+            if (k15_rp_rxcdrlock && !k15_t_rp_cdr_seen) begin
+                k15_t_rp_cdr_seen = 1'b1;
+                k15_timeline_event("RP_PHY_RXCDRLOCK");
+            end
+            if (k15_rp_rxresetdone && !k15_t_rp_rxreset_seen) begin
+                k15_t_rp_rxreset_seen = 1'b1;
+                k15_timeline_event("RP_PHY_RXRESETDONE");
+            end
+            if (k15_rp_rxcdrlock && k15_rp_rxresetdone &&
+                !k15_t_rp_rxready_seen) begin
+                k15_t_rp_rxready_seen = 1'b1;
+                k15_timeline_event("RP_PHY_RX_ready");
+            end
+            if ((k15_t_rp_rxidle_prev === 1'b1) &&
+                (k15_rp_rxelecidle === 1'b0) &&
+                !k15_t_rp_rxidle_fall_seen) begin
+                k15_t_rp_rxidle_fall_seen = 1'b1;
+                k15_timeline_event("RP_PHY_RXELECIDLE_fall");
+            end
+            if (k15_rp_rxdata_valid && !k15_t_rp_rxvalid_seen) begin
+                k15_t_rp_rxvalid_seen = 1'b1;
+                k15_timeline_event("RP_PHY_first_RXDATA_VALID");
+            end
+            if (k15_rp_rxstart_block && !k15_t_rp_rxstart_seen) begin
+                k15_t_rp_rxstart_seen = 1'b1;
+                k15_timeline_event("RP_PHY_first_RXSTART_BLOCK");
+            end
+            if (k15_rp_user_gen3_rdy && !k15_t_rp_user_ready_seen) begin
+                k15_t_rp_user_ready_seen = 1'b1;
+                k15_timeline_event("RP_PHY_USER_GEN3RDY");
+            end
+            k15_t_rp_rxidle_prev = k15_rp_rxelecidle;
+        end
+    end
+
+    pcie_gen3_os_rx K15_EP_TX_OS_RX (
+        .clk(EP.DUT.phy_pclk), .rst_n(EP.DUT.pipe_rst_n),
+        .enable(EP.DUT.phy_active_rate == 2'b10),
+        .in_valid(EP.DUT.phy_txdata_valid),
+        .start_block(EP.DUT.phy_txstart_block),
+        .sync_header(EP.DUT.phy_txsync_header), .in_data(EP.DUT.phy_txdata),
+        .ts1_valid(), .ts2_valid(), .malformed(), .idle_valid(),
+        .link_number(), .link_is_pad(), .lane_number(), .lane_is_pad(),
+        .n_fts(), .rate_id(), .training_control(), .eq_control(), .eq_data(),
+        .eieos_start(k15_ep_eieos_tx_start)
+    );
 
     // First-event timestamps for the Gate-A comparison.  These are
     // observation-only and intentionally use the existing RP PIPE clock so
@@ -1687,7 +1875,16 @@ module board;
     always @(ep_txp) begin
         if ($test$plusargs("K15_GEN3") &&
             (EP.DUT.phy_active_rate == 2'b10) &&
+            k15_ep_eieos_tx_seen &&
             (k15_ep_serial_edges < 32)) begin
+            if (k15_ep_serial_edges == 0)
+                $display("K15_EIEOS_CONTEXT time_ps=%0t rp_state=%0h rp_user_gen3_rdy=%0d rp_rate_gen3=%0d rp_rxresetdone=%0d rp_cdrlock=%0d rp_rxvalid=%0d rp_rxstart=%0d",
+                         $time, RP.cfg_ltssm_state, k15_rp_user_gen3_rdy,
+                         k15_rp_pcierategen3, k15_rp_rxresetdone,
+                         k15_rp_rxcdrlock, k15_rp_rxdata_valid,
+                         k15_rp_rxstart_block);
+            if (k15_ep_serial_edges == 0)
+                k15_timeline_event("EP_first_EIEOS_serial_edge");
             $display("K15_EP_SERIAL_EDGE n=%0d time_ps=%0t delta_ps=%0t value=%0d",
                      k15_ep_serial_edges, $time,
                      $time - k15_ep_serial_last_edge, ep_txp);
@@ -1805,7 +2002,10 @@ module board;
             k15_rp_tx_word_count <= 0;
             k15_ep_serial_edges = 0;
             k15_ep_serial_last_edge = 0;
+            k15_ep_eieos_tx_seen <= 1'b0;
         end else if ($test$plusargs("K15_GEN3")) begin
+            if (k15_ep_eieos_tx_start)
+                k15_ep_eieos_tx_seen <= 1'b1;
             if ((EP.DUT.phy_active_rate == 2'b10) &&
                 EP.DUT.phy_txdata_valid &&
                 (k15_ep_tx_word_count < 24)) begin
@@ -1819,6 +2019,8 @@ module board;
                     $fatal(1, "K15_GEN3_CONTINUATION_SYNC_HEADER_BAD header=%02b",
                            EP.DUT.phy_txsync_header);
 `endif
+                if ((k15_ep_tx_word_count == 0) && EP.DUT.phy_txstart_block)
+                    k15_timeline_event("EP_first_Gen3_TXSTART_BLOCK");
                 $display("K15_EP_TX_PIPE n=%0d time_ps=%0t state=%0h data=%08x valid=%0d start=%0d header=%02b gt_data=%08x gt_ctrl=%04x rate_gen3=%0d user_gen3_rdy=%0d txresetdone=%0d txuserrdy=%0d gttxreset=%0d syncstart=%0d pcs_syncdone=%0d txphalign=%0d txsyncdone=%0d",
                          k15_ep_tx_word_count, $time, EP.DUT.ltssm_state,
                          EP.DUT.phy_txdata, EP.DUT.phy_txdata_valid,

@@ -79,7 +79,7 @@ IP_SOURCE_FILES=("$IP_SOURCE_DIR"/*.v)
 TB_FILES=("$IMPORT_DIR"/*.v)
 
 echo "[VCS] compiling XPM and PCIe/testbench sources"
-vlogan -full64 -sverilog +v2k +define+XILINX_SIM +incdir+"$IMPORT_DIR" -work xil_defaultlib \
+vlogan -full64 -sverilog +v2k -v2k_generate +define+XILINX_SIM +incdir+"$IMPORT_DIR" -work xil_defaultlib \
   "$DEMO_DIR/../pcie_ep_kcu105/rtl/phy/pcie_gen3_scrambler32.sv" \
   "$DEMO_DIR/../pcie_ep_kcu105/rtl/phy/pcie_gen3_os_rx.sv" \
   "$XPM_CDC" "${GT_FILES[@]}" "${IP_SIM_FILES[@]}" "$IP_TOP_SIM" \

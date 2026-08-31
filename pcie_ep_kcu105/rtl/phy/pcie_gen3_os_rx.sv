@@ -28,7 +28,9 @@ module pcie_gen3_os_rx (
     output reg  [7:0]  rate_id,
     output reg  [7:0]  training_control,
     output reg  [7:0]  eq_control,
-    output reg  [23:0] eq_data
+    output reg  [23:0] eq_data,
+    // Observation-only pulse at the first beat of a decoded EIEOS block.
+    output reg         eieos_start
 );
     localparam [7:0] K_PAD = 8'hf7;
     localparam [7:0] D_TS1 = 8'h4a;
@@ -85,11 +87,13 @@ module pcie_gen3_os_rx (
             training_control <= 8'd0;
             eq_control <= 8'd0;
             eq_data <= 24'd0;
+            eieos_start <= 1'b0;
         end else begin
             ts1_valid <= 1'b0;
             ts2_valid <= 1'b0;
             malformed <= 1'b0;
             idle_valid <= 1'b0;
+            eieos_start <= 1'b0;
 
             if (!enable) begin
                 block_kind <= BLOCK_NONE;
@@ -107,6 +111,7 @@ module pcie_gen3_os_rx (
                 if (in_data == 32'hff00_ff00) begin
                     block_kind <= BLOCK_EIEOS;
                     data_stream_armed <= 1'b0;
+                    eieos_start <= 1'b1;
                 end else if (in_data == 32'haaaa_aaaa) begin
                     block_kind <= BLOCK_SKP;
                     data_stream_armed <= 1'b0;

@@ -193,7 +193,8 @@ module pcie3_uscale_rp_top  (
   input  wire         sys_reset,
   output wire         pcie_perstn0_out,
   input  wire         pcie_perstn1_in,
-  output wire         pcie_perstn1_out 
+  output wire         pcie_perstn1_out,
+  output wire   [7:0] rp_user_gen3_rdy
   );
 
 //  wire [15:0]  cfg_vend_id        = 16'H10EE;            //DEF_CFG_VEND_ID;
@@ -923,6 +924,7 @@ module pcie3_uscale_rp_top  (
     .gt_txelecidle       (),             
     .gt_phystatus        (),                   
     .gt_rxvalid          (),              
+    .gt_pcieusergen3rdy_o (rp_user_gen3_rdy),
     .gt_bufgtdiv         (),                 
     .phy_rrst_n          (),
     .phy_prst_n          (),

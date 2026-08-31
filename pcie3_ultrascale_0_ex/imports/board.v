@@ -358,6 +358,222 @@ module board;
               rp_cfg_phy_link_down, rp_user_lnk_up);
  end
 
+ // Event-only Golden/K15 timeline.  This deliberately records no payload;
+ // the first serial edge is anchored after the first Gen3 TXSTART_BLOCK.
+ reg [5:0] golden_prev_ep_ltssm, golden_prev_rp_ltssm;
+ reg golden_ep_speed_seen, golden_rp_speed_seen;
+ reg golden_ep_rate_seen, golden_rp_rate_seen;
+ reg golden_rp_cdr_seen, golden_rp_rxreset_seen, golden_rp_rxready_seen;
+ reg golden_ep_txei_rise_seen, golden_ep_txei_fall_seen;
+ reg golden_ep_qpll_seen, golden_ep_phystatus_seen;
+ reg golden_ep_txstart_seen, golden_ep_serial_seen;
+ reg golden_ep_eieos_tx_seen;
+ reg golden_rp_rclock_seen, golden_rp_rccfg_seen;
+ reg golden_rp_rxidle_prev, golden_ep_txei_prev;
+ reg golden_rp_rxvalid_seen, golden_rp_rxstart_seen;
+ reg golden_rp_user_ready_seen;
+ time golden_t_ep_rate, golden_t_rp_rate, golden_t_rp_rxreset;
+ time golden_t_ep_txei_release, golden_t_rp_rxready;
+ time golden_t_ep_eieos, golden_t_rp_rxvalid;
+
+ wire golden_ep_gt_rate = EP.pcie3_ultrascale_0_i.inst.gt_pcierategen3_o[0];
+ wire golden_ep_txei = EP.pcie3_ultrascale_0_i.inst.pipe_tx_elec_idle[0];
+ wire golden_ep_qpll = EP.pcie3_ultrascale_0_i.inst.gt_qpll1lock[0];
+ wire golden_ep_phystatus = EP.pcie3_ultrascale_0_i.inst.pipe_rx_phy_status[0];
+ wire golden_ep_txstart = EP.pcie3_ultrascale_0_i.inst.pipe_tx0_start_block;
+ wire golden_ep_eieos_start;
+ wire golden_rp_gt_rate =
+   (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate == 2'b10);
+ wire golden_rp_cdr = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxcdrlock[0];
+ wire golden_rp_rxreset = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxresetdone[0];
+ wire golden_rp_rxidle = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0];
+ wire golden_rp_rxvalid = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0];
+ wire golden_rp_rxstart = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0];
+ wire golden_rp_user_gen3_rdy =
+   RP.pcie3_uscale_rp_top_i.rp_user_gen3_rdy[0];
+
+ task automatic golden_timeline_event(input [8*40-1:0] name);
+   begin
+     $display("GOLDEN_TIMELINE_EVENT name=%0s time_ps=%0t", name, $time);
+   end
+ endtask
+
+ pcie_gen3_os_rx golden_ep_tx_os_rx (
+   .clk(EP.pcie3_ultrascale_0_i.inst.pipe_clk),
+   .rst_n(sys_rst_n), .enable(golden_ep_gt_rate),
+   .in_valid(EP.pcie3_ultrascale_0_i.inst.pipe_tx0_data_valid),
+   .start_block(EP.pcie3_ultrascale_0_i.inst.pipe_tx0_start_block),
+   .sync_header(EP.pcie3_ultrascale_0_i.inst.pipe_tx0_syncheader[1:0]),
+   .in_data(EP.pcie3_ultrascale_0_i.inst.pipe_tx0_data[31:0]),
+   .ts1_valid(), .ts2_valid(), .malformed(), .idle_valid(),
+   .link_number(), .link_is_pad(), .lane_number(), .lane_is_pad(),
+   .n_fts(), .rate_id(), .training_control(), .eq_control(), .eq_data(),
+   .eieos_start(golden_ep_eieos_start)
+ );
+
+ initial begin
+   golden_prev_ep_ltssm = 6'h3f;
+   golden_prev_rp_ltssm = 6'h3f;
+   golden_ep_speed_seen = 0;
+   golden_rp_speed_seen = 0;
+   golden_ep_rate_seen = 0;
+   golden_rp_rate_seen = 0;
+   golden_rp_cdr_seen = 0;
+   golden_rp_rxreset_seen = 0;
+   golden_rp_rxready_seen = 0;
+   golden_ep_txei_rise_seen = 0;
+   golden_ep_txei_fall_seen = 0;
+   golden_ep_qpll_seen = 0;
+   golden_ep_phystatus_seen = 0;
+   golden_ep_txstart_seen = 0;
+   golden_ep_serial_seen = 0;
+   golden_ep_eieos_tx_seen = 0;
+   golden_rp_rclock_seen = 0;
+   golden_rp_rccfg_seen = 0;
+   golden_rp_rxvalid_seen = 0;
+   golden_rp_rxstart_seen = 0;
+   golden_rp_user_ready_seen = 0;
+   golden_rp_rxidle_prev = 1'bx;
+   golden_ep_txei_prev = 1'bx;
+ end
+
+ always @(cfg_ltssm_state) begin
+   if ((cfg_ltssm_state == 6'h0e) && !golden_ep_speed_seen) begin
+     golden_ep_speed_seen = 1;
+     golden_timeline_event("EP_enter_Recovery.Speed");
+   end
+   golden_prev_ep_ltssm = cfg_ltssm_state;
+ end
+
+ always @(rp_cfg_ltssm_state) begin
+   if ((rp_cfg_ltssm_state == 6'h0c) &&
+       (golden_prev_rp_ltssm != 6'h0c) && !golden_rp_rclock_seen) begin
+     golden_rp_rclock_seen = 1;
+     golden_timeline_event("RP_enter_Recovery.RcvrLock");
+   end
+   if ((rp_cfg_ltssm_state == 6'h0d) &&
+       (golden_prev_rp_ltssm != 6'h0d) && !golden_rp_rccfg_seen) begin
+     golden_rp_rccfg_seen = 1;
+     golden_timeline_event("RP_enter_Recovery.RcvrCfg");
+   end
+   if ((rp_cfg_ltssm_state == 6'h0e) && !golden_rp_speed_seen) begin
+     golden_rp_speed_seen = 1;
+     golden_timeline_event("RP_enter_Recovery.Speed");
+   end
+   if ((golden_prev_rp_ltssm == 6'h0e) && (rp_cfg_ltssm_state != 6'h0e))
+     golden_timeline_event("RP_leave_Recovery.Speed");
+   if ((rp_cfg_ltssm_state == 6'h28) && (golden_prev_rp_ltssm != 6'h28))
+     golden_timeline_event("RP_enter_EQ.Phase0");
+   golden_prev_rp_ltssm = rp_cfg_ltssm_state;
+ end
+
+ always @(golden_ep_gt_rate or golden_ep_txei or golden_ep_qpll or
+          golden_ep_phystatus or golden_ep_txstart) begin
+   if (golden_ep_gt_rate && !golden_ep_rate_seen) begin
+     golden_ep_rate_seen = 1;
+     golden_t_ep_rate = $time;
+     golden_timeline_event("EP_PHY_RATE_Gen3");
+   end
+   if (golden_ep_speed_seen && (golden_ep_txei === 1'b1) &&
+       (golden_ep_txei_prev !== 1'b1) && !golden_ep_txei_rise_seen) begin
+     golden_ep_txei_rise_seen = 1;
+     golden_timeline_event("EP_TXELECIDLE_rise");
+   end
+   if (golden_ep_rate_seen && (golden_ep_txei === 1'b0) &&
+       (golden_ep_txei_prev === 1'b1) && !golden_ep_txei_fall_seen) begin
+     golden_ep_txei_fall_seen = 1;
+     golden_t_ep_txei_release = $time;
+     golden_timeline_event("EP_TXELECIDLE_fall");
+   end
+   if (golden_ep_rate_seen && golden_ep_qpll && !golden_ep_qpll_seen) begin
+     golden_ep_qpll_seen = 1;
+     golden_timeline_event("EP_QPLL_lock");
+   end
+   if (golden_ep_rate_seen && golden_ep_phystatus && !golden_ep_phystatus_seen) begin
+     golden_ep_phystatus_seen = 1;
+     golden_timeline_event("EP_PhyStatus");
+   end
+   if (golden_ep_rate_seen && golden_ep_txstart && !golden_ep_txstart_seen) begin
+     golden_ep_txstart_seen = 1;
+     golden_timeline_event("EP_first_Gen3_TXSTART_BLOCK");
+   end
+   golden_ep_txei_prev = golden_ep_txei;
+ end
+
+ always @(posedge EP.pcie3_ultrascale_0_i.inst.pipe_clk) begin
+   if (golden_ep_eieos_start)
+     golden_ep_eieos_tx_seen = 1'b1;
+ end
+
+ always @(golden_rp_gt_rate or golden_rp_cdr or golden_rp_rxreset or
+          golden_rp_rxidle or golden_rp_rxvalid or golden_rp_rxstart or
+          golden_rp_user_gen3_rdy) begin
+   if (golden_rp_speed_seen && golden_rp_gt_rate && !golden_rp_rate_seen) begin
+     golden_rp_rate_seen = 1;
+     golden_t_rp_rate = $time;
+     golden_timeline_event("RP_PHY_PCIERATEGEN3");
+   end
+   if (golden_rp_speed_seen && golden_rp_cdr && !golden_rp_cdr_seen) begin
+     golden_rp_cdr_seen = 1;
+     golden_timeline_event("RP_PHY_RXCDRLOCK");
+   end
+   if (golden_rp_speed_seen && golden_rp_rxreset && !golden_rp_rxreset_seen) begin
+     golden_rp_rxreset_seen = 1;
+     golden_t_rp_rxreset = $time;
+     golden_timeline_event("RP_PHY_RXRESETDONE");
+   end
+   if (golden_rp_speed_seen && (golden_rp_rxidle === 1'b0) &&
+       (golden_rp_rxidle_prev === 1'b1))
+     golden_timeline_event("RP_PHY_RXELECIDLE_fall");
+   if (golden_rp_speed_seen && golden_rp_cdr && golden_rp_rxreset &&
+       !golden_rp_rxready_seen) begin
+     golden_rp_rxready_seen = 1;
+     golden_t_rp_rxready = $time;
+     golden_timeline_event("RP_PHY_RX_ready");
+   end
+   if (golden_rp_speed_seen && golden_rp_rxvalid && !golden_rp_rxvalid_seen) begin
+     golden_rp_rxvalid_seen = 1;
+     golden_t_rp_rxvalid = $time;
+     golden_timeline_event("RP_PHY_first_RXDATA_VALID");
+   end
+   if (golden_rp_speed_seen && golden_rp_rxstart && !golden_rp_rxstart_seen) begin
+     golden_rp_rxstart_seen = 1;
+     golden_timeline_event("RP_PHY_first_RXSTART_BLOCK");
+   end
+   if (golden_rp_user_gen3_rdy && !golden_rp_user_ready_seen) begin
+     golden_rp_user_ready_seen = 1;
+     golden_timeline_event("RP_PHY_USER_GEN3RDY");
+   end
+   golden_rp_rxidle_prev = golden_rp_rxidle;
+ end
+
+ always @(ep_pci_exp_txp[0]) begin
+   if (golden_ep_eieos_tx_seen && !golden_ep_serial_seen) begin
+     golden_ep_serial_seen = 1;
+     golden_t_ep_eieos = $time;
+     $display("GOLDEN_EIEOS_CONTEXT time_ps=%0t rp_state=%0h rp_user_gen3_rdy=%0d rp_rate_gen3=%0d rp_rxresetdone=%0d rp_cdrlock=%0d rp_rxvalid=%0d rp_rxstart=%0d",
+              $time, rp_cfg_ltssm_state, golden_rp_user_gen3_rdy,
+              golden_rp_gt_rate, golden_rp_rxreset, golden_rp_cdr,
+              golden_rp_rxvalid, golden_rp_rxstart);
+     golden_timeline_event("EP_first_EIEOS_serial_edge");
+   end
+ end
+
+ final begin
+   $display("GOLDEN_TIMELINE_SUMMARY ep_rate=%0d rp_rate=%0d rp_rxreset=%0d rp_rxready=%0d ep_txei_release=%0d ep_eieos=%0d rp_rxvalid=%0d D1=%0t D2=%0t D3=%0t D4=%0t",
+            golden_ep_rate_seen, golden_rp_rate_seen, golden_rp_rxreset_seen,
+            golden_rp_rxready_seen, golden_ep_txei_fall_seen,
+            golden_ep_serial_seen, golden_rp_rxvalid_seen,
+            (golden_ep_rate_seen && golden_rp_rate_seen) ?
+              golden_t_rp_rate - golden_t_ep_rate : 0,
+            (golden_rp_rxreset_seen && golden_ep_txei_fall_seen) ?
+              golden_t_ep_txei_release - golden_t_rp_rxreset : 0,
+            (golden_rp_rxready_seen && golden_ep_serial_seen) ?
+              golden_t_ep_eieos - golden_t_rp_rxready : 0,
+            (golden_ep_serial_seen && golden_rp_rxvalid_seen) ?
+              golden_t_rp_rxvalid - golden_t_ep_eieos : 0);
+ end
+
  
 
  

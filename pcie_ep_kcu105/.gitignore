@@ -5,6 +5,8 @@ results*.xml
 sim/verilator/k*/negative_checker_observed.txt
 sim/verilator/k*/*_negative_marker.txt
 sim/verilator/k*/*_random_evidence.txt
+sim/verilator/phy_command_ctrl/k15_ab_build/
+sim/vcs_svt/build_phase2/
 *.log
 *.vpd
 *.vcd

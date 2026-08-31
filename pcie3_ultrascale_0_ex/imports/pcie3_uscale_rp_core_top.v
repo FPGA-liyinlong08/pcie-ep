@@ -1274,6 +1274,7 @@ module rp_pcie3_uscale_core_top
   output wire [((PL_LINK_CAP_MAX_LINK_WIDTH*1)-1):0] gt_phystatus        ,//                    
   output wire [((PL_LINK_CAP_MAX_LINK_WIDTH*1)-1):0] gt_rxvalid          ,//               
   output wire [((PL_LINK_CAP_MAX_LINK_WIDTH*1)-1):0] gt_rxcdrlock        ,//          
+  output wire [((PL_LINK_CAP_MAX_LINK_WIDTH*1)-1):0] gt_pcieusergen3rdy_o,//
   output wire [((PL_LINK_CAP_MAX_LINK_WIDTH*1)-1):0] gt_pcierateidle     ,// 
   output wire [((PL_LINK_CAP_MAX_LINK_WIDTH*1)-1):0] gt_pcieuserratestart,// 
   output wire [((PL_LINK_CAP_MAX_LINK_WIDTH*1)-1):0] gt_gtpowergood      ,//   
@@ -3274,6 +3275,7 @@ rp_phy_wrapper #
     .GT_RXPRBSSEL                     (gt_rxprbssel_mux    ),         
     .GT_RXPRBSCNTRESET                (gt_rxprbscntreset   ),            
     .GT_RXCDRLOCK                     (gt_rxcdrlock        ),
+    .GT_PCIEUSERGEN3RDY               (gt_pcieusergen3rdy_o ),
     .GT_PCIERATEIDLE                  (gt_pcierateidle     ),
     .GT_PCIEUSERRATESTART             (gt_pcieuserratestart),
     .GT_GTPOWERGOOD                   (gt_gtpowergood      ),
@@ -14685,6 +14687,7 @@ module rp_phy_wrapper #
     output      [PHY_LANE-1:0]          GT_PHYSTATUS       ,                   
     output      [PHY_LANE-1:0]          GT_RXVALID         ,              
     output      [PHY_LANE-1:0]          GT_RXCDRLOCK, 
+    output      [PHY_LANE-1:0]          GT_PCIEUSERGEN3RDY,
     output      [PHY_LANE-1:0]          GT_PCIERATEIDLE,
     output      [PHY_LANE-1:0]          GT_PCIEUSERRATESTART,
     output      [PHY_LANE-1:0]          GT_GTPOWERGOOD,  
@@ -15527,6 +15530,7 @@ assign GT_RXSTATUS = PHY_RXSTATUS;
 assign GT_BUFGTDIV = gt_bufgtdiv;
 
 assign GT_RXCDRLOCK   = gt_rxcdrlock; 
+assign GT_PCIEUSERGEN3RDY = gt_pcieusergen3rdy;
 assign GT_PCIERATEIDLE  = gt_pcierateidle;
 assign GT_PCIEUSERRATESTART  = gt_pcieuserratestart;
 assign GT_GTPOWERGOOD = gt_gtpowergood;                

@@ -25,6 +25,11 @@ else
     echo "错误：找不到 Xilinx RP imports；请设置 K11B_RP_IMPORTS" >&2
     exit 66
 fi
+if [[ -n "${K11B_RP_APP_IMPORTS:-}" ]]; then
+    rp_app_dir="${K11B_RP_APP_IMPORTS}"
+else
+    rp_app_dir="${rp_dir}"
+fi
 g2_gen1_only="${G2_GEN1_ONLY:-0}"
 if [[ "${g2_gen1_only}" == "1" ]]; then
     phy_ip_root="ip_g2_gen1"
@@ -154,6 +159,10 @@ test -s "${ip_dir}/${phy_name}.xci"
 test -s "${ip_dir}/sim/${phy_name}.v"
 test -s "${rp_dir}/pcie3_uscale_rp_core_top.v"
 test -s "${rp_dir}/pcie3_uscale_rp_top.v"
+test -s "${rp_app_dir}/pci_exp_usrapp_cfg.v"
+test -s "${rp_app_dir}/pci_exp_usrapp_com.v"
+test -s "${rp_app_dir}/pci_exp_usrapp_rx.v"
+test -s "${rp_app_dir}/pci_exp_usrapp_tx.v"
 test -s "${afifo}"
 
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/pcie_k11b_vcs.XXXXXX")"
@@ -161,7 +170,7 @@ setup_file="${run_dir}/synopsys_sim.setup"
 rp_usrapp_tx="${run_dir}/pci_exp_usrapp_tx_k11b.v"
 mkdir -p build "${run_dir}/work" "${run_dir}/xil_defaultlib"
 python3 "${script_dir}/prepare_k11b_rp_usrapp.py" \
-    "${rp_dir}/pci_exp_usrapp_tx.v" "${rp_usrapp_tx}"
+    "${rp_app_dir}/pci_exp_usrapp_tx.v" "${rp_usrapp_tx}"
 printf 'WORK > DEFAULT\nDEFAULT : %s\nxil_defaultlib : %s\nOTHERS=%s/synopsys_sim.setup\n' \
     "${run_dir}/work" "${run_dir}/xil_defaultlib" "${simlib_dir}" \
     > "${setup_file}"
@@ -198,10 +207,10 @@ fi
 
 "${vcs_home}/bin/vlogan" -full64 +v2k -work xil_defaultlib \
     +define+K11B_DISABLE_XILINX_AUTO_TEST \
-    +incdir+"${rp_dir}" \
-    "${rp_dir}/pci_exp_usrapp_cfg.v" \
-    "${rp_dir}/pci_exp_usrapp_com.v" \
-    "${rp_dir}/pci_exp_usrapp_rx.v" \
+    +incdir+"${rp_app_dir}" \
+    "${rp_app_dir}/pci_exp_usrapp_cfg.v" \
+    "${rp_app_dir}/pci_exp_usrapp_com.v" \
+    "${rp_app_dir}/pci_exp_usrapp_rx.v" \
     "${rp_usrapp_tx}" \
     "${rp_dir}/pcie3_uscale_rp_core_top.v" \
     "${rp_dir}/pcie3_uscale_rp_top.v" \
