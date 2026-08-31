@@ -198,6 +198,10 @@ RX PCS/buffer/user clock 链没有恢复输出。对照官方 fresh golden：
 - K15 RP 的 GT 层 `gt_data` 恒为 0，说明问题在 EP 发送端可见证据
   （串行位流正确）与 RP 接收端 GT/PCS 输出之间。
 
+> **（已被第 7 节隔离实验取代）** 第 2 步的 standalone 隔离实验已完成，
+> 结论是接收失败发生在 EP **发送流**上（缺少官方节奏的 PIPE
+> valid-gap/SKP 替换），不在集成 RP 的 RX 侧——详见第 7 节。
+
 这把首错收敛到报告 2026-08-30 节已指出的"rate-transition 协同 / RP
 RX model 状态"层，具体下一步（按性价比排序）：
 
@@ -211,7 +215,74 @@ RX model 状态"层，具体下一步（按性价比排序）：
 3. SVT 侧动态 SKP_END（固定 `BCBF9DE1` 问题）保持待办，但不属于
    Xilinx RP 首错路径。
 
-## 6. 环境备注（供后续复现）
+## 7. Standalone PHY 收发隔离实验（2026-08-31，根因已定位）
+
+按用户指示先提交基线（`26b5fcc`）后执行第②步：在官方 2× standalone
+PHY testbench 中，把一侧 `phy_ctrl_pat_gen` 换成 K15 EP 的 PIPE 源
+（`sim/vcs/k15_phy_isolation/k15_ep_pat_gen.sv`），接收器/复位/rate
+sequencer 全部保持官方不动。判定器仍用官方 `K13_OFFICIAL_PHY_TRACE` 的
+`RXDATA_VALID` 出现判 PASS。
+
+### 7.1 A/B 矩阵（全部单旋钮）
+
+| 组 | 改动 | 结果 | 首个 RXDATA_VALID |
+| --- | --- | --- | ---: |
+| PASSTHROUGH | 官方源直通（管线健全性） | PASS | 124607529 |
+| 默认 | K15 `pcie_gen3_os_tx` 原样 | FAIL | 永不 |
+| xpattern | EIEOS 后改数据 pattern | FAIL | 永不 |
+| phase_shift | 相位偏移 | FAIL | 永不 |
+| header_held | EIEOS 四拍 held `01` | FAIL | 永不 |
+| valid_gap | K15 136 拍节奏上按 64/129 相位扣拍 | FAIL | 永不 |
+| no_first_skp | 去掉 EIEOS 后首个 aaaa SKP 块 | FAIL | 永不 |
+| eieos128 / combo128 | EIEOS 周期改 128 / 组合 | FAIL | 永不 |
+| **official_gap** | os_tx 内置官方式 1 拍 valid=0 gap（EIEOS 前一拍 + 每 15 块一 gap，周期 130） | **PASS** | 124599529 |
+| gap_only | 仅加 gap、EIEOS 周期不动（gap 距 EIEOS 64 拍） | FAIL | 永不 |
+| **official_gap+first_skp** | official_gap 且保留 EIEOS 后首个 aaaa SKP 块 | **PASS** | 125655504 |
+
+### 7.2 关键发现：PIPE→GTHE3 映射与 SKP 替换点
+
+- `gtwizard_top.v:757`：`txctrl0_in = {10'd0, GT_TXSYNC_HEADER[1:0],
+  GT_TXSTART_BLOCK[0], GT_TXDATA_VALID[0], 2'd0}` —— valid/start/header
+  经 TXCTRL0 进入 secureip；`gt.v` 中 `txheader_in=6'h00`、
+  `txsequence_in=7'h00`、`rxgearboxslip_in=1'h0` 均为常量绑定。
+- **整个 IP RTL 无任何 SKP 替换逻辑**；wire 上的 SKP ordered set 全部由
+  secureip 在 `TXDATA_VALID=0` 拍内部替换生成。因此 K15 os_tx
+  "valid 恒 1 → 全程无真实 SKP"，其显式 aaaa "SKP" 块不是 wire SKP 内容
+  （wire SKP 符号是 `0x1C`）。
+- 官方 cadence（`phy_ctrl_pat_gen_lane.v` 解码）：EIEOS_1..4 → 15 数据
+  块（60 拍）→ **1 拍 valid=0 gap** → 16 数据块（64 拍）→ **1 拍 gap** →
+  EIEOS，周期 130 拍；**每个周期性 EIEOS 的前一拍恰是 gap**（wire 上
+  SKP→EIEOS 相邻）；gap 后第一拍必为 `start=1`（新块）；官方对数据拍也
+  全程驱动 `header=01`，且从不主动发 SKP 内容。
+
+### 7.3 判定（root cause）
+
+**根因：K15 `pcie_gen3_os_tx` 的 Gen3 流从不 deassert `TXDATA_VALID`，
+secureip TX 从不替换出真实 SKP ordered set，接收端 GTHE3 无法完成
+128b/130b RX block lock**（cdrlock=1、rxresetdone=1 但
+RXDATA/RXHEADERVALID 恒 0）。恢复条件是复现官方节奏的 1 拍 valid=0
+gap 结构，且**gap 与 EIEOS 相邻**是实测必要条件：
+
+- official_gap / official_gap+first_skp（gap 紧邻 EIEOS）→ PASS，
+  时间 124.60/125.66µs ≈ golden 的 124.61µs；
+- valid_gap（gap 与 EIEOS 相位漂移 7 拍）与 gap_only（gap 距 EIEOS
+  64 拍）→ FAIL —— 有 gap 但不相邻不足以锁定。
+
+同时正式排除：aaaa 首 SKP 块本身无毒（official_gap+first_skp 仍 PASS）、
+EIEOS 周期 128/136 不是首因、TXSYNC_HEADER held 不是首因（第 4 节 +
+header_held 组双确认）、RP 集成 RX 侧不是首因（standalone 官方接收器
+收 K15 流同样失败，PASSTHROUGH 即恢复）。
+
+### 7.4 修复方向（待另行执行，本轮未动 EP 路径）
+
+把 `pcie_gen3_os_tx` 的周期性显式 SKP 机制替换为官方式 1 拍
+valid=0 gap 插入：在块边界扣 1 拍（恢复拍 start=1），并保证每个周期性
+EIEOS 的前一拍是 gap（wire SKP→EIEOS 相邻）。os_tx 现有的
+"LFSR 在 gap/SKP 期间冻结、EIEOS 后复位 LANE0_SEED" 行为与官方一致，
+可保留。stolen-beat/mux 层扣拍与 os_tx 的 4 拍 start_block 刚性节奏
+结构性冲突，必须在 os_tx 状态机内实现。
+
+## 8. 环境备注（供后续复现）
 
 - `run_k15_phase2.sh` 默认 legacy `pcie3_ultrascale_0_ex` imports，
   但 `prepare_k11b_rp_usrapp.py` 的 `dmaTestDone` 锚点在该文件中
@@ -225,6 +296,9 @@ RX model 状态"层，具体下一步（按性价比排序）：
   - `sim/vcs/build/k13_official_trace/official_{rp,ep}_pipe_trace.csv`
     （fresh 官方 golden）
   - `sim/vcs/build/k15_ab_header_{A,B}.log`
+  - 隔离实验：`sim/vcs/k15_phy_isolation/`（runner + 源），结果目录
+    `sim/vcs/build/k15_iso_*`（判定行 `K15_ISO_RECEIVER_ACQ_*`），
+    golden GTTX 拍流 `sim/vcs/build/k13_official_trace_gttx/`
   - `sim/vcs/build/k15_gen3_simulate_preAB_20260831.log`
   - `sim/vcs_svt/build/simulate_preAB_20260831.log`、
     `simulate_header_B.log`（SVT A/B）
