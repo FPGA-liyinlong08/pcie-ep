@@ -6,19 +6,17 @@ project_dir="$(cd "${script_dir}/../../.." && pwd)"
 build_root="${script_dir}/k15_ab_build"
 mkdir -p "${build_root}"
 
-for variant in a0 a1 a2 a3; do
+for variant in preset_only preset_query; do
     case "${variant}" in
-        a0) cdr=0; txeq=0 ;;
-        a1) cdr=1; txeq=0 ;;
-        a2) cdr=0; txeq=1 ;;
-        a3) cdr=1; txeq=1 ;;
+        preset_only) query=0 ;;
+        preset_query) query=1 ;;
     esac
     build_dir="${build_root}/${variant}"
     verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
         -Wno-PINCONNECTEMPTY \
         --top-module k15_ab_test_top \
-        -GK15_AB_CDR_HOLD="${cdr}" \
-        -GK15_AB_PRERATE_TXEQ="${txeq}" \
+        -GK15_AB_CDR_HOLD=0 -GK15_AB_PRERATE_TXEQ=1 \
+        -GK15_AB_PRERATE_QUERY="${query}" \
         -GK15_AB_PRERATE_DWELL_CYCLES=4 \
         -GK15_AB_PRERATE_PRESET=4 \
         "${project_dir}/rtl/phy/pcie_phy_command_ctrl.sv" \
@@ -28,4 +26,4 @@ for variant in a0 a1 a2 a3; do
     "${build_dir}/Vk15_ab_test_top"
 done
 
-echo "K15_PHY_AB_MATRIX_PASS variants=4 dwell=4"
+echo "K15_PHY_AB_MATRIX_PASS variants=2 dwell=4"

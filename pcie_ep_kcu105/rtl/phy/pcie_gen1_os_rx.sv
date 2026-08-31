@@ -19,7 +19,10 @@ module pcie_gen1_os_rx (
     output reg         lane_is_pad,
     output reg  [7:0]  n_fts,
     output reg  [7:0]  rate_id,
-    output reg  [7:0]  training_control
+    output reg  [7:0]  training_control,
+    // Symbol 6 of an EQ TS1/TS2.  Consumers qualify it with rate_id[3]
+    // and the completed ts1_valid/ts2_valid pulse.
+    output reg  [7:0]  eq_symbol6
 );
     localparam [7:0] K_COM = 8'hbc;
     localparam [7:0] K_PAD = 8'hf7;
@@ -58,6 +61,7 @@ module pcie_gen1_os_rx (
             n_fts            <= 8'd0;
             rate_id          <= 8'd0;
             training_control <= 8'd0;
+            eq_symbol6       <= 8'd0;
         end else begin
             ts1_valid       <= 1'b0;
             ts2_valid       <= 1'b0;
@@ -107,6 +111,7 @@ module pcie_gen1_os_rx (
                         word_index       <= 3'd3;
                     end
                     3'd3: begin
+                        eq_symbol6 <= symbol0;
                         if (ident_ts1)
                             identifier_kind <= 2'd1;
                         else if (ident_ts2)
@@ -155,5 +160,55 @@ module pcie_gen1_os_rx (
         end
     end
 endmodule
+
+// verilator lint_off DECLFILENAME
+// Qualify the transmitter preset carried by the Gen1/2-format EQ TS2 that
+// precedes a Gen3 Recovery.Speed transition.  A qualified value belongs to
+// the current uninterrupted tuple only: a malformed/different tuple removes
+// the old qualification until eight identical candidates have arrived.
+module pcie_eq_ts2_preset_capture (
+    input  wire       clk,
+    input  wire       rst_n,
+    input  wire       clear,
+    input  wire       candidate_valid,
+    input  wire       sequence_break,
+    input  wire [3:0] preset_candidate,
+    input  wire [47:0] signature,
+    output reg        preset_valid,
+    output reg  [3:0] preset,
+    output reg  [3:0] consecutive_count
+);
+    reg [47:0] signature_q;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            signature_q       <= 48'd0;
+            preset_valid      <= 1'b0;
+            preset            <= 4'd4;
+            consecutive_count <= 4'd0;
+        end else if (clear) begin
+            signature_q       <= 48'd0;
+            preset_valid      <= 1'b0;
+            preset            <= 4'd4;
+            consecutive_count <= 4'd0;
+        end else if (candidate_valid) begin
+            if ((consecutive_count == 0) || (signature != signature_q)) begin
+                signature_q       <= signature;
+                preset_valid      <= 1'b0;
+                consecutive_count <= 4'd1;
+            end else if (consecutive_count == 4'd7) begin
+                consecutive_count <= 4'd8;
+                preset            <= preset_candidate;
+                preset_valid      <= 1'b1;
+            end else if (consecutive_count < 4'd8) begin
+                consecutive_count <= consecutive_count + 1'b1;
+            end
+        end else if (sequence_break) begin
+            consecutive_count <= 4'd0;
+            preset_valid      <= 1'b0;
+        end
+    end
+endmodule
+// verilator lint_on DECLFILENAME
 
 `default_nettype wire

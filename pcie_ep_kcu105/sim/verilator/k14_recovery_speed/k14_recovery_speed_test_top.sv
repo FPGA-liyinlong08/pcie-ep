@@ -85,17 +85,20 @@ module k14_recovery_speed_test_top (
     pcie_phy_command_ctrl #(
         .GOLDEN_RELEASE_GAP_CYCLES(4),
         .RATE_TIMEOUT_CYCLES(12),
-        .GEN3_TX_SETTLE_CYCLES(2)
+        .GEN3_TX_SETTLE_CYCLES(2),
+        .K15_AB_PRERATE_TXEQ(0), .K15_AB_PRERATE_QUERY(0)
     ) u_command (
         .phy_pclk(clk), .pipe_rst_n(rst_n),
         .cmd_profile(recovery_active ? 3'd5 : 3'd4),
         .op_valid(1'b0), .op_kind(1'b0), .op_ready(), .op_done(),
         .op_result(), .rate_req_valid(rate_req_valid),
         .rate_req_target(rate_req_target),
+        .prerate_preset_valid(1'b0), .prerate_preset(4'd4),
         .rate_abort(reinitialize_gen1 || rate_failed),
         .rate_req_ready(rate_req_ready), .rate_busy(rate_busy),
         .rate_done(rate_done), .rate_result(rate_result),
         .active_rate(active_rate), .rate_state(rate_state),
+        .prerate_query_valid(), .prerate_query_coeff(),
         .eq_req_valid(1'b0), .eq_req_kind(3'd0),
         .eq_req_preset(4'd0), .eq_req_coeff(18'd0),
         .eq_req_ready(), .eq_busy(), .eq_done(), .eq_result(),

@@ -6,17 +6,15 @@ project_dir="$(cd "${script_dir}/../.." && pwd)"
 dwell="${K15_AB_PRERATE_DWELL_CYCLES:-4}"
 matrix_status=0
 
-for variant in a0 a1 a2 a3; do
+for variant in preset_only preset_query; do
     case "${variant}" in
-        a0) cdr=0; txeq=0 ;;
-        a1) cdr=1; txeq=0 ;;
-        a2) cdr=0; txeq=1 ;;
-        a3) cdr=1; txeq=1 ;;
+        preset_only) query=0 ;;
+        preset_query) query=1 ;;
     esac
     log="${script_dir}/build/k15_ab_${variant}.log"
-    echo "K15_PHY_AB_START variant=${variant} cdr=${cdr} txeq=${txeq} dwell=${dwell}"
-    env K15_AB_CDR_HOLD="${cdr}" \
-        K15_AB_PRERATE_TXEQ="${txeq}" \
+    echo "K15_PHY_AB_START variant=${variant} query=${query} dwell=${dwell}"
+    env K15_AB_CDR_HOLD=0 K15_AB_PRERATE_TXEQ=1 \
+        K15_AB_PRERATE_QUERY="${query}" \
         K15_AB_PRERATE_DWELL_CYCLES="${dwell}" \
         K15_AB_PRERATE_PRESET=4 \
         K15_VCS=1 \

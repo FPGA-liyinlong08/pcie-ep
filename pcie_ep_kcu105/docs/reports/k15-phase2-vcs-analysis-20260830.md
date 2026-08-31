@@ -319,3 +319,105 @@ SKP_END framing 错误，随后卡在 Phase1，未进入 Phase2。
 TS1/TS2 切换边界，不包含 Gen1 EIOS、Gen3 128b block source ownership、
 周期 SKP 或 Phase2 EQ 字段，因此不能覆盖本轮首错。当前新增修改是在
 `0ff2bc6` 基线上增量完成。
+
+## 2026-08-31 PG239 / PCIe EQ closure 实施结果
+
+生产路径已改为由 `pcie_gen3_equalization_ctrl` 持有 PCIe phase semantics，
+`pcie_phy_command_ctrl` 继续独占 PG239 raw pins；旧
+`pcie_k13_production_ctrl.sv` 及其测试/source-list 保留，本轮未做 legacy cleanup。
+
+Recovery.Speed 默认波形现在是：
+
+```text
+TXEI lead -> dynamic Preset -> clear -> Query -> clear -> Rate
+```
+
+Gen1/2 EQ TS2 必须有八个连续且完整 tuple 相同，才锁存 Symbol 6 的 P0--P10；
+reserved、malformed、tuple 变化或序列中断取消资格，命令层使用 P4 fallback。
+Query 可通过 `K15_AB_PRERATE_QUERY=0` 单独关闭。Query 输出只按
+`raw/pre/main/post` 记录，不再使用固定 18-bit expected。Preset-only 路径按
+FS=40 的名义表生成字段，包括 P10=`{pre,main,post}={0,27,13}`；reserved
+输入仍回退 P4。
+
+Equalization Phase0--3 已去掉 generic `TS_REQUIRED=8`：Symbols 6--9 parity
+正确且两个完全相同的 TS1 才能推进；transition pair 跨 phase 保存。Phase2 proposal
+要求两个完全相同的 reflection 且 Reject=0，Reject=1 进入已有 Gen1 fallback。
+Phase3 同时覆盖 Preset/Coefficient apply 后 Query，两个 EC00 才退出，并在已有 PHY
+operation 时延迟退出；第二个 EC00 与 Query done 同拍也有 directed coverage。周期
+SKP_END 也改为由当前 23-bit LFSR state 动态生成和验证。
+
+静态与 directed gate 通过：
+
+```text
+K15_EQ_TS2_PRESET_CAPTURE_PASS
+K15_EQ_PHASES_DIRECTED_PASS
+K15_EQ_REJECT_FALLBACK_PASS
+K15_DYNAMIC_SKP_END_PASS
+K15_PHY_AB_MATRIX_PASS variants=2
+PHY_COMMAND_OWNERSHIP_PASS
+K14_RECOVERY_SPEED_SEMANTIC_PASS
+```
+
+Xilinx RP 在固定 `cdr=0 / P4 / dwell=4` 下完成 Query A/B。Query-on 实测为：
+
+```text
+raw=18'h00A00  pre=0  main=40  post=0
+```
+
+两组都完成 Gen3 rate、QPLL、PhyStatus，并由 EP 消费两个相同 EC01 后进入 Phase1；
+但两组 RP 都是 `rxvalid_seen=0 / rp_decoded_ts=0`，最终
+`K15_VCS_BLOCKED_RP_EQ_RESPONSE_NOT_CONSUMED`。因此 Figure-1 Query 是已实现、
+可开关的 canonical path，但本次 A/B 不支持把缺 Query 认定为 RP 首块接收的充分根因。
+
+持久日志：
+
+- `sim/vcs/build/k15_ab_preset_only.log`
+- `sim/vcs/build/k15_ab_preset_query.log`
+
+SVT runner 已启动检查，但当前主机缺少
+`/home/ICer/synopsys/designware/bin/dw_vip_setup`，因此 VIP build 尚未执行；这项是
+环境阻塞，不作为 RTL pass/fail 证据。
+
+### 2026-08-31 SVT 重跑（使用 `/home/wx/synopsys/designware`）
+
+本次通过 `DESIGNWARE_HOME=/home/wx/synopsys/designware make k15-svt-vcs` 完成了
+SVT VIP 生成、VCS compile/elaboration/link 和真实串行仿真。SVT 在
+`260552559000 fs` 锁定 8.0 GT/s CDR，随后首错为：
+
+```text
+262325482900  phy_data_block_before_sds
+271791496500  pcs_skp_end_not_detected_0
+322203482900  phy_recovery_equalization_phase1_timeout
+324174482900  recovery-speed inferred electrical idle
+```
+
+之后 SVT 回退到 2.5 GT/s，测试以错误退出；没有观察到 Phase0/Phase1 的有效
+consecutive-TS closure，也没有进入 Phase2/3。该结果与 Xilinx RP 的
+`RXDATA_VALID=0 / decoded_ts=0` 相互印证：当前首错仍位于 CDR 之后、有效
+128b/130b block/SDS/EIEOS 建立之前，而不是 Phase2/3。
+
+持久日志：`sim/vcs_svt/build/simulate.log`、`sim/vcs_svt/build/elaborate.log`。
+
+### 2026-08-31 SVT EIEOS 后 PIPE 观测
+
+在 `sim/vcs_svt/board_svt_pcie_x1.sv` 加入 observation-only 的 EP TX / SVT RP
+PIPE monitor 后重跑。EP 侧在 `260491530000 fs` 附近进入 EIEOS 输出，连续 beat
+可见 `phy_txdata_valid=1`、数据为 `ff00ff00`（发送器源码规定 EIEOS 四个 beat
+均为该值；监视器在同步边沿上会看到下一 beat 的 word index）。
+
+SVT RP PIPE 侧从 `260484484000 fs` 到 `260579484000 fs` 连续 96 个 `pipe_clk`
+仍为 `valid=0, data_valid=0, start_block=0, sync_header=00, data=00000000`；
+这覆盖 CDR lock (`260552559000 fs`) 前后。之后首次出现有效输出是在
+`261090484000 fs`：`valid=1, data_valid=1`，但数据序列从
+`bd 94 67 5d c6 d9 e6 5c ...` 开始，并非 EIEOS 的 `ff00ff00` block。
+随后才出现 `start_block=1, sync_header=01, data=1e` 的 TS-like ordered-set
+边界（例如 `261105484000 fs`）。`ei_code` 全程为 0。
+
+因此本次证据是：EP 确实在 TX PIPE 侧驱动了 EIEOS，但在 SVT RP 的可见 PIPE
+输出上没有观察到一个有效、可识别的 EIEOS block；SVT 后续看到的是先出现的
+失步/垃圾字节，再出现 TS-like block 边界。这正好解释了“CDR lock 不等于
+EIEOS/SDS/block lock”，也不能把 `phy_data_block_before_sds` 解释为“已识别
+EIEOS”。
+
+持久观测日志：`sim/vcs_svt/build/simulate.log`；monitor 定义见
+`sim/vcs_svt/board_svt_pcie_x1.sv`。

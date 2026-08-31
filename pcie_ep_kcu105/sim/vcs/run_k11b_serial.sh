@@ -9,6 +9,8 @@ if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
     simlib_dir="${XILINX_VCS_SIMLIB}"
 elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
     simlib_dir="${VIVADO_SIMLIB}"
+elif [[ -f "${project_dir}/../../vcs_compile_simlib/synopsys_sim.setup" ]]; then
+    simlib_dir="$(cd "${project_dir}/../../vcs_compile_simlib" && pwd)"
 elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
     simlib_dir=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
 else
@@ -55,7 +57,8 @@ k15_local_phy_loopback="${K15_LOCAL_PHY_LOOPBACK:-0}"
 k15_gt_loopback="${K15_GT_LOOPBACK:-0}"
 k15_continue_after_fallback="${K15_CONTINUE_AFTER_FALLBACK:-0}"
 k15_ab_cdr_hold="${K15_AB_CDR_HOLD:-0}"
-k15_ab_prerate_txeq="${K15_AB_PRERATE_TXEQ:-0}"
+k15_ab_prerate_txeq="${K15_AB_PRERATE_TXEQ:-1}"
+k15_ab_prerate_query="${K15_AB_PRERATE_QUERY:-1}"
 k15_ab_prerate_dwell="${K15_AB_PRERATE_DWELL_CYCLES:-0}"
 k15_ab_prerate_preset="${K15_AB_PRERATE_PRESET:-4}"
 k14_ep_tx_rate_id="${K14_EP_TX_RATE_ID:-02}"
@@ -96,6 +99,7 @@ if [[ "${k15_mode}" == "1" ]]; then
     tb_defines+=("+define+K14_EP_TX_RATE_ID_VALUE=8'h0e")
     tb_defines+=("+define+K15_AB_CDR_HOLD_VALUE=${k15_ab_cdr_hold}")
     tb_defines+=("+define+K15_AB_PRERATE_TXEQ_VALUE=${k15_ab_prerate_txeq}")
+    tb_defines+=("+define+K15_AB_PRERATE_QUERY_VALUE=${k15_ab_prerate_query}")
     tb_defines+=("+define+K15_AB_PRERATE_DWELL_VALUE=${k15_ab_prerate_dwell}")
     tb_defines+=("+define+K15_AB_PRERATE_PRESET_VALUE=${k15_ab_prerate_preset}")
     if [[ "${k15_header_held_ab}" == "1" ||

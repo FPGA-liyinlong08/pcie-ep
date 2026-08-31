@@ -9,10 +9,12 @@ module pcie_phy_command_ctrl #(
     parameter integer RATE_TIMEOUT_CYCLES = 1_000_000,
     parameter integer GEN3_TX_SETTLE_CYCLES = 32,
     parameter integer EQ_TIMEOUT_CYCLES = 1_000_000,
-    // K15-only reversible A/B knobs.  All default to the signed K14 Golden
-    // envelope: no CDR hold, no pre-rate TXEQ, and no added dwell.
+    // K15 reversible A/B knobs.  The production default follows the PG239
+    // Figure-1 canonical preset/query sequence; Query can be disabled for a
+    // controlled preset-only comparison.
     parameter integer K15_AB_CDR_HOLD = 0,
-    parameter integer K15_AB_PRERATE_TXEQ = 0,
+    parameter integer K15_AB_PRERATE_TXEQ = 1,
+    parameter integer K15_AB_PRERATE_QUERY = 1,
     parameter integer K15_AB_PRERATE_DWELL_CYCLES = 0,
     parameter integer K15_AB_PRERATE_PRESET = 4
 ) (
@@ -30,6 +32,8 @@ module pcie_phy_command_ctrl #(
     // policy/timeouts; this block owns the complete raw PHY rate envelope.
     input  wire        rate_req_valid,
     input  wire [1:0]  rate_req_target,
+    input  wire        prerate_preset_valid,
+    input  wire [3:0]  prerate_preset,
     input  wire        rate_abort,
     output wire        rate_req_ready,
     output wire        rate_busy,
@@ -37,6 +41,8 @@ module pcie_phy_command_ctrl #(
     output wire [2:0]  rate_result,
     output wire [1:0]  active_rate,
     output wire [3:0]  rate_state,
+    output wire        prerate_query_valid,
+    output wire [17:0] prerate_query_coeff,
 
     // K15 semantic equalization request.  The protocol controller chooses the
     // operation; this block remains the sole owner of the raw PG239 pins.
@@ -111,6 +117,8 @@ module pcie_phy_command_ctrl #(
     localparam [3:0] RATE_ERROR_HOLD = 4'd7;
     localparam [3:0] RATE_PRERATE_EQ = 4'd8;
     localparam [3:0] RATE_PRERATE_CLEAR = 4'd9;
+    localparam [3:0] RATE_PRERATE_QUERY = 4'd10;
+    localparam [3:0] RATE_PRERATE_QUERY_CLEAR = 4'd11;
 
     localparam [2:0] EQ_TX_PRESET = 3'd0;
     localparam [2:0] EQ_TX_COEFF  = 3'd1;
@@ -132,6 +140,8 @@ module pcie_phy_command_ctrl #(
         (GEN3_TX_SETTLE_CYCLES < 1) ? 1 : GEN3_TX_SETTLE_CYCLES;
     localparam integer EQ_TIMEOUT_LIMIT =
         (EQ_TIMEOUT_CYCLES < 1) ? 1 : EQ_TIMEOUT_CYCLES;
+    localparam [3:0] PRERATE_FALLBACK_PRESET =
+        (K15_AB_PRERATE_PRESET <= 10) ? K15_AB_PRERATE_PRESET[3:0] : 4'd4;
 
     function automatic prerate_dwell_expired(input [31:0] count);
         integer signed dwell_last;
@@ -150,6 +160,9 @@ module pcie_phy_command_ctrl #(
     reg [31:0] settle_count_r;
     reg [31:0] prerate_count_r;
     reg prerate_txeq_seen_r;
+    reg [3:0] prerate_preset_r;
+    reg prerate_query_valid_r;
+    reg [17:0] prerate_query_coeff_r;
     reg phy_phystatus_q;
     reg rate_done_r;
     reg [2:0] rate_result_r;
@@ -161,6 +174,9 @@ module pcie_phy_command_ctrl #(
     reg eq_rsp_preset_sel_r;
     reg [1:0] eq_coeff_cycle_r;
     reg [31:0] eq_timeout_count_r;
+`ifndef SYNTHESIS
+    reg phy_txelecidle_q;
+`endif
 
     wire phystatus_rising = phy_phystatus && !phy_phystatus_q;
     wire txeq_done_rising = phy_txeq_done && !phy_txeq_done_q;
@@ -245,6 +261,8 @@ module pcie_phy_command_ctrl #(
     assign rate_result = rate_result_r;
     assign active_rate = active_rate_r;
     assign rate_state = rate_state_r;
+    assign prerate_query_valid = prerate_query_valid_r;
+    assign prerate_query_coeff = prerate_query_coeff_r;
     assign eq_req_ready = pipe_rst_n && (rate_state_r == RATE_STABLE) &&
                           !eq_busy_r && !rate_req_valid;
     assign eq_busy = eq_busy_r;
@@ -253,9 +271,9 @@ module pcie_phy_command_ctrl #(
     assign eq_rsp_preset_sel = eq_rsp_preset_sel_r;
     assign eq_rsp_coeff = eq_rsp_coeff_r;
 
-    // Raw EQ pins are centralized here.  Recovery.Speed deliberately leaves
-    // them inactive so the signed K14 Golden rate envelope is unchanged;
-    // only post-rate semantic Equalization operations may drive them.
+    // Raw EQ pins are centralized here.  Recovery.Speed drives only the
+    // selected canonical preset/query waveform; post-rate operations arrive
+    // through the semantic Equalization request interface below.
     always @* begin
         phy_txeq_ctrl = 2'b00;
         phy_txeq_preset = 4'd0;
@@ -266,7 +284,12 @@ module pcie_phy_command_ctrl #(
             (target_rate_r == RATE_GEN3) &&
             (K15_AB_PRERATE_TXEQ != 0)) begin
             phy_txeq_ctrl = 2'b01;
-            phy_txeq_preset = K15_AB_PRERATE_PRESET[3:0];
+            phy_txeq_preset = prerate_preset_r;
+        end else if ((rate_state_r == RATE_PRERATE_QUERY) &&
+                     (target_rate_r == RATE_GEN3) &&
+                     (K15_AB_PRERATE_TXEQ != 0) &&
+                     (K15_AB_PRERATE_QUERY != 0)) begin
+            phy_txeq_ctrl = 2'b11;
         end else if (eq_busy_r) begin
             case (eq_kind_r)
                 EQ_TX_PRESET: begin
@@ -305,6 +328,9 @@ module pcie_phy_command_ctrl #(
             settle_count_r <= 32'd0;
             prerate_count_r <= 32'd0;
             prerate_txeq_seen_r <= 1'b0;
+            prerate_preset_r <= PRERATE_FALLBACK_PRESET;
+            prerate_query_valid_r <= 1'b0;
+            prerate_query_coeff_r <= 18'd0;
             phy_phystatus_q <= 1'b0;
             rate_done_r <= 1'b0;
             rate_result_r <= RATE_RESULT_NONE;
@@ -331,6 +357,9 @@ module pcie_phy_command_ctrl #(
             settle_count_r <= 32'd0;
             prerate_count_r <= 32'd0;
             prerate_txeq_seen_r <= 1'b0;
+            prerate_preset_r <= PRERATE_FALLBACK_PRESET;
+            prerate_query_valid_r <= 1'b0;
+            prerate_query_coeff_r <= 18'd0;
             phy_phystatus_q <= phy_phystatus;
             rate_done_r <= rate_envelope_active;
             rate_result_r <= rate_envelope_active ? RATE_RESULT_ABORTED :
@@ -369,6 +398,15 @@ module pcie_phy_command_ctrl #(
                             rate_result_r <= RATE_RESULT_SUCCESS;
                         end else begin
                             target_rate_r <= rate_req_target;
+                            if (rate_req_target == RATE_GEN3) begin
+                                prerate_preset_r <=
+                                    prerate_preset_valid &&
+                                    (prerate_preset <= 4'd10) ?
+                                    prerate_preset :
+                                    PRERATE_FALLBACK_PRESET;
+                                prerate_query_valid_r <= 1'b0;
+                                prerate_query_coeff_r <= 18'd0;
+                            end
                             rate_state_r <= RATE_RELEASE;
                             timeout_count_r <= 32'd0;
                         end
@@ -416,8 +454,31 @@ module pcie_phy_command_ctrl #(
                     end
                 end
                 RATE_PRERATE_CLEAR: begin
-                    // One explicit Gen1/P0 cycle clears TXEQ before RATE
-                    // changes, making the experiment trace unambiguous.
+                    // One explicit Gen1/P0 cycle clears preset apply before
+                    // either the canonical query or the rate change.
+                    timeout_count_r <= 32'd0;
+                    prerate_txeq_seen_r <= 1'b0;
+                    rate_state_r <= ((K15_AB_PRERATE_TXEQ != 0) &&
+                                     (K15_AB_PRERATE_QUERY != 0)) ?
+                                    RATE_PRERATE_QUERY : RATE_APPLY;
+                end
+                RATE_PRERATE_QUERY: begin
+                    if (txeq_done_rising) begin
+                        prerate_query_coeff_r <= phy_txeq_new_coeff;
+                        prerate_query_valid_r <= 1'b1;
+                        timeout_count_r <= 32'd0;
+                        rate_state_r <= RATE_PRERATE_QUERY_CLEAR;
+                    end else if (timeout_count_r >= (TIMEOUT_LIMIT - 1)) begin
+                        rate_done_r <= 1'b1;
+                        rate_result_r <= RATE_RESULT_PHYSTATUS_TIMEOUT;
+                        rate_state_r <= RATE_ERROR_HOLD;
+                    end else begin
+                        timeout_count_r <= timeout_count_r + 1'b1;
+                    end
+                end
+                RATE_PRERATE_QUERY_CLEAR: begin
+                    // A second explicit idle command beat separates Query
+                    // completion from PHY_RATE changing to the new speed.
                     timeout_count_r <= 32'd0;
                     rate_state_r <= RATE_APPLY;
                 end
@@ -476,7 +537,7 @@ module pcie_phy_command_ctrl #(
                         ((eq_req_kind == EQ_TX_PRESET ||
                           eq_req_kind == EQ_RX_ADAPT ||
                           eq_req_kind == EQ_RX_BYPASS) &&
-                         (eq_req_preset > 4'd9))) begin
+                         (eq_req_preset > 4'd10))) begin
                         eq_done_r <= 1'b1;
                         eq_result_r <= EQ_RESULT_ILLEGAL;
                     end else begin
@@ -519,6 +580,29 @@ module pcie_phy_command_ctrl #(
             end
         end
     end
+
+`ifndef SYNTHESIS
+    // RATE_RELEASE plus RATE_GOLDEN_GAP is the explicit TXEI lead.  Keep this
+    // assertion at the raw-pin owner so later state refactors cannot make the
+    // preset command appear on the same first beat as Electrical Idle.
+    always @(posedge phy_pclk or negedge pipe_rst_n) begin
+        if (!pipe_rst_n) begin
+            phy_txelecidle_q <= 1'b0;
+        end else begin
+            if ((rate_state_r == RATE_PRERATE_EQ) &&
+                (K15_AB_PRERATE_TXEQ != 0))
+                assert (phy_txelecidle_q)
+                    else $error("K15_PRERATE_TXEI_LEAD_VIOLATION");
+            if ((rate_state_r == RATE_PRERATE_QUERY) && txeq_done_rising)
+                $display("K15_PRERATE_QUERY raw=%05x pre=%0d main=%0d post=%0d",
+                         phy_txeq_new_coeff,
+                         phy_txeq_new_coeff[17:12],
+                         phy_txeq_new_coeff[11:6],
+                         phy_txeq_new_coeff[5:0]);
+            phy_txelecidle_q <= phy_txelecidle;
+        end
+    end
+`endif
 
     // Compliance, polarity, margin, swing and deemphasis retain centralized
     // safe values. Equalization controls above now share the same raw owner.

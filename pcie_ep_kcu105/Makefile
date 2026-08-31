@@ -1,3 +1,5 @@
+DESIGNWARE_HOME ?= /home/wx/synopsys/designware
+
 .PHONY: k00 k00-baseline k00-verilator k00-pcie-model k00-vcs \
 	k00-m02-checker-selftest k00-m02-afifo-check k00-m02-lint \
 	k00-m02-verilator k00-m02-verilator-signoff k00-m02-vcs \
@@ -29,7 +31,7 @@
 	k14-rate-id-ab-vcs \
 	k14-direct-sim \
 	k14-reboot-vcs k14-reboot-sim \
-	k15-directed-test k15-static k15-vcs k15-vcs-phase2 k15-svt-vcs \
+	k15-directed-test k15-preset-capture-test k15-static k15-vcs k15-vcs-phase2 k15-svt-vcs \
 	k15-svt-phase2-vcs k15 \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
@@ -270,7 +272,8 @@ phy-command-ctrl-test:
 	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
 		--top-module pcie_phy_command_ctrl \
 		-GGOLDEN_RELEASE_GAP_CYCLES=4 -GRATE_TIMEOUT_CYCLES=8 \
-		-GGEN3_TX_SETTLE_CYCLES=2 \
+		-GGEN3_TX_SETTLE_CYCLES=2 -GK15_AB_PRERATE_TXEQ=0 \
+		-GK15_AB_PRERATE_QUERY=0 \
 		$(CURDIR)/rtl/phy/pcie_phy_command_ctrl.sv \
 		$(CURDIR)/sim/verilator/phy_command_ctrl/pcie_phy_command_ctrl_test.cpp \
 		-Mdir sim/verilator/phy_command_ctrl/sim_build
@@ -294,6 +297,14 @@ k15-directed-test:
 		$(CURDIR)/sim/verilator/k15/k15_eq_idle_test.cpp \
 		-Mdir sim/verilator/k15/sim_build
 	./sim/verilator/k15/sim_build/Vk15_eq_idle_test_top
+
+k15-preset-capture-test:
+	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		--top-module pcie_eq_ts2_preset_capture \
+		$(CURDIR)/rtl/phy/pcie_gen1_os_rx.sv \
+		$(CURDIR)/sim/verilator/k15/eq_ts2_preset_capture_test.cpp \
+		-Mdir sim/verilator/k15/preset_capture_build
+	./sim/verilator/k15/preset_capture_build/Vpcie_eq_ts2_preset_capture
 
 k14-recovery-speed-test:
 	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
@@ -332,7 +343,7 @@ k14-reboot-sim:
 	$(MAKE) k14-direct-sim
 	$(MAKE) k14-reboot-vcs
 
-k15-static: k15-directed-test phy-command-ctrl-test k15-phy-ab-test \
+k15-static: k15-directed-test k15-preset-capture-test phy-command-ctrl-test k15-phy-ab-test \
 		k14-recovery-speed-test phy-command-ownership k11b2-lint
 
 k15-vcs:
@@ -342,7 +353,7 @@ k15-vcs-phase2:
 	./sim/vcs/run_k15_phase2.sh
 
 k15-svt-vcs:
-	./sim/vcs_svt/run_k15_svt_x1.sh
+	DESIGNWARE_HOME="$(DESIGNWARE_HOME)" ./sim/vcs_svt/run_k15_svt_x1.sh
 
 k15-svt-phase2-vcs:
 	./sim/vcs_svt/run_k15_svt_phase2_x1.sh
@@ -564,6 +575,9 @@ k11b2-ila-lint:
 
 k11b2-ila-vivado:
 	./fpga/kcu105/run_k11b2_ila_impl.sh
+
+k13-gen3-ila-vivado:
+	./fpga/kcu105/run_k13_gen3_ila_impl.sh
 
 k11b2-ila-hw-program-arm:
 	$(VIVADO) -mode batch -nojournal -nolog \

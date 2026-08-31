@@ -31,6 +31,7 @@ int main(int argc, char **argv) {
 
     const bool expect_cdr = dut.variant_cdr_hold;
     const bool expect_txeq = dut.variant_prerate_txeq;
+    const bool expect_query = dut.variant_prerate_query;
     const unsigned dwell = dut.variant_dwell;
     if (expect_cdr && dut.rate_busy && !dut.as_cdr_hold_req)
         fail("CDR hold is asserted outside the rate envelope");
@@ -43,6 +44,8 @@ int main(int argc, char **argv) {
     bool saw_prerate = false;
     bool saw_txeq = false;
     bool saw_clear = false;
+    bool saw_query = false;
+    bool saw_query_clear = false;
     unsigned prerate_cycles = 0;
     bool saw_gen3 = false;
     for (unsigned cycle = 0; cycle < 100; ++cycle) {
@@ -54,8 +57,8 @@ int main(int argc, char **argv) {
             ++prerate_cycles;
             if (dut.phy_txeq_ctrl == 1) {
                 saw_txeq = true;
-                if (dut.phy_txeq_preset != 4)
-                    fail("pre-rate TXEQ preset is not P4");
+                if (dut.phy_txeq_preset != 7)
+                    fail("pre-rate TXEQ did not use qualified EQ TS2 preset");
             } else if (dut.phy_txeq_ctrl != 0) {
                 fail("unexpected pre-rate TXEQ command");
             }
@@ -63,6 +66,14 @@ int main(int argc, char **argv) {
             saw_clear = true;
             if (dut.phy_txeq_ctrl != 0 || dut.phy_rate != 0)
                 fail("TXEQ clear cycle is not Gen1 and inactive");
+        } else if (dut.rate_state == 10) {
+            saw_query = true;
+            if (dut.phy_txeq_ctrl != 3 || dut.phy_rate != 0)
+                fail("canonical coefficient Query command missing");
+        } else if (dut.rate_state == 11) {
+            saw_query_clear = true;
+            if (dut.phy_txeq_ctrl != 0 || dut.phy_rate != 0)
+                fail("Query clear cycle is not Gen1 and inactive");
         }
         if (dut.phy_rate == 2) {
             if (dut.phy_txeq_ctrl != 0)
@@ -78,6 +89,12 @@ int main(int argc, char **argv) {
         fail("pre-rate dwell/clear envelope length mismatch");
     if (saw_txeq != expect_txeq)
         fail("pre-rate TXEQ presence does not match variant");
+    if (saw_query != expect_query || saw_query_clear != expect_query)
+        fail("pre-rate Query/clear presence does not match variant");
+    if (dut.prerate_query_valid != expect_query)
+        fail("sticky Query valid does not match variant");
+    if (expect_query && dut.prerate_query_coeff != 0x3941)
+        fail("Query coefficient field capture mismatch");
 
     while (dut.rate_state != 4)
         tick(dut);
@@ -91,6 +108,7 @@ int main(int argc, char **argv) {
 
     std::cout << "K15_PHY_AB_PASS cdr=" << (expect_cdr ? 1 : 0)
               << " txeq=" << (expect_txeq ? 1 : 0)
+              << " query=" << (expect_query ? 1 : 0)
               << " dwell=" << dwell
               << " prerate_cycles=" << prerate_cycles << '\n';
     dut.final();

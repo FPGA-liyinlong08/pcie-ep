@@ -36,6 +36,8 @@ module test_top;
     reg seen_timeout_fallback, seen_gen1_fallback_phystatus;
     reg seen_eq_phase0, seen_eq_phase1, seen_eq_phase2, seen_eq_phase3;
     reg seen_recovery_idle;
+    integer rx_pipe_debug_count;
+    integer tx_eieos_debug_count;
 
     `include "svc_util_parms.v"
 
@@ -64,6 +66,8 @@ module test_top;
         ep_perst_n = 1'b0;
         vip_reset = 1'b1;
         reset_epoch_count = 0;
+        rx_pipe_debug_count = 0;
+        tx_eieos_debug_count = 0;
         global_random_seed = 0;
         apply_reset_epoch();
     end
@@ -143,6 +147,48 @@ module test_top;
                 6'h0d: seen_recovery_idle <= 1'b1;
                 default: begin end
             endcase
+        end
+    end
+
+    // Diagnostic-only monitor of the SVT Root Port PIPE receive output.  The
+    // serial model may lock its CDR while still failing SDS/block alignment;
+    // capture the first Gen3 beats to distinguish that case from a clean
+    // EIEOS/SDS handoff.  This monitor has no effect on DUT behavior.
+    always @(posedge DUT.phy_pclk) begin
+        if (!vip_reset && (DUT.phy_active_rate == 2'b10) &&
+            DUT.u_ltssm_mac.gen3_os_tx_eieos_active &&
+            (tx_eieos_debug_count < 16)) begin
+            #1;
+            $display("K15_SVT_EP_TX_EIEOS n=%0d t_ps=%0t valid=%0d start=%0d sh=%02h data=%08h word=%0d",
+                     tx_eieos_debug_count, $time,
+                     DUT.phy_txdata_valid, DUT.phy_txstart_block,
+                     DUT.phy_txsync_header, DUT.phy_txdata,
+                     DUT.u_ltssm_mac.gen3_os_tx_word_index);
+            tx_eieos_debug_count = tx_eieos_debug_count + 1;
+        end
+    end
+
+    always @(posedge root0.port0.pipe_clk) begin
+        if (!vip_reset && (DUT.phy_active_rate == 2'b10) &&
+            (rx_pipe_debug_count < 512) &&
+            ((rx_pipe_debug_count < 96) ||
+             root0.port0.pcs0_rx_valid || root0.port0.pcs0_rx_data_valid ||
+             root0.port0.pcs0_rx_start_block ||
+             (root0.port0.pcs0_rx_sync_header != 2'b00) ||
+             (root0.port0.pcs0_rx_data != 32'd0) ||
+             (root0.port0.pcs0_rx_ei_code != 32'd0) ||
+             (root0.port0.pcs0_rx_status != 0))) begin
+            #1;
+            $display("K15_SVT_RP_PIPE_RX n=%0d t_ps=%0t valid=%0d data_valid=%0d start=%0d sh=%02h data=%08h ei=%08h status=%0h",
+                     rx_pipe_debug_count, $time,
+                     root0.port0.pcs0_rx_valid,
+                     root0.port0.pcs0_rx_data_valid,
+                     root0.port0.pcs0_rx_start_block,
+                     root0.port0.pcs0_rx_sync_header,
+                     root0.port0.pcs0_rx_data,
+                     root0.port0.pcs0_rx_ei_code,
+                     root0.port0.pcs0_rx_status);
+            rx_pipe_debug_count = rx_pipe_debug_count + 1;
         end
     end
 

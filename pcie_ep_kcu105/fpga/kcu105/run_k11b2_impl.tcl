@@ -478,6 +478,7 @@ set sv_files [list \
   rtl/phy/pcie_gen1_os_tx.sv rtl/phy/pcie_gen3_scrambler32.sv rtl/phy/pcie_gen3_os_rx.sv \
   rtl/phy/pcie_gen3_os_tx.sv rtl/phy/pcie_gen3_idle_tx.sv \
   rtl/phy/pcie_gen3_equalization_ctrl.sv rtl/phy/pcie_gen1_framer.sv \
+  rtl/phy/pcie_phy_command_ctrl.sv \
   rtl/common/pcie_link_loss_trigger.sv \
   rtl/phy/pcie_ltssm_mac_gen1.sv \
   rtl/common/pcie_retrain_cdc_mailbox.sv rtl/phy/pcie_phy_rate_contract.sv \
@@ -666,16 +667,6 @@ if {$ila_debug} {
     connect_net -hier -net $source_net -objects [list $pin]
   }
 
-  if {$k13_enable && $k13_gt_primitive_debug} {
-    # Replace the recorder's synthesizable zero taps with the real primitive
-    # outputs. This is diagnostic-only and does not change PHY control logic.
-     k13_connect_recorder_input {.*k13_qpll_event_recorder/qpll1lock$} \
-       [phy_primitive_pin_nets GTHE3_COMMON QPLL1LOCK 1]
-     k13_connect_recorder_input {.*k13_qpll_event_recorder/qpll1reset$} \
-       [phy_primitive_pin_nets GTHE3_COMMON QPLL1RESET 1]
-    puts "K13_QPLL_EVENT_RECORDER_CONNECT_PASS"
-  }
-
   create_debug_core u_ila_pipe ila
   # 1024 TS1 = 8192个125 MHz PIPE周期；这里保留更长的GT RX复位/CDR
   # 取证窗口，确认RXRESETDONE不是仅仅晚于上一版131 us采集窗口。
@@ -752,13 +743,13 @@ if {$ila_debug} {
     [phy_boundary_net {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateqpllpd_out\[0\]$}] \
     [phy_boundary_net_first [list \
       {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcierateidle_out\[0\]$} \
-      {^u_endpoint/g_ila_debug\.dbg_k13_top\[0\]$}]] \
+      {^u_endpoint/u_ltssm_mac/g_ila_debug_ltssm\.dbg_k13_top\[0\]$}]] \
     [phy_boundary_net_first [list \
       {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieusergen3rdy_out\[0\]$} \
-      {^u_endpoint/g_ila_debug\.dbg_k13_top\[1\]$}]] \
+      {^u_endpoint/u_ltssm_mac/g_ila_debug_ltssm\.dbg_k13_top\[1\]$}]] \
     [phy_boundary_net_first [list \
       {^u_endpoint/u_phy_wrapper/u_pcie_phy/inst/Uscale_gt\.us_gt_phy_wrapper/gt_wizard\.gtwizard_top_i/pcie_phy_x1_gen3_gt_i/pcieuserratestart_out\[0\]$} \
-      {^u_endpoint/g_ila_debug\.dbg_k13_top\[2\]$}]] \
+      {^u_endpoint/u_ltssm_mac/g_ila_debug_ltssm\.dbg_k13_top\[2\]$}]] \
     [debug_scalar_net u_endpoint/g_ila_debug/dbg_phystatus_rst_fall_pipe]]
   add_ila_probe u_ila_pipe 6 $phy_probe_nets
 
@@ -870,10 +861,9 @@ if {$ila_debug} {
     set gt_primitive_probe_nets [concat {*}$gt_primitive_probe_nets]
     add_ila_probe u_ila_pipe 20 $gt_primitive_probe_nets
   }
-  if {$k13_enable} {
-    add_ila_probe u_ila_pipe 21 \
-      [debug_bus_nets {.*dbg_k13_qpll_event_record.*\[[0-9]+\]$} 176]
-  }
+  # The current K13 RTL exposes the live LTSSM/PHY/GT signals above; it does
+  # not instantiate the historical 176-bit qpll event recorder. Do not add a
+  # stale probe for a net that is absent from this source revision.
   if {!$ila_pipe_only} {
     create_debug_core u_ila_core ila
     set_property C_DATA_DEPTH 4096 [get_debug_cores u_ila_core]

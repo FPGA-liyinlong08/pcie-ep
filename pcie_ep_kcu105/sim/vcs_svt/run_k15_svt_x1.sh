@@ -10,7 +10,13 @@ svt_program_file="${SVT_PROGRAM_FILE:-${svt_tb_dir}/pcie_svt_k15_program.sv}"
 svt_config_file="${SVT_CONFIG_FILE:-${svt_tb_dir}/pcie_svt_k15_config.v}"
 build_dir="${K15_SVT_BUILD_DIR:-${script_dir}/build}"
 vip_version="${SVT_PCIE_VIP_VERSION:-O-2018.09}"
-designware_home="${DESIGNWARE_HOME:-/home/ICer/synopsys/designware}"
+if [[ -n "${DESIGNWARE_HOME:-}" ]]; then
+    designware_home="${DESIGNWARE_HOME}"
+elif [[ -x /home/wx/synopsys/designware/bin/dw_vip_setup ]]; then
+    designware_home=/home/wx/synopsys/designware
+else
+    designware_home=/home/ICer/synopsys/designware
+fi
 vcs_home="${VCS_HOME:-/home/synopsys/vcs-mx/O-2018.09-SP2}"
 vivado_home="${VIVADO_HOME:-/home/Xilinx/Vivado/2021.2}"
 phy_name=pcie_phy_x1_gen3
@@ -36,6 +42,8 @@ if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
     simlib_dir="${XILINX_VCS_SIMLIB}"
 elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
     simlib_dir="${VIVADO_SIMLIB}"
+elif [[ -f "${project_dir}/../../vcs_compile_simlib/synopsys_sim.setup" ]]; then
+    simlib_dir="$(cd "${project_dir}/../../vcs_compile_simlib" && pwd)"
 elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
     simlib_dir=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
 else

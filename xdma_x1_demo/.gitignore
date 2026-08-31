@@ -1,0 +1,21 @@
+# Vivado implementation and generated IP products
+build/
+.Xil/
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+
+# Vivado/VCS temporary files and logs
+*.jou
+*.log
+*.str
+*.vpd
+*.vcd
+*.fst
+*.fsdb
+*.wdb
+csrc/
+ucli.key

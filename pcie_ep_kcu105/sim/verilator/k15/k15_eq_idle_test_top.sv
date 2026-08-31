@@ -17,6 +17,10 @@ module k15_eq_idle_test_top (
     input  wire [2:0] eq_result,
     input  wire eq_rsp_preset_sel,
     input  wire [17:0] eq_rsp_coeff,
+    input  wire initial_preset_valid,
+    input  wire [3:0] initial_preset,
+    input  wire initial_coeff_valid,
+    input  wire [17:0] initial_coeff,
     input  wire idle_enable,
     input  wire training_enable,
     input  wire [1:0] training_mode,
@@ -46,12 +50,18 @@ module k15_eq_idle_test_top (
     wire [22:0] training_lfsr_after_word;
 
     pcie_gen3_equalization_ctrl #(
-        .PHASE_TIMEOUT_CYCLES(128), .TS_REQUIRED(8), .PORT_ROLE(0)
+        .PHASE_TIMEOUT_CYCLES(128), .PORT_ROLE(0)
     ) u_eq (
         .clk(clk), .rst_n(rst_n), .phase_valid(phase_valid), .phase(phase),
         .ts1_valid(ts1_valid), .ts2_valid(ts2_valid),
+        .ts_malformed(1'b0),
         .ts_eq_control(ts_eq_control), .ts_eq_data(ts_eq_data),
         .tx_ts_complete(tx_ts_complete),
+        .initial_preset_valid(initial_preset_valid),
+        .initial_preset(initial_preset),
+        .initial_coeff_valid(initial_coeff_valid),
+        .initial_coeff(initial_coeff),
+        .local_fs(6'd40), .local_lf(6'd12),
         .eq_req_valid(eq_req_valid), .eq_req_kind(eq_req_kind),
         .eq_req_preset(eq_req_preset), .eq_req_coeff(eq_req_coeff),
         .eq_req_ready(eq_req_ready), .eq_busy(eq_busy),
@@ -80,7 +90,7 @@ module k15_eq_idle_test_top (
         .ts1_valid(), .ts2_valid(), .malformed(idle_malformed),
         .idle_valid(idle_valid), .link_number(), .link_is_pad(),
         .lane_number(), .lane_is_pad(), .n_fts(), .rate_id(),
-        .training_control(), .eq_control(), .eq_data()
+        .training_control(), .eq_control(), .eq_data(), .eieos_start()
     );
 
     pcie_gen3_os_tx u_training_tx (
@@ -94,6 +104,7 @@ module k15_eq_idle_test_top (
         .start_block(training_start_block),
         .sync_header(training_sync_header),
         .os_complete(training_os_complete), .word_index_debug(),
+        .eieos_active(), .eieos_start(),
         .lfsr_state_after_word(training_lfsr_after_word)
     );
 endmodule

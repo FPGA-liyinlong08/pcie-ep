@@ -29,6 +29,8 @@ module pcie_gen3_os_tx (
     output reg  [1:0]  sync_header,
     output wire        os_complete,
     output wire [1:0]  word_index_debug,
+    output wire        eieos_active,
+    output wire        eieos_start,
     // State after the currently presented 32-bit word.  Recovery.Idle uses
     // this hand-off so SDS and the first Data Block continue the same lane
     // scrambler stream instead of silently restarting from the lane seed.
@@ -64,6 +66,14 @@ module pcie_gen3_os_tx (
     reg [31:0] plain_data;
     wire [31:0] scrambled_data;
     wire [22:0] lfsr_next;
+    // In Recovery training the preceding block is an Ordered Set, so the
+    // SKP_END information byte carries ~LFSR[22] followed by LFSR[22:16].
+    // The remaining two bytes carry LFSR[15:0].  At the lane-0 seed this is
+    // BCBF9DE1; periodic SKPs must use the live state instead.
+    wire [31:0] skp_end_data = {
+        lfsr_state[7:0], lfsr_state[15:8],
+        ~lfsr_state[22], lfsr_state[22:16], 8'he1
+    };
     reg [31:0] balanced_data;
     reg [6:0] output_ones;
 
@@ -120,6 +130,8 @@ module pcie_gen3_os_tx (
     assign os_complete = enable && (output_mode != 2'd0) &&
                          (stream_state == SEND_TS) &&
                          (word_index == 2'd3);
+    assign eieos_active = out_valid && (stream_state == SEND_EIEOS);
+    assign eieos_start = eieos_active && (active_index == 2'd0);
     assign word_index_debug = active_index;
     assign lfsr_state_after_word =
         (enable && (output_mode != 2'd0) && (stream_state == SEND_TS)) ?
@@ -261,7 +273,7 @@ module pcie_gen3_os_tx (
         if (stream_state == SEND_EIEOS) begin
             out_data = 32'hff00_ff00;
         end else if (stream_state == SEND_SKP) begin
-            out_data = (active_index == 2'd3) ? 32'hbcbf_9de1 :
+            out_data = (active_index == 2'd3) ? skp_end_data :
                                                 32'haaaa_aaaa;
         end else begin
             case (active_index)

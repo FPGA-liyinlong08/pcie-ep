@@ -16,10 +16,11 @@ module kcu105_pcie_ep_gen1_top #(
     parameter integer GEN3_RATE_CHANGE_ENABLE = 1,
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
-    // K15-only reversible PHY-envelope experiment knobs. Defaults preserve
-    // the signed K14 Golden rate-change contract.
+    // K15 reversible PHY-envelope knobs. Production defaults enable the
+    // Figure-1 canonical preset/query flow; Query may be disabled for A/B.
     parameter integer K15_AB_CDR_HOLD = 0,
-    parameter integer K15_AB_PRERATE_TXEQ = 0,
+    parameter integer K15_AB_PRERATE_TXEQ = 1,
+    parameter integer K15_AB_PRERATE_QUERY = 1,
     parameter integer K15_AB_PRERATE_DWELL_CYCLES = 0,
     parameter integer K15_AB_PRERATE_PRESET = 4,
     // K15 production capability: Gen1/2/3 supported, speed_change clear until
@@ -68,6 +69,9 @@ module kcu105_pcie_ep_gen1_top #(
     wire [1:0] phy_rate_req_target, phy_active_rate;
     wire [2:0] phy_rate_result;
     wire [3:0] phy_rate_state;
+    wire prerate_preset_valid, prerate_query_valid;
+    wire [3:0] prerate_preset;
+    wire [17:0] prerate_query_coeff;
 
     wire mac_rx_valid, mac_rx_sop, mac_rx_eop, mac_rx_is_dllp;
     wire [15:0] mac_rx_data;
@@ -103,6 +107,37 @@ module kcu105_pcie_ep_gen1_top #(
 
     wire dbg_operational_seen, dbg_link_loss_seen;
     wire dbg_link_loss_pipe, dbg_link_loss_core;
+    generate if (K11B2_ILA_DEBUG != 0) begin : g_ila_debug
+        // Stable board-level aliases required by the PIPE ILA Tcl. These are
+        // observation-only and remain absent from the functional build.
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_pipe_clk = phy_pclk;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_pipe_tlp_trigger = phy_txdata_valid && phy_txstart_block;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_pipe_link_loss_trigger = dbg_link_loss_pipe;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_phy_rxidle_conflict = phy_rxelecidle &&
+                                       (phy_rxvalid || phy_rxdata_valid);
+        reg dbg_perst_n_pipe_d;
+        reg dbg_phystatus_rst_d;
+        always @(posedge phy_pclk or negedge pipe_rst_n) begin
+            if (!pipe_rst_n) begin
+                dbg_perst_n_pipe_d <= 1'b0;
+                dbg_phystatus_rst_d <= 1'b0;
+            end else begin
+                dbg_perst_n_pipe_d <= pipe_rst_n;
+                dbg_phystatus_rst_d <= phy_phystatus_rst;
+            end
+        end
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_perst_n_pipe = pipe_rst_n;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_perst_rise_pipe = pipe_rst_n && !dbg_perst_n_pipe_d;
+        (* mark_debug = "true", keep = "true" *)
+        wire dbg_phystatus_rst_fall_pipe = dbg_phystatus_rst_d &&
+                                            !phy_phystatus_rst;
+    end endgenerate
     generate if (K11B2_ILA_DEBUG != 0) begin : g_link_loss_debug
         pcie_link_loss_trigger u_link_loss_trigger (
             .clk(phy_pclk), .rst_n(pipe_rst_n), .link_up(link_up),
@@ -370,6 +405,7 @@ module kcu105_pcie_ep_gen1_top #(
     pcie_phy_command_ctrl #(
         .K15_AB_CDR_HOLD(K15_AB_CDR_HOLD),
         .K15_AB_PRERATE_TXEQ(K15_AB_PRERATE_TXEQ),
+        .K15_AB_PRERATE_QUERY(K15_AB_PRERATE_QUERY),
         .K15_AB_PRERATE_DWELL_CYCLES(K15_AB_PRERATE_DWELL_CYCLES),
         .K15_AB_PRERATE_PRESET(K15_AB_PRERATE_PRESET)
     ) u_phy_command_ctrl (
@@ -379,10 +415,14 @@ module kcu105_pcie_ep_gen1_top #(
         .op_done(phy_cmd_done), .op_result(phy_cmd_result),
         .rate_req_valid(phy_rate_req_valid),
         .rate_req_target(phy_rate_req_target),
+        .prerate_preset_valid(prerate_preset_valid),
+        .prerate_preset(prerate_preset),
         .rate_abort(phy_rate_abort), .rate_req_ready(phy_rate_req_ready),
         .rate_busy(phy_rate_busy), .rate_done(phy_rate_done),
         .rate_result(phy_rate_result), .active_rate(phy_active_rate),
         .rate_state(phy_rate_state),
+        .prerate_query_valid(prerate_query_valid),
+        .prerate_query_coeff(prerate_query_coeff),
         .eq_req_valid(eq_req_valid), .eq_req_kind(eq_req_kind),
         .eq_req_preset(eq_req_preset), .eq_req_coeff(eq_req_coeff),
         .eq_req_ready(eq_req_ready), .eq_busy(eq_busy),
@@ -439,6 +479,11 @@ module kcu105_pcie_ep_gen1_top #(
         .eq_done(eq_done), .eq_result(eq_result),
         .eq_rsp_preset_sel(eq_rsp_preset_sel),
         .eq_rsp_coeff(eq_rsp_coeff),
+        .prerate_query_valid(prerate_query_valid),
+        .prerate_query_coeff(prerate_query_coeff),
+        .local_txeq_fs(phy_txeq_fs), .local_txeq_lf(phy_txeq_lf),
+        .prerate_preset_valid(prerate_preset_valid),
+        .prerate_preset(prerate_preset),
         .gen3_eq_active(gen3_eq_active), .gen3_eq_phase(gen3_eq_phase),
         .gen3_eq_failed(gen3_eq_failed),
         .phy_txdata(phy_txdata), .phy_txdatak(phy_txdatak),

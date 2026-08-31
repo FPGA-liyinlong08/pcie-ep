@@ -12,7 +12,8 @@ module kcu105_pcie_ep_gen1_board_top #(
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
     parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
     parameter integer K15_AB_CDR_HOLD = 0,
-    parameter integer K15_AB_PRERATE_TXEQ = 0,
+    parameter integer K15_AB_PRERATE_TXEQ = 1,
+    parameter integer K15_AB_PRERATE_QUERY = 1,
     parameter integer K15_AB_PRERATE_DWELL_CYCLES = 0,
     parameter integer K15_AB_PRERATE_PRESET = 4,
     parameter [7:0] LTSSM_TX_RATE_ID = 8'h0e
@@ -49,6 +50,7 @@ module kcu105_pcie_ep_gen1_board_top #(
         .GEN3_AUTO_RETRAIN_CYCLES(GEN3_AUTO_RETRAIN_CYCLES),
         .K15_AB_CDR_HOLD(K15_AB_CDR_HOLD),
         .K15_AB_PRERATE_TXEQ(K15_AB_PRERATE_TXEQ),
+        .K15_AB_PRERATE_QUERY(K15_AB_PRERATE_QUERY),
         .K15_AB_PRERATE_DWELL_CYCLES(K15_AB_PRERATE_DWELL_CYCLES),
         .K15_AB_PRERATE_PRESET(K15_AB_PRERATE_PRESET),
         .LTSSM_TX_RATE_ID(LTSSM_TX_RATE_ID)

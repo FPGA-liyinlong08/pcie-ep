@@ -22,7 +22,8 @@ if {[info exists ::env(K14_PLACE_DIRECTIVE)]} {
 set k14_allow_timing_violation [expr {[info exists ::env(K14_ALLOW_TIMING_VIOLATION)] &&
                                       $::env(K14_ALLOW_TIMING_VIOLATION) eq "1"}]
 set k15_ab_cdr_hold 0
-set k15_ab_prerate_txeq 0
+set k15_ab_prerate_txeq 1
+set k15_ab_prerate_query 1
 set k15_ab_prerate_dwell 0
 set k15_ab_prerate_preset 4
 if {[info exists ::env(K15_AB_CDR_HOLD)]} {
@@ -30,6 +31,9 @@ if {[info exists ::env(K15_AB_CDR_HOLD)]} {
 }
 if {[info exists ::env(K15_AB_PRERATE_TXEQ)]} {
   set k15_ab_prerate_txeq $::env(K15_AB_PRERATE_TXEQ)
+}
+if {[info exists ::env(K15_AB_PRERATE_QUERY)]} {
+  set k15_ab_prerate_query $::env(K15_AB_PRERATE_QUERY)
 }
 if {[info exists ::env(K15_AB_PRERATE_DWELL_CYCLES)]} {
   set k15_ab_prerate_dwell $::env(K15_AB_PRERATE_DWELL_CYCLES)
@@ -39,6 +43,7 @@ if {[info exists ::env(K15_AB_PRERATE_PRESET)]} {
 }
 foreach {name value} [list K15_AB_CDR_HOLD $k15_ab_cdr_hold \
                            K15_AB_PRERATE_TXEQ $k15_ab_prerate_txeq \
+                           K15_AB_PRERATE_QUERY $k15_ab_prerate_query \
                            K15_AB_PRERATE_DWELL_CYCLES $k15_ab_prerate_dwell \
                            K15_AB_PRERATE_PRESET $k15_ab_prerate_preset] {
   if {![string is integer -strict $value] || $value < 0} {
@@ -46,7 +51,7 @@ foreach {name value} [list K15_AB_CDR_HOLD $k15_ab_cdr_hold \
   }
 }
 if {$k15_ab_cdr_hold > 1 || $k15_ab_prerate_txeq > 1 ||
-    $k15_ab_prerate_preset > 9} {
+    $k15_ab_prerate_query > 1 || $k15_ab_prerate_preset > 10} {
   error "K15 A/B boolean/preset parameter out of range"
 }
 set k14_tx_rate_id "8'h02"
@@ -131,6 +136,7 @@ if {$resume_routed_dcp ne ""} {
       -generic GEN3_RATE_CHANGE_ENABLE=1 \
       -generic K15_AB_CDR_HOLD=$k15_ab_cdr_hold \
       -generic K15_AB_PRERATE_TXEQ=$k15_ab_prerate_txeq \
+      -generic K15_AB_PRERATE_QUERY=$k15_ab_prerate_query \
       -generic K15_AB_PRERATE_DWELL_CYCLES=$k15_ab_prerate_dwell \
       -generic K15_AB_PRERATE_PRESET=$k15_ab_prerate_preset \
       -generic LTSSM_TX_RATE_ID=$k14_tx_rate_id
@@ -404,6 +410,7 @@ if {$k14_recovery_speed} {
   puts $summary "LTSSM_TX_RATE_ID=$k14_tx_rate_id"
   puts $summary "K15_AB_CDR_HOLD=$k15_ab_cdr_hold"
   puts $summary "K15_AB_PRERATE_TXEQ=$k15_ab_prerate_txeq"
+  puts $summary "K15_AB_PRERATE_QUERY=$k15_ab_prerate_query"
   puts $summary "K15_AB_PRERATE_DWELL_CYCLES=$k15_ab_prerate_dwell"
   puts $summary "K15_AB_PRERATE_PRESET=$k15_ab_prerate_preset"
 }

@@ -55,6 +55,10 @@ module pcie_gen3_os_rx (
     reg [22:0] lfsr_state;
     wire [31:0] descrambled_data;
     wire [22:0] lfsr_next;
+    wire [31:0] expected_skp_end = {
+        lfsr_state[7:0], lfsr_state[15:8],
+        ~lfsr_state[22], lfsr_state[22:16], 8'he1
+    };
     wire ts_start = start_block &&
                     ((in_data[7:0] == OS_TS1) ||
                      (in_data[7:0] == OS_TS2));
@@ -160,10 +164,10 @@ module pcie_gen3_os_rx (
                         if (((word_index != 2'd3) &&
                              (in_data != 32'haaaa_aaaa)) ||
                             ((word_index == 2'd3) &&
-                             (in_data != 32'hbcbf_9de1)))
+                             (in_data != expected_skp_end)))
                             parse_error <= 1'b1;
                         if (word_index == 2'd3) begin
-                            if (parse_error || (in_data != 32'hbcbf_9de1)) begin
+                            if (parse_error || (in_data != expected_skp_end)) begin
                                 malformed <= 1'b1;
                                 lfsr_ready <= 1'b0;
                             end
