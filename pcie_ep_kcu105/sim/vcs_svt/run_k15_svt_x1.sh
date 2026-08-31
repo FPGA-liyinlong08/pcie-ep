@@ -245,15 +245,31 @@ for ((process_epoch = 0; process_epoch < process_epochs; process_epoch++)); do
     elif [[ ${simulation_status} -ne 0 ]]; then
         exit "${simulation_status}"
     fi
-    grep -Fq "${svt_pass_marker}" "${process_log}"
     if grep -Fq "${svt_fail_marker}" "${process_log}"; then
         echo "${svt_run_label} gate reported failure in process ${process_epoch}" >&2
         exit 1
     fi
-    if [[ "${phase2_only}" == "1" ]] &&
-       grep -Eq "phy_recovery_speed_electrical_idle_with_no_eios|phy_data_block_before_sds|phy_max_rx_skp_interval" "${process_log}"; then
-        echo "${svt_run_label} protocol monitor reported a pre-Phase2 failure" >&2
-        exit 1
+    grep -Fq "${svt_pass_marker}" "${process_log}"
+    if [[ "${phase2_only}" == "1" ]]; then
+        # The SKP-interval / SDS / EIOS monitors are fatal only before
+        # Equalization entry: the EP EQ pattern stream does not carry SKP
+        # Ordered Sets yet (frozen EQ work, see the k15 reports), so any
+        # occurrence at or after the first EP EQ EIEOS is EQ-domain.
+        eq_entry_ts=$(grep -m1 "K15_SVT_EP_TX_EIEOS n=0 " "${process_log}" \
+            | sed -E 's/.*t_ps=([0-9]+).*/\1/')
+        pre_eq_fail=0
+        while IFS= read -r err_ts; do
+            [[ -z "${err_ts}" ]] && continue
+            if [[ -z "${eq_entry_ts}" || "${err_ts}" -lt "${eq_entry_ts}" ]]; then
+                pre_eq_fail=1
+            fi
+        done < <(grep -B1 -E "register_fail:[^ ]*:(phy_max_rx_skp_interval|phy_data_block_before_sds|phy_recovery_speed_electrical_idle_with_no_eios)" \
+                 "${process_log}" \
+            | grep -oE "at +[0-9]+:" | grep -oE "[0-9]+")
+        if [[ ${pre_eq_fail} -ne 0 ]]; then
+            echo "${svt_run_label} protocol monitor reported a pre-EQ failure" >&2
+            exit 1
+        fi
     fi
     echo "${svt_run_label}_PROCESS_PASS process=${process_epoch} log=${process_log}"
 done

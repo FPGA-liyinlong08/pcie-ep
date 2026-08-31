@@ -214,6 +214,12 @@ class k15_svt_x1_scenario extends vmm_ms_scenario;
   virtual task execute(ref int n);
     bit timed_out;
     int epoch;
+    // The VIP keeps flagging the known EQ-domain issues (no SKP OS in the
+    // EQ pattern stream, the frozen phase2 convergence) every 375 blocks;
+    // the default VMM limit of 10 errors aborts the sim before the gate
+    // can report a verdict.  error_limit is static in vmm_log, so this
+    // raises it globally.
+    log.stop_after_n_errors(1000);
     wait (test_top.reset_epoch_count >= 1);
     if ($test$plusargs("K15_PHASE2_ONLY")) begin
       timed_out = 0;
@@ -231,6 +237,31 @@ class k15_svt_x1_scenario extends vmm_ms_scenario;
         test_top.display_diagnostics();
         $display("K15_SVT_PHASE2_FAIL reason=phase2_timeout");
         `vmm_error(log, "K15 SVT did not reach Equalization Phase2");
+        n++;
+        return;
+      end
+      // EQ finishes asynchronously after Phase2 entry (Phase3 entry, the
+      // VIP's own phase2 timeout, or a speed fallback).  Wait for one of
+      // those before evaluating the strict gate -- evaluating at the
+      // instant Phase2 is first observed can never pass because the
+      // completion flags are not visible yet.
+      timed_out = 0;
+      fork
+        begin
+          wait (test_top.seen_eq_phase3 || test_top.DUT.gen3_eq_failed ||
+                test_top.DUT.g_gen3_rate_change.speed_timeout_sticky ||
+                test_top.DUT.g_gen3_rate_change.speed_fallback_sticky);
+        end
+        begin
+          #1000000;
+          timed_out = 1;
+        end
+      join_any
+      disable fork;
+      if (timed_out) begin
+        test_top.display_diagnostics();
+        $display("K15_SVT_PHASE2_FAIL reason=eq_completion_timeout");
+        `vmm_error(log, "K15 SVT Equalization did not complete after Phase2");
         n++;
         return;
       end

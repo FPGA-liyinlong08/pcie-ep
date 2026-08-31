@@ -303,3 +303,125 @@ EIEOS 的前一拍是 gap（wire SKP→EIEOS 相邻）。os_tx 现有的
   - `sim/vcs_svt/build/simulate_preAB_20260831.log`、
     `simulate_header_B.log`（SVT A/B）
   - `docs/reports/k15_phy_acquisition_eieos.csv`（已更新为运行时证据）
+
+## 9. 生产修复落地与全系统验证（2026-09-01）
+
+### 9.1 os_tx 生产修复（官方式 gap + 周期显式 SKP OS）
+
+`rtl/phy/pcie_gen3_os_tx.sv` 含两层并存机制：
+
+1. **官方式 valid=0 gap**（对 Xilinx RP 的 block-lock）：原
+   `K15_ISO_OFFICIAL_GAP` ifdef 路径转正为唯一 gap 行为；
+   `pcie_gen3_idle_tx.sv` 同步调整 gap 拍驱动。周期 130 拍：
+   EIEOS(4) → 15 数据块(60) → 1 拍 gap → 16 数据块(64) → 1 拍 gap →
+   EIEOS，gap 后首拍 `start=1`，gap 与周期性 EIEOS 相邻。
+2. **周期显式 16-symbol SKP OS**（对 SVT VIP / spec §4.2.7.2、
+   PG239"Gen3+ MAC must transmit SKP OS as 16 symbols"）：每
+   `SKP_PERIOD+1`=8 个 cadence 周期在 16 块 run 的第 8 块后插入一块
+   4 拍 SKP OS（12×`AA` + 尾拍 `{LFSR[7:0], LFSR[15:8], ~LFSR[22],
+   LFSR[22:16], 8'hE1}`，LFSR 冻结同 gap 语义），插入点远离周期性
+   EIEOS 保持 gap-EIEOS 相邻不变。
+
+**SKP OS 格式的三重独立证据**（修正旧实现误用 Gen1/2 宏的 8'h1C
+8b/10b SKP 符号与 `{1C,00,LFSR[15:8],LFSR[7:0]}` tail）：
+
+- Xilinx 硬核 EP golden：`SKP: aaaaaaaa aaaaaaaa aaaaaaaa bcbf9de1`
+  （种子 0x1DBFBC → BC/LFSR[7:0]、BF/LFSR[15:8]、9D/{~LFSR[22],
+  LFSR[22:16]}、E1/SKP_END）；
+- ExpressRich 常量：`I_SKP_8G = 16'hAAAA`、`T_SKP_END = 8'hE1`；
+- 自家 `pcie_gen3_os_rx.sv` 的 `expected_skp_end` 与 golden 逐字节一致。
+
+隔离 bench GTTX 探针实测新格式上 GT TX：124347504 起 4 拍
+`aaaaaaaa`×3 + `82a574e1`（start=1 hdr=01 → 00 续拍），后一拍立即
+回到 TS1。隔离回归 `K15_ISO_RECEIVER_ACQ_PASS` 时间不变
+（125.655µs）。
+
+### 9.2 全系统 Xilinx RP 验证（`run_k11b_serial.sh +K15_GEN3`）
+
+- 收购链路全面恢复：`RP_PHY_first_RXSTART_BLOCK` 379.97µs、
+  `RP_PHY_first_RXDATA_VALID` 379.998µs（golden 同期 380.00µs），
+  RP 侧解码 TS 流正常（`rp_decoded_ts=3869`，trace 全部 ts1=1）。
+- EQ Phase0 正常进入并完成（`RP_enter_EQ.Phase0` 369.7µs、
+  `K15_EQ_PHASE0_DONE` 379.56µs），链路仍停在既有的冻结项
+  `K15_VCS_BLOCKED_RP_EQ_RESPONSE_NOT_CONSUMED`（EP 发 EQ TS 但
+  RP 不消费应答）——该 EQ proposal/reflect FSM 问题为已知冻结范围，
+  与本修复正交。
+
+### 9.3 RP GT RX SKP census（`K15_GEN3` + K15_RP_SKP_CENSUS 探针）
+
+窗口 370–445µs、`phy_active_rate==Gen3` 下对 RP PIPE RX
+（`pipe_rx_syncheader/start_block/data/data_valid`）分桶计数：
+
+```
+K15_RP_SKP_CENSUS data=6523 skp=2830 hdr11=4187 hdr00=2214 rxv0=405 first_skp_time_ps=380029504
+```
+
+- **rxv0=405**：`RXDATA_VALID=0` 拍即 GT RX 删除线上 SKP 的签名 ——
+  EP 的 valid=0 gap 拍被 secureip 换成真实 wire SKP block 发出、
+  RP GT 收到后删除，链路功能闭环成立（对应 7.2/7.3 的机制预期）。
+- `skp=2830`（sync header=10 计数）不能当 SKP 块数：数据块的
+  continuation 拍 sh 也在 10/11/00 间摆动（对照 golden
+  `official_rp_pipe_trace.csv`，beefcafe 数据块 continuation=10、
+  EIEOS continuation=11）。SKP 的唯一可靠线上签名就是 rxv0 拍。
+- 早期"golden 有 372 个 SKP 块"的解读是同一误判（beefcafe 数据块），
+  官方流在 PIPE RX 处同样无显式 SKP 块，仅 rxvalid=0 gap。
+- 加入周期显式 SKP OS 后（9.1 机制 2），census 升为
+  `data=6416 skp=2783 hdr11=4117 hdr00=2178 rxv0=665
+  first_skp_time_ps=381085529`：**rxv0 405 → 665，Δ=260 ≈ 显式插入率**
+  （~250 块周期 × 100µs 窗口），且旧格式（误用 1C）与修正格式
+  （AA+E1，2026-09-01 复跑 `k15_gen3_skpfix_rp3.log`）数值完全一致
+  —— RP GT 对两种格式都按 wire SKP 删除，收购时间线（first_RXSTART
+  379.97µs 等）与 9.2 保持相同。
+
+### 9.4 串行线级解码（`K15_SER_DUMP`，`ep_txp` 31ps 采样离线解码）
+
+- EP 首块 EIEOS：PIPE 侧 4 拍 ff00ff00 连续 valid（`K15_EP_TX_PIPE`
+  n=0..3），线上交替 8-bit run 区**只有 ~87 bit**，块前缀 ~42 bit
+  是速率切换瞬态：重复 16-bit 模式 `[6×1,01,6×0,10]`
+  （按 bit 序 = {0xFD,0x02}）。该瞬态由 GT 速率切换产生，官方 pat_gen
+  走同一 GT，RP 仍在其后正常块对齐（首个 EIEOS 4 拍完整到达 RP），
+  判定无害、不修。
+- 130-bit 块网格在扰码数据区因采样相位漂移（31ps 采样 vs 125ps bit，
+  每边界 ±0.25 bit）滑动，逐块解码仅在 EIEOS 等强锚点附近可靠；
+  后续如需线上逐块证据应改用 RP PIPE 侧探针（已有），串行级只做
+  run/边沿级比对。
+- `bind GTHE3_CHANNEL` 探针（`k15_skp_rx_probe.sv`）不可用：bind 能
+  挂上（ARMED 打印），但端口连不上活网（RXUSRCLK2 恒 0、计数全 0，
+  全部 9 个实例）。GT 内部探针一律走板级 inline 层级引用。
+
+### 9.5 SVT 全系统验证（2026-09-01，结论已回填）
+
+- SVT VIP 文档确认：`max_rx_skp_interval`（375 blocks）检查是 VIP
+  私有（非 spec）；spec 要求 MAC 发显式 SKP OS（16 symbols，
+  SKP_END 携带 LFSR/parity）。仅靠 GT gap 内插 SKP 对 VIP 不够。
+- **首版显式 SKP 未被 VIP 计数**（`k15_svt_skpfix1.log` 仍 9×
+  max_rx_skp_interval）。根因：SKP OS 格式错误 —— SKP 符号误用
+  8'h1C（Gen1/2 8b/10b 宏），tail `{1C,00,LFSR[15:8],LFSR[7:0]}` 无
+  SKP_END。正确格式见 9.1（AA×12 + E1 tail，三重证据）。
+- **修正格式后 VIP 完全接受**（`k15_svt_skpfix2.log`）：
+  收购全程零 SKP/SDS/framing 错误直到 EQ Phase2 进入（EP EQ EIEOS
+  260.49µs，Phase0/1/2 全部 `phases=1110`），VIP 还向 EP 发出了
+  transmitter preset（preset 4）—— `bad_skp_8g_scrambler_value` /
+  `bad_skp_8g_parity` / `pcs_skp_end_not_detected` 均未出现，LFSR
+  字段与 DP 位（`~LFSR[22]`，与 golden 种子样本一致）被 VIP 接受。
+  VIP 文档明确 DP 定义为"自最近一次 SDS/SKP OS 以来所有扰码数据块
+  载荷的偶校验"（收购期无数据块，golden 实测 DP=1，沿用 golden）。
+- **SKP 相关工作全部收口**。后续错误均为 EQ 域、与 SKP 正交：
+  1. EQ 期 `max_rx_skp_interval`×N（267.2µs 起每 ~6.1µs 一个）：
+     EP 的 EQ pattern 流（equalization_ctrl 路径）尚不携带 SKP OS。
+     属冻结的 EQ 工作范围（真实 MAC/GT 在 EQ 期也维持 SKP 调度），
+     待 EQ proposal/reflect 修复时一并实现。
+  2. `phy_recovery_equalization_phase2_timeout`（293.65µs，与
+     2026-08-30 记录的冻结项同值）：VIP 侧 EQ Phase2 不收敛 → 回退
+     Gen1。EP 按协议走 fallback（gate diagnostics
+     `timeout=1 fallback=1`）。
+- 测试基建修正（`pcie_svt_k15_env.sv` / `run_k15_svt_x1.sh`）：
+  strict gate 原在 Phase2 首次出现瞬间评估，`seen_eq_phase3` /
+  `seen_gen3_phystatus` 必然不可见 —— 改为等待 EQ 完成（Phase3 /
+  eq_failed / timeout / fallback）再评估；VMM 默认 10 错误上限会
+  在 gate 出结论前 abort（VIP 每 375 块报一次 EQ 域 SKP 错），
+  经 `log.stop_after_n_errors(1000)` 抬高（vmm_log::error_limit 为
+  static，一处调用全局生效）；脚本 pre-Phase2 检查改为时间戳比较、
+  仅统计 EQ 进入前的 monitor 错误。终局记录
+  `k15_svt_skpfix4.log`：`K15_SVT_PHASE2_FAIL reason=strict_gate`
+  （EQ 收敛未达成，非 SKP 原因）。

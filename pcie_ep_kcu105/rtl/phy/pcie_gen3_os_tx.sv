@@ -1,14 +1,26 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// Gen3 32-bit PIPE ordered-set transmitter. On the first Gen3 enable, EIEOS
-// and one SKP establish block alignment/LFSR state before TS1/TS2. Later
-// periodic EIEOS insertion does not emit another SKP. An independent SKP
-// scheduler bounds the interval to at most 350 training blocks. SDS is for
-// the Ordered-Set-to-Data-Stream transition in Recovery.Idle.
+// Gen3 32-bit PIPE ordered-set transmitter. On enable the stream reproduces
+// the official pat_gen cadence: EIEOS, then TS1/TS2 blocks separated by
+// 1-beat PIPE valid gaps (TXDATA_VALID low) at block boundaries -- 15 blocks,
+// gap, 16 blocks, gap, back to EIEOS (130-beat period). The GT secureip
+// substitutes real SKP ordered sets during every valid-gap beat; a stream
+// that never deasserts TXDATA_VALID produces no wire SKPs and the partner
+// GTHE3 never block-locks (K15 Gen3 acquisition root cause, 2026-08-31
+// isolation experiment).
+// The GT only substitutes SKPs at its own buffer-drift rate, however, and
+// the SVT VIP's max_rx_skp_interval check (and PG239's "the MAC must
+// transmit SKP Ordered Sets as 16 symbols") require the MAC to emit
+// explicit Gen3 SKP OS content: once every 8 cadence periods the 8th block
+// of the 16-block run is replaced by a 16-symbol SKP OS (13x 1Ch + SKP_END
+// carrying Data Parity and the LFSR value). The LFSR is frozen across the
+// SKP block exactly like the valid gap.
+// SDS is for the Ordered-Set-to-Data-Stream transition in Recovery.Idle.
 // Symbols 1..15 of each TS are scrambled while the 1E/2D block identifier
-// remains clear; the LFSR still advances over it and is re-seeded after EIEOS.
-// Symbols 14/15 implement the 128b/130b TS running-DC-balance substitutions.
+// remains clear; the LFSR still advances over it and is re-seeded after EIEOS
+// and frozen across valid gaps. Symbols 14/15 implement the 128b/130b TS
+// running-DC-balance substitutions.
 module pcie_gen3_os_tx (
     input  wire        clk,
     input  wire        rst_n,
@@ -42,29 +54,30 @@ module pcie_gen3_os_tx (
     localparam [7:0] OS_TS1 = 8'h1e;
     localparam [7:0] OS_TS2 = 8'h2d;
     localparam [1:0] SH_ORDERED_SET = 2'b01;
+    // 128b/130b SKP symbol.  8'h1c is the 8b/10b SKP code (Gen1/2 macros
+    // GEN12_SKP*_TX_DATA); Gen3 ordered sets use 8'haa -- confirmed by the
+    // Xilinx hard-IP EP golden capture (aaaaaaaa x3 + bcbf9de1) and the
+    // ExpressRich constants I_SKP_8G=16'haaaa / T_SKP_END=8'he1.
+    localparam [7:0] SKP_SYM = 8'haa;
     localparam [1:0] SEND_EIEOS = 2'd0;
     localparam [1:0] SEND_SKP   = 2'd1;
     localparam [1:0] SEND_TS    = 2'd2;
-`ifdef K15_ISO_OFFICIAL_GAP
-    // Diagnostic only (isolation bench): 1-beat PIPE gap state so the
-    // stream can reproduce the official pat_gen cadence exactly
-    // (EIEOS -> 15 TS blocks -> gap -> 16 TS blocks -> gap, 130 beats).
     localparam [1:0] SEND_GAP   = 2'd3;
-    reg        oc_gap_run;
-`elsif K15_ISO_GAP_ONLY
-    // Diagnostic only (isolation bench): same 1-beat gap state inserted
-    // every 15 TS blocks while keeping the rest of the K15 stream
-    // (first-EIEOS SKP, 32-block periodic EIEOS) unchanged.
-    localparam [1:0] SEND_GAP   = 2'd3;
-`endif
+    // One explicit SKP OS every 8 cadence periods (~260 blocks, well under
+    // the VIP's 375-block max_rx_skp_interval).
+    localparam [2:0] SKP_PERIOD = 3'd7;
     localparam [22:0] LANE0_SEED = 23'h1dbfbc;
 
     reg [1:0] word_index;
     reg [1:0] active_mode;
     reg [1:0] stream_state;
-    reg       skp_after_eieos;
+    // Selects which TS run length the current period is in (15 blocks before
+    // the first gap, 16 before the second), and signals the second gap to
+    // return to EIEOS.
+    reg       gap_run;
     reg [5:0] ts_interval_count;
-    reg [8:0] skp_interval_count;
+    reg [2:0] skp_period_count;
+    reg [1:0] skp_word_index;
     reg [22:0] lfsr_state;
     reg signed [10:0] dc_balance;
     reg [6:0] dc_ones_q;
@@ -78,14 +91,6 @@ module pcie_gen3_os_tx (
     reg [31:0] plain_data;
     wire [31:0] scrambled_data;
     wire [22:0] lfsr_next;
-    // In Recovery training the preceding block is an Ordered Set, so the
-    // SKP_END information byte carries ~LFSR[22] followed by LFSR[22:16].
-    // The remaining two bytes carry LFSR[15:0].  At the lane-0 seed this is
-    // BCBF9DE1; periodic SKPs must use the live state instead.
-    wire [31:0] skp_end_data = {
-        lfsr_state[7:0], lfsr_state[15:8],
-        ~lfsr_state[22], lfsr_state[22:16], 8'he1
-    };
     reg [31:0] balanced_data;
     reg [6:0] output_ones;
 
@@ -140,8 +145,8 @@ module pcie_gen3_os_tx (
     );
 
     assign os_complete = enable && (output_mode != 2'd0) &&
-                         (stream_state == SEND_TS) &&
-                         (word_index == 2'd3);
+                         (((stream_state == SEND_TS) && (word_index == 2'd3)) ||
+                          ((stream_state == SEND_SKP) && (skp_word_index == 2'd3)));
     assign eieos_active = out_valid && (stream_state == SEND_EIEOS);
     assign eieos_start = eieos_active && (active_index == 2'd0);
     assign word_index_debug = active_index;
@@ -156,12 +161,10 @@ module pcie_gen3_os_tx (
             word_index <= 2'd0;
             active_mode <= 2'd0;
             stream_state <= SEND_EIEOS;
-            skp_after_eieos <= 1'b1;
             ts_interval_count <= 6'd0;
-            skp_interval_count <= 9'd0;
-`ifdef K15_ISO_OFFICIAL_GAP
-            oc_gap_run <= 1'b0;
-`endif
+            gap_run <= 1'b0;
+            skp_period_count <= 3'd0;
+            skp_word_index <= 2'd0;
             lfsr_state <= LANE0_SEED;
             dc_balance <= 11'sd0;
             dc_ones_q <= 7'd0;
@@ -172,12 +175,10 @@ module pcie_gen3_os_tx (
             word_index <= 2'd0;
             active_mode <= 2'd0;
             stream_state <= SEND_EIEOS;
-            skp_after_eieos <= 1'b1;
             ts_interval_count <= 6'd0;
-            skp_interval_count <= 9'd0;
-`ifdef K15_ISO_OFFICIAL_GAP
-            oc_gap_run <= 1'b0;
-`endif
+            gap_run <= 1'b0;
+            skp_period_count <= 3'd0;
+            skp_word_index <= 2'd0;
             lfsr_state <= LANE0_SEED;
             dc_balance <= 11'sd0;
             dc_ones_q <= 7'd0;
@@ -206,150 +207,73 @@ module pcie_gen3_os_tx (
                     if (mode == 2'd0) begin
                         active_mode <= 2'd0;
                         stream_state <= SEND_EIEOS;
-                        skp_after_eieos <= 1'b1;
-                        skp_interval_count <= 9'd0;
                     end else begin
                         active_mode <= mode;
-`ifdef K15_ISO_OFFICIAL_GAP
-`ifdef K15_ISO_OFFICIAL_GAP_FIRST_SKP
-                        // Diagnostic: official cadence plus the original
-                        // K15 SKP block after the first EIEOS.
-                        if (skp_after_eieos) begin
-                            stream_state <= SEND_SKP;
-                        end else begin
-                            stream_state <= SEND_TS;
-                            oc_gap_run <= 1'b0;
-                        end
-`else
-                        // Diagnostic: the official cadence streams TS
-                        // directly after EIEOS; SKPs are PIPE valid gaps
-                        // emitted by SEND_GAP below.
                         stream_state <= SEND_TS;
-                        oc_gap_run <= 1'b0;
-`endif
-`elsif K15_ISO_NO_FIRST_SKP
-                        // Diagnostic only (isolation bench): skip the SKP
-                        // that follows the first EIEOS.
-                        if (skp_interval_count >= 9'd349) begin
-                            stream_state <= SEND_SKP;
-                        end else begin
-                            stream_state <= SEND_TS;
-                            skp_interval_count <= skp_interval_count + 1'b1;
-                        end
-`else
-                        if (skp_after_eieos ||
-                            (skp_interval_count >= 9'd349)) begin
-                            stream_state <= SEND_SKP;
-                        end else begin
-                            stream_state <= SEND_TS;
-                            skp_interval_count <= skp_interval_count + 1'b1;
-                        end
-`endif
-                        skp_after_eieos <= 1'b0;
+                        gap_run <= 1'b0;
                     end
                 end else begin
                     word_index <= word_index + 1'b1;
                 end
+            end else if (stream_state == SEND_GAP) begin
+                // One PIPE beat with TXDATA_VALID low (the GT secureip
+                // substitutes a real SKP ordered set there), then the TS
+                // stream resumes at a block boundary (word_index is already
+                // 0, so the resume beat pulses start_block).  After the
+                // second gap of the period the stream returns to EIEOS.
+                // The LFSR is frozen across the gap.
+                gap_run <= ~gap_run;
+                stream_state <= gap_run ? SEND_EIEOS : SEND_TS;
+                word_index <= 2'd0;
             end else if (stream_state == SEND_SKP) begin
-                // SKP bypasses scrambling and does not advance the LFSR.
-                if (word_index == 2'd3) begin
+                // Explicit 16-symbol SKP OS: four unscrambled beats, LFSR
+                // frozen across the block (same semantics as the gap beat).
+                if (skp_word_index == 2'd3) begin
+                    skp_word_index <= 2'd0;
+                    skp_period_count <= (skp_period_count == SKP_PERIOD) ?
+                                        3'd0 : skp_period_count + 1'b1;
                     word_index <= 2'd0;
-                    skp_interval_count <= 9'd0;
                     if (mode == 2'd0) begin
                         active_mode <= 2'd0;
                         stream_state <= SEND_EIEOS;
-                        skp_after_eieos <= 1'b1;
+                        ts_interval_count <= 6'd0;
                     end else begin
                         active_mode <= mode;
                         stream_state <= SEND_TS;
                     end
                 end else begin
-                    word_index <= word_index + 1'b1;
+                    skp_word_index <= skp_word_index + 1'b1;
                 end
-`ifdef K15_ISO_OFFICIAL_GAP
-            end else if (stream_state == SEND_GAP) begin
-                // Diagnostic: one PIPE beat with TXDATA_VALID low, then the
-                // TS stream resumes at a block boundary (word_index is
-                // already 0, so the resume beat pulses start_block).  After
-                // the second gap of the period the stream returns to EIEOS.
-                oc_gap_run <= ~oc_gap_run;
-                stream_state <= oc_gap_run ? SEND_EIEOS : SEND_TS;
-                word_index <= 2'd0;
-`elsif K15_ISO_GAP_ONLY
-            end else if (stream_state == SEND_GAP) begin
-                // Diagnostic: one PIPE beat with TXDATA_VALID low, then the
-                // TS stream resumes at a block boundary.  The block counter
-                // is untouched, so the periodic EIEOS cadence is preserved.
-                stream_state <= SEND_TS;
-                word_index <= 2'd0;
-`endif
             end else if (word_index == 2'd3) begin
                 word_index <= 2'd0;
                 lfsr_state <= lfsr_next;
                 if (mode == 2'd0) begin
                     active_mode <= 2'd0;
                     stream_state <= SEND_EIEOS;
-                    skp_after_eieos <= 1'b1;
                     ts_interval_count <= 6'd0;
-                    skp_interval_count <= 9'd0;
-`ifdef K15_ISO_GAP_ONLY
-                end else if (ts_interval_count == 6'd14) begin
-                    // Diagnostic: 1-beat PIPE gap every 15 TS blocks; the
-                    // counter keeps running so the periodic EIEOS insertion
-                    // (ts_interval_count == 31) still fires.
-                    active_mode <= mode;
-                    stream_state <= SEND_GAP;
-                end else if (skp_interval_count >= 9'd349) begin
-                    active_mode <= mode;
-                    stream_state <= SEND_SKP;
-                    skp_interval_count <= 9'd0;
-                end else if (ts_interval_count == 6'd31) begin
-                    active_mode <= mode;
-                    stream_state <= SEND_EIEOS;
-                    skp_after_eieos <= 1'b0;
-                    ts_interval_count <= 6'd0;
-                    skp_interval_count <= skp_interval_count + 1'b1;
-                end else begin
-                    active_mode <= mode;
-                    ts_interval_count <= ts_interval_count + 1'b1;
-                    skp_interval_count <= skp_interval_count + 1'b1;
-                end
-`elsif K15_ISO_OFFICIAL_GAP
                 end else if (ts_interval_count ==
-                             (oc_gap_run ? 6'd15 : 6'd14)) begin
-                    // Diagnostic: official-cadence 1-beat PIPE gap between
-                    // TS block runs (15 blocks then 16 blocks per period).
+                             (gap_run ? 6'd15 : 6'd14)) begin
+                    // Official cadence: 1-beat PIPE gap between TS block
+                    // runs (15 blocks then 16 blocks per EIEOS period), so
+                    // every periodic EIEOS is immediately preceded by a gap.
                     active_mode <= mode;
                     stream_state <= SEND_GAP;
                     ts_interval_count <= 6'd0;
-                end else begin
-                    active_mode <= mode;
-                    ts_interval_count <= ts_interval_count + 1'b1;
-                end
-`else
-                end else if (skp_interval_count >= 9'd349) begin
+                end else if (gap_run && (ts_interval_count == 6'd7) &&
+                             (skp_period_count == 3'd0)) begin
+                    // Insert an explicit SKP OS after the 8th block of the
+                    // 16-block run once every SKP_PERIOD+1 cadence periods
+                    // (the period gains one beat, negligible against the
+                    // VIP's 375-block budget).  The gap before the periodic
+                    // EIEOS stays adjacent.
                     active_mode <= mode;
                     stream_state <= SEND_SKP;
-                    skp_interval_count <= 9'd0;
-`ifdef K15_ISO_EIEOS_128
-                // Diagnostic only (isolation bench): emit the periodic EIEOS
-                // after 31 TS blocks so the EIEOS period matches the official
-                // pattern's 128-beat cadence.
-                end else if (ts_interval_count == 6'd30) begin
-`else
-                end else if (ts_interval_count == 6'd31) begin
-`endif
-                    active_mode <= mode;
-                    stream_state <= SEND_EIEOS;
-                    skp_after_eieos <= 1'b0;
-                    ts_interval_count <= 6'd0;
-                    skp_interval_count <= skp_interval_count + 1'b1;
+                    skp_word_index <= 2'd0;
+                    ts_interval_count <= 6'd8;
                 end else begin
                     active_mode <= mode;
                     ts_interval_count <= ts_interval_count + 1'b1;
-                    skp_interval_count <= skp_interval_count + 1'b1;
                 end
-`endif
             end else begin
                 word_index <= word_index + 1'b1;
                 lfsr_state <= lfsr_next;
@@ -362,45 +286,40 @@ module pcie_gen3_os_tx (
         out_data = 32'd0;
         out_valid = enable && (output_mode != 2'd0);
         start_block = out_valid && (active_index == 2'd0);
-        // The PIPE sync header identifies the 128b block, not each 32-bit
-        // beat.  XDMA's Gen3 golden path drives 01 only on the first dword
-        // (the same beat as TXSTART_BLOCK) and drives 00 for the remaining
-        // three dwords.  Repeating 01 on every beat prevents the partner PCS
-        // from acquiring the 128b/130b block boundary and leaves its
-        // RXDATA_VALID low during Recovery.Equalization.
-`ifdef K15_AB_HEADER_HELD
-        sync_header = out_valid ? SH_ORDERED_SET : 2'b00;
-`else
+        // The PIPE sync header is sampled by the PHY on the TXSTART_BLOCK
+        // beat and does not enter the serial stream on continuation beats
+        // (the K15_AB_HEADER_HELD A/B showed no difference and the official
+        // golden holds 01 on data beats too).
         sync_header = out_valid && (active_index == 2'd0) ?
                       SH_ORDERED_SET : 2'b00;
-`endif
         balanced_data = scrambled_data;
         output_ones = 7'd0;
-`ifdef K15_ISO_GAP_ONLY
         if (stream_state == SEND_GAP) begin
-            // Diagnostic: the PIPE gap beat holds TXDATA_VALID, TXSTART_BLOCK
-            // and TXSYNC_HEADER low (official PAT_Z3/Z4 semantics).
-            out_data = 32'd0;
-            out_valid = 1'b0;
-            start_block = 1'b0;
-            sync_header = 2'b00;
-        end else
-`elsif K15_ISO_OFFICIAL_GAP
-        if (stream_state == SEND_GAP) begin
-            // Diagnostic: the PIPE gap beat holds TXDATA_VALID, TXSTART_BLOCK
-            // and TXSYNC_HEADER low, exactly like the official pat_gen's
+            // The gap beat holds TXDATA_VALID, TXSTART_BLOCK and
+            // TXSYNC_HEADER low, exactly like the official pat_gen's
             // PAT_GEN_GEN3_PAT_Z3/Z4 states.
             out_data = 32'd0;
             out_valid = 1'b0;
             start_block = 1'b0;
             sync_header = 2'b00;
-        end else
-`endif
-        if (stream_state == SEND_EIEOS) begin
-            out_data = 32'hff00_ff00;
         end else if (stream_state == SEND_SKP) begin
-            out_data = (active_index == 2'd3) ? skp_end_data :
-                                                32'haaaa_aaaa;
+            // 16-symbol SKP OS (sync header 10 at the PIPE mapping used by
+            // the official pat_gen): 12 SKP symbols then the SKP_END tail
+            // {SKP_END, Data Parity + LFSR[22:16], LFSR[15:8], LFSR[7:0]}.
+            // Wire order is bits[7:0] first, so the tail word reads
+            // {LFSR[7:0], LFSR[15:8], ~LFSR[22], LFSR[22:16], 8'hE1} --
+            // identical to pcie_gen3_os_rx.sv expected_skp_end and to the
+            // Xilinx hard-IP golden beat bcbf9de1 for seed 1DBFBC.
+            start_block = (skp_word_index == 2'd0);
+            sync_header = (skp_word_index == 2'd0) ? SH_ORDERED_SET : 2'b00;
+            case (skp_word_index)
+                2'd0, 2'd1, 2'd2: out_data = {4{SKP_SYM}};
+                default: out_data = {lfsr_state[7:0], lfsr_state[15:8],
+                                     ~lfsr_state[22], lfsr_state[22:16],
+                                     8'he1};
+            endcase
+        end else if (stream_state == SEND_EIEOS) begin
+            out_data = 32'hff00_ff00;
         end else begin
             case (active_index)
                 2'd0: plain_data = {
@@ -468,13 +387,6 @@ module pcie_gen3_os_tx (
             end
             out_data = balanced_data;
         end
-`ifdef K15_AB_XILINX_PATTERN
-        // Diagnostic only: reproduce the passing Xilinx standalone example
-        // after its initial EIEOS.  This is not a PCIe training sequence.
-        sync_header = out_valid ? SH_ORDERED_SET : 2'b00;
-        if (stream_state != SEND_EIEOS)
-            out_data = 32'hbeef_cafe;
-`endif
     end
 endmodule
 

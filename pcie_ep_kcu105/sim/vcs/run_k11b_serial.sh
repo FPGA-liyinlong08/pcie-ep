@@ -188,6 +188,22 @@ if [[ "${g2_gen1_only}" != "1" ]]; then
     )
 fi
 
+extra_source_args=()
+if [[ -n "${K11B_EXTRA_SOURCES:-}" ]]; then
+    for extra_src in ${K11B_EXTRA_SOURCES}; do
+        extra_source_args+=("${extra_src}")
+    done
+fi
+if [[ "${#extra_source_args[@]}" -gt 0 ]]; then
+    # Compile the unisim GTHE3_CHANNEL shell into xil_defaultlib so `bind`
+    # probes in the extra sources attach to the GT instances (the precompiled
+    # simlib copy cannot be bound into).
+    "${vcs_home}/bin/vlogan" -full64 -sverilog -work xil_defaultlib \
+        "${extra_source_args[@]}" \
+        "${vivado_home}/data/verilog/src/unisims/GTHE3_CHANNEL.v" \
+        -l build/k11b_extra_vlogan.log
+fi
+
 "${vcs_home}/bin/vlogan" -full64 +v2k -work xil_defaultlib \
     "${ip_dir}/ip_0/sim/gtwizard_ultrascale_v1_7_gthe3_channel.v" \
     "${ip_dir}/ip_0/sim/${phy_name}_gt_gthe3_channel_wrapper.v" \

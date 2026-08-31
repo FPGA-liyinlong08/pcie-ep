@@ -1337,6 +1337,107 @@ module board;
         end
     end
 
+    // K15 SKP-on-wire census at the RP core-top PIPE RX interface (the
+    // 128b/130b block stream the RP actually decodes).  Classifies every
+    // start-of-block beat during the Gen3 training window, answering
+    // whether sync-header=10 SKP blocks from the K15 EP stream reach the RP.
+    integer k15_skp_cnt_data, k15_skp_cnt_skp, k15_skp_cnt_hdr11, k15_skp_cnt_hdr00;
+    integer k15_skp_printed, k15_skp_raw_dumped, k15_skp_cnt_rxv0;
+    reg [63:0] k15_skp_first_time;
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_GEN3") &&
+            (EP.DUT.phy_active_rate == 2'b10) &&
+            ($time > 370000000) && ($time < 445000000)) begin
+            if (!RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]) begin
+                // rxvalid=0 beats: the SKP-deletion signature (RX GT strips
+                // wire SKP ordered sets and deasserts RXDATA_VALID here).
+                if (k15_skp_cnt_rxv0 < 8)
+                    $display("K15_RP_SKP_GAP time_ps=%0t st=%0d sh=%02b data=%08h",
+                             $time,
+                             RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                             RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                             RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+                k15_skp_cnt_rxv0 = k15_skp_cnt_rxv0 + 1;
+            end
+        end
+        if ($test$plusargs("K15_GEN3") &&
+            (EP.DUT.phy_active_rate == 2'b10) &&
+            ($time > 370000000) && ($time < 445000000) &&
+            RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0]) begin
+            // Raw dump of the first beats seen, regardless of classification.
+            if (k15_skp_raw_dumped < 12) begin
+                k15_skp_raw_dumped = k15_skp_raw_dumped + 1;
+                $display("K15_RP_SKP_RAW time_ps=%0t valid=%0d start=%0d sh=%02b data=%08h",
+                         $time,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+            end
+            case (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0])
+                2'b01: k15_skp_cnt_data = k15_skp_cnt_data + 1;
+                2'b10: begin
+                    if (k15_skp_first_time == 64'd0)
+                        k15_skp_first_time = $time;
+                    if (k15_skp_printed < 8) begin
+                        k15_skp_printed = k15_skp_printed + 1;
+                        $display("K15_RP_SKP_BLOCK time_ps=%0t header=10 data=%08h",
+                                 $time,
+                                 RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+                    end
+                    k15_skp_cnt_skp = k15_skp_cnt_skp + 1;
+                end
+                2'b11: k15_skp_cnt_hdr11 = k15_skp_cnt_hdr11 + 1;
+                2'b00: k15_skp_cnt_hdr00 = k15_skp_cnt_hdr00 + 1;
+                default: ;
+            endcase
+        end
+    end
+    initial begin
+        k15_skp_cnt_data = 0; k15_skp_cnt_skp = 0;
+        k15_skp_cnt_hdr11 = 0; k15_skp_cnt_hdr00 = 0;
+        k15_skp_printed = 0; k15_skp_raw_dumped = 0; k15_skp_cnt_rxv0 = 0;
+        k15_skp_first_time = 64'd0;
+        #444000000;
+        $display("K15_RP_SKP_CENSUS time_ps=%0t data=%0d skp=%0d hdr11=%0d hdr00=%0d rxv0=%0d first_skp_time_ps=%0t",
+                 $time, k15_skp_cnt_data, k15_skp_cnt_skp,
+                 k15_skp_cnt_hdr11, k15_skp_cnt_hdr00, k15_skp_cnt_rxv0,
+                 k15_skp_first_time);
+    end
+
+    // K15 serial wire dump of the EP transmit pair.  Samples ep_txp at
+    // ~4x oversampling of the 8 GT/s bit time (125 ps) so the 130b block
+    // stream can be decoded offline: EIEOS (unscrambled) anchors the block
+    // grid, and the os_tx valid-gap slot then reveals what the GT actually
+    // places on the wire (spec SKP OS vs. something the VIP cannot count).
+    reg k15_ser_bits [0:70000];
+    integer k15_ser_count;
+    integer k15_ser_i, k15_ser_j;
+    reg [7:0] k15_ser_nib;
+    initial k15_ser_count = 0;
+    always #31 begin
+        if (($time >= 377900000) && ($time < 380000000) &&
+            (k15_ser_count < 70000)) begin
+            k15_ser_bits[k15_ser_count] = ep_txp;
+            k15_ser_count = k15_ser_count + 1;
+        end
+    end
+    initial begin
+        #380620000;
+        $display("K15_SER_DUMP bits=%0d (window 377.9-380.0us, ~31ps/sample)", k15_ser_count);
+        k15_ser_i = 0;
+        while (k15_ser_i + 7 < k15_ser_count) begin
+            for (k15_ser_j = 0; k15_ser_j < 8; k15_ser_j = k15_ser_j + 1)
+                k15_ser_nib[k15_ser_j] = k15_ser_bits[k15_ser_i + k15_ser_j];
+            $write("%02x", k15_ser_nib);
+            k15_ser_i = k15_ser_i + 8;
+            if ((k15_ser_i % 248) == 0)
+                $write("\n");
+        end
+        $write("\n");
+        $display("K15_SER_DUMP_END");
+    end
+
     // Once the RP reaches its explicit Phase-0/1 state, sample the EP side
     // again.  This catches a TX-side idle/reset mismatch that would otherwise
     // look identical to a receive PCS failure at the RP.
