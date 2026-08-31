@@ -11,8 +11,8 @@ elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
     simlib_dir="${VIVADO_SIMLIB}"
 elif [[ -f "${project_dir}/../../vcs_compile_simlib/synopsys_sim.setup" ]]; then
     simlib_dir="$(cd "${project_dir}/../../vcs_compile_simlib" && pwd)"
-elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
-    simlib_dir=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
+elif [[ -f /home/wx/Documents/vcs_compile_simlib/synopsys_sim.setup ]]; then
+    simlib_dir=/home/wx/Documents/vcs_compile_simlib
 else
     echo "错误：找不到 Vivado VCS simlib；请设置 XILINX_VCS_SIMLIB 或 VIVADO_SIMLIB" >&2
     exit 66

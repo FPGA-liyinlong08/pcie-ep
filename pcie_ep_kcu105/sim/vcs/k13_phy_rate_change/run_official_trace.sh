@@ -16,8 +16,8 @@ if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
     simlib_dir="${XILINX_VCS_SIMLIB}"
 elif [[ -n "${VIVADO_SIMLIB:-}" ]]; then
     simlib_dir="${VIVADO_SIMLIB}"
-elif [[ -f /home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs/synopsys_sim.setup ]]; then
-    simlib_dir=/home/ICer/Vivado_prj/xdma_0_ex/xdma_0_ex.cache/compile_simlib/vcs
+elif [[ -f /home/wx/Documents/vcs_compile_simlib/synopsys_sim.setup ]]; then
+    simlib_dir=/home/wx/Documents/vcs_compile_simlib
 else
     echo "missing Vivado VCS simlib; set XILINX_VCS_SIMLIB or VIVADO_SIMLIB" >&2
     exit 66

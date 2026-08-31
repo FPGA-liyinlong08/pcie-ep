@@ -378,6 +378,73 @@ SVT runner 已启动检查，但当前主机缺少
 `/home/ICer/synopsys/designware/bin/dw_vip_setup`，因此 VIP build 尚未执行；这项是
 环境阻塞，不作为 RTL pass/fail 证据。
 
+### 2026-08-31 官方 `pcie_phy_0_ex` Golden 与 K15 首个 Gen3 EIEOS
+
+本次以提交 `46de4899b0f0cb969d6f794442ba4c1d73ec275b` 为基线，复用
+`sim/vcs/k13_phy_rate_change/official_trace_bind.sv` 和
+`sim/vcs/k13_phy_rate_change/run_official_trace.sh`。`vlogan` 编译完成，VCS
+elaboration 进入 license queue，但本机本次运行未取得 `27000@wx-linux` 的
+仿真 license（退出码 124）；因此没有把未生成的 official CSV 当作通过结果。
+原始日志保留在 `sim/vcs/build/k13_official_trace/`。
+
+官方 EIEOS 的四拍 envelope 可由本次 runner 编译的官方 pattern generator
+源码确定：`GEN3_EIEOS_TX_DATA=64'h00000000_FF00FF00`，32-bit PIPE 的低字为
+`ff00ff00`，四拍均为 `TXDATA_VALID=1`、`TXELECIDLE=0`、
+`TXSYNC_HEADER=01`；仅第一拍 `TXSTART_BLOCK=1`。这里后续三拍也为 01 是
+AMD example 的 canonical drive，不单独表述为 PG239 对
+`TXSTART_BLOCK=0` continuation beat 的硬性要求；PG239 端口说明是 PHY 在
+`TXSTART_BLOCK` 有效时读取 sync header。`RX*` 是接收端运行时量，
+由于官方 simulation 未越过 license queue，本次没有可靠的 official RX capture。
+
+| source / beat | `phy_rate` | `phy_txelecidle` | `phy_txdata_valid` | `phy_txstart_block` | `phy_txsync_header` | `phy_txdata[31:0]` | RX fields |
+|---|---:|---:|---:|---:|---:|---:|---|
+| official Golden 0 | 010 | 0 | 1 | 1 | 01 | `ff00ff00` | not captured |
+| official Golden 1 | 010 | 0 | 1 | 0 | 01 | `ff00ff00` | not captured |
+| official Golden 2 | 010 | 0 | 1 | 0 | 01 | `ff00ff00` | not captured |
+| official Golden 3 | 010 | 0 | 1 | 0 | 01 | `ff00ff00` | not captured |
+| K15 observed 0 | 010 | 0 | 1 | 1 | 01 | `ff00ff00` | valid=0, start=0, header=00, data=00000000 |
+| K15 observed 1 | 010 | 0 | 1 | 0 | 00 | `ff00ff00` | valid=0, start=0, header=00, data=00000000 |
+| K15 observed 2 | 010 | 0 | 1 | 0 | 00 | `ff00ff00` | valid=0, start=0, header=00, data=00000000 |
+| K15 observed 3 | 010 | 0 | 1 | 0 | 00 | `ff00ff00` | valid=0, start=0, header=00, data=00000000 |
+
+K15 的四拍来自 `sim/vcs/build/k15_gen3_simulate.log`：
+`379371529/379375529/379379529/379383529 ps`。`PhyStatus` 在
+`379227604 ps`，`TXELECIDLE` 在 `379363529 ps` 下降，首个
+`TXSTART_BLOCK` 在 `379371529 ps`。RP PIPE 在这个窗口保持
+`phy_rxdata_valid=0`；SVT RP 后续直到 `261090484000 fs` 才出现有效字，首字
+为 `000000bd`，不是 EIEOS `ff00ff00`，且首个 `start_block=1` 是之后的
+TS-like 字 `0000001e`。这确认 CDR lock 不能替代 EIEOS/block acquisition。
+
+**First difference：beat 1 的 `TXSYNC_HEADER`。** Beat 0 的
+`TXDATA_VALID/TXSTART_BLOCK/TXSYNC_HEADER/TXELECIDLE/TXDATA` 全部与官方
+相同；beat 1--3 K15 仍保持 valid、非 electrical-idle、相同数据和
+`TXSTART_BLOCK=0`，但把官方 example 的 canonical `TXSYNC_HEADER=01` 变为
+`00`。由于这些拍的 `TXSTART_BLOCK=0`，这项差异是否被具体 RP/SVT 接收器采纳，
+必须通过 envelope-only A/B 验证；不能仅凭 PG239 port table 宣称已经证明因果。
+这不是 Phase0--3 EQ FSM 的修改，本轮也没有改 SKP、TS 或 EQ。
+
+串行 edge 方面，K15 首个非 Electrical-Idle edge 为
+`379398059 ps`，随后 delta 为 `125, 1125, 1000... ps`（n=3--16 为
+`1000 ps`，n=17 为 `1125 ps`，n=18 起出现 `125 ps` 的数据边沿）。该首边
+相对 PIPE beat0 (`379371529 ps`) 延迟 `26530 ps`，体现 PHY/gearbox pipeline。
+官方 fresh serial CSV 因 license 未生成；8 GT/s 的理想 bit interval 为
+`125 ps`，但没有官方实测 edge trace 就不能宣称两者 envelope 已逐边相等。
+
+### Envelope-only A/B 结论
+
+候选最小 A/B 是现有 `K15_AB_HEADER_HELD`：关闭时为 `01,00,00,00`，打开
+时为 `01,01,01,01`，其余 TXEI、valid、start、data、SKP、TS、EQ 和 rate
+控制保持不变。完整 VCS/SVT 或 Xilinx RP A/B 本次没有执行成功：官方 runner
+被 license 阻塞；已有 normal K15 VCS/SVT 证据仍是 `RXVALID=0`、
+`decoded_ts=0`。`make k15-directed-test` 的本地 transmitter/receiver
+directed gate 通过，但它不是 RP/SVT `RXDATA_VALID` 恢复证据。
+
+因此目前可以确认一个与 `RXDATA_VALID=0` 高度相关的 **EIEOS PIPE envelope
+候选差异**（continuation beat 的 sync header），但还不能作因果闭环结论。
+需要在取得 VCS license 后只切换 `K15_AB_HEADER_HELD=1` 重跑 SVT/Xilinx RP，
+观察 EIEOS recognition、block alignment 和 `RXDATA_VALID`；若恢复，才可把
+该 envelope 差异升级为首因。
+
 ### 2026-08-31 SVT 重跑（使用 `/home/wx/synopsys/designware`）
 
 本次通过 `DESIGNWARE_HOME=/home/wx/synopsys/designware make k15-svt-vcs` 完成了
