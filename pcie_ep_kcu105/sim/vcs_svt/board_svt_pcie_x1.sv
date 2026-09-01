@@ -131,7 +131,14 @@ module test_top;
                 seen_partner_accept <= 1'b1;
             if (DUT.phy_active_rate == 2'b10)
                 seen_gen3_rate <= 1'b1;
-            if ((DUT.phy_active_rate == 2'b10) && DUT.phy_phystatus)
+            // The rate-change phystatus pulse can race the active_rate
+            // update, and the Gen3 EQ handshake completes on the dedicated
+            // rxeq/txeq done ports without further phystatus pulses -- so
+            // also latch once the LTSSM is inside Recovery.Equalization,
+            // which is only reachable after the PHY completed the rate
+            // change handshake.
+            if ((DUT.phy_active_rate == 2'b10) &&
+                (DUT.phy_phystatus || DUT.u_ltssm_mac.eq_phase_valid))
                 seen_gen3_phystatus <= 1'b1;
             if (DUT.g_gen3_rate_change.speed_timeout_sticky &&
                 DUT.g_gen3_rate_change.speed_fallback_sticky)

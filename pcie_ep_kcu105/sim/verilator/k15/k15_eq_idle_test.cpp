@@ -43,7 +43,8 @@ static void set_tuple(Vk15_eq_idle_test_top &d, unsigned control,
 }
 
 static void enter_phase(Vk15_eq_idle_test_top &d, unsigned phase) {
-    d.phase_valid = 0; tick(d);
+    // The LTSSM holds eq_phase_valid high across phase changes
+    // (0x28 -> 0x29 -> 0x2a -> 0x2b); only leaving Equalization drops it.
     d.phase = phase; d.phase_valid = 1; tick(d); tick(d);
 }
 
@@ -96,83 +97,142 @@ int main(int argc, char **argv) {
     pulse_ts(d); pulse_ts(d);
     require(d.operation_state == 6, "phase0 two exact EC01");
 
+    // Phase 1 (spec 4.2.6.4.2.2.2): a pure announcement.  The partner's
+    // EC=01 stream advertises ITS OWN transmitter (preset field = its own
+    // TX preset), so nothing is applied at Phase-1 entry or during the
+    // phase.
     enter_phase(d, 1);
-    require(d.tx_eq_control == 0x21, "phase1 EC01 response");
-    set_tuple(d, 0xba, 0, 40, 0);
-    pulse_ts(d); require(d.operation_state != 6,
-                         "phase1 one EC10 insufficient");
-    d.ts_eq_data ^= 0x800000;
-    pulse_ts(d); require(d.operation_state != 6,
-                         "phase1 bad parity resets count");
-    set_tuple(d, 0xba, 0, 40, 0);
+    require(d.tx_eq_control == 0x21, "phase1 announces EC01 with our P4");
+    require((d.tx_eq_data & 0x3f) == 40, "phase1 advertises FS");
+    require(((d.tx_eq_data >> 8) & 0x3f) == 12, "phase1 advertises LF");
+    // Two identical partner EC=01 TS1s (its own advertisement): no PHY
+    // command is ever issued in Phase 1.
+    set_tuple(d, 0x39, 0, 40, 0);
     pulse_ts(d); pulse_ts(d);
-    require(d.operation_state == 6, "phase1 two exact EC10");
+    require(d.eq_req_valid == 0 && d.operation_state == 0,
+            "phase1 never applies the partner advertisement");
+    // The downstream moves to its Phase 2: an EC=10 pair carrying its
+    // transmitter settings ends Phase 1 and is handed to Phase 2 as the
+    // maintain-reflection seed.
+    set_tuple(d, 0x32, 0, 36, 12);
+    pulse_ts(d); require(d.operation_state != 6,
+                         "phase1 one partner EC10 insufficient");
+    pulse_ts(d);
+    require(d.operation_state == 6,
+            "phase1 exits on partner EC10 pair (partner started Phase 2)");
+    std::cout << "K15_EQ_PHASE1_EC10_EXIT_PASS\n";
 
+    // Phase 2 (spec 4.2.6.4.2.2.3): every EC=10 TS1 we transmit is a
+    // request targeting the DOWNSTREAM transmitter.  The first request
+    // reflects the advertisement received in the EC=10 pair that ended
+    // Phase 1 ("maintain current settings"): Use Preset, preset field and
+    // coefficient fields are all echoed, so the stream content is
+    // identical to the partner's advertisement tuple (0x32).
     enter_phase(d, 2);
-    require(d.operation_state == 1, "phase2 consumes EC10 transition pair");
-    require(d.eq_req_preset == 7, "phase2 uses transition preset P7");
+    require(d.tx_eq_control == 0x32,
+            "phase2 first request reflects the partner advertisement");
+    require(d.tx_eq_data == eq_data(0x32, 0, 36, 12),
+            "phase2 maintain request echoes the partner coefficients");
+    require(d.operation_state == 1, "phase2 issues first RX adapt");
     d.eq_done = 1; d.eq_result = 2; d.eq_rsp_preset_sel = 1;
     d.eq_rsp_coeff = 6; tick(d); d.eq_done = 0; d.eq_result = 0; tick(d);
     require(d.tx_eq_control == 0xb2, "phase2 sends preset proposal");
-    set_tuple(d, 0xb2, 0, 40, 0);
+    // The downstream applies the preset-6 request to its own transmitter
+    // and advertises EC=10 with Use Preset=0, the applied preset number
+    // (6) in the preset field, and its transmitter coefficients (SVT VIP
+    // ground truth) -- the preset field match accepts it, Reject=0.
+    set_tuple(d, 0x32, 0, 36, 12);
     pulse_ts(d); require(d.operation_state == 2,
-                         "phase2 one reflection insufficient");
+                         "phase2 one advertisement insufficient");
     pulse_ts(d); tick(d);
-    require(d.operation_state == 1, "phase2 retries after two reflections");
-    require(d.eq_req_preset == 6, "phase2 retry uses reflected P6");
+    require(d.operation_state == 1, "phase2 re-adapts after acceptance");
+    require(d.eq_req_preset == 6, "phase2 retry adapts to accepted P6");
     d.eq_done = 1; d.eq_result = 1; tick(d);
     d.eq_done = 0; d.eq_result = 0; tick(d);
+    require(d.operation_state == 6, "phase2 concludes on RX success");
     require((d.tx_eq_control & 3) == 3,
-            "phase2 advertises EC11 after RX success");
-    set_tuple(d, 0xb3, 0, 40, 0);
-    pulse_ts(d); require(d.operation_state != 6,
-                         "phase2 one EC11 insufficient");
-    pulse_ts(d); require(d.operation_state == 6,
-                         "phase2 two exact EC11");
+            "phase2 close streams EC11 (moves the downstream to Phase 3)");
+    require(((d.tx_eq_control >> 3) & 0xf) == 4,
+            "phase2 close reports our TX preset P4");
 
+    // Phase 3 (spec 4.2.6.4.2.2.4): we transmit EC=11 and APPLY the
+    // downstream's EC=11 requests to our own transmitter.  The base stream
+    // carries our current settings (P4, queried coefficients 0/40/0).
     enter_phase(d, 3);
-    require(d.operation_state == 3 && d.eq_req_kind == 0,
-            "phase3 qualified preset apply");
+    require((d.tx_eq_control & 3) == 3, "phase3 base streams EC11");
+    require(d.tx_eq_control == 0x23,
+            "phase3 base reports our TX preset P4");
+    require(d.tx_eq_data == eq_data(0x23, 0, 40, 0),
+            "phase3 base carries our transmitter coefficients");
+    // The downstream's first request reflects our EC=11 base stream (a
+    // maintain request) -- identical content to our own stream, so it must
+    // not be re-applied.
+    set_tuple(d, 0x23, 0, 40, 0);
+    pulse_ts(d); pulse_ts(d); tick(d);
+    require(d.eq_req_valid == 0 && d.operation_state == 0,
+            "phase3 maintain echo is not re-applied");
+    // Preset request: EC=11, Use Preset=1, preset 6 (control 0xb3).
+    set_tuple(d, 0xb3, 0, 40, 0);
+    pulse_ts(d); require(d.eq_req_valid == 0,
+                         "phase3 one request insufficient");
+    d.ts1_valid = 1; tick(d); d.ts1_valid = 0;
+    require(d.eq_req_valid == 1 && d.eq_req_kind == 0 &&
+            d.eq_req_preset == 6,
+            "phase3 applies EC11 preset request");
+    tick(d);
+    require(d.operation_state == 3, "phase3 preset apply in flight");
     d.eq_done = 1; d.eq_result = 1; tick(d);
     d.eq_done = 0; d.eq_result = 0; tick(d);
-    require(d.operation_state == 4, "phase3 preset followed by Query");
-    d.eq_done = 1; d.eq_result = 1; d.eq_rsp_coeff = 0x12345; tick(d);
-    d.eq_done = 0; d.eq_result = 0; tick(d);
-    require(d.operation_state == 5, "phase3 waits for next request");
-
-    set_tuple(d, 0xdb, 0, 40, 0); // Use Preset=1, reserved P11, EC=11.
+    require(d.operation_state == 5, "phase3 reflects applied preset");
+    require(d.tx_eq_control == 0x33,
+            "reflection carries applied preset P6 with EC11");
+    require(d.tx_eq_data == eq_data(0x33, 5, 35, 0),
+            "reflection carries P6 transmitter coefficients");
+    // Illegal preset request: EC=11 with reserved preset 11 (0xdb) is
+    // reflected with Reject=1 and never reaches the PHY.
+    set_tuple(d, 0xdb, 0, 40, 0);
     pulse_ts(d); pulse_ts(d); tick(d);
     require(d.operation_state == 5 && ((d.tx_eq_data >> 22) & 1),
             "phase3 rejects reserved preset without PHY command");
-
-    set_tuple(d, 0x33, 4, 36, 0);
-    pulse_ts(d); require(d.operation_state == 5,
-                         "phase3 one changed request insufficient");
-    pulse_ts(d); tick(d);
-    require(d.operation_state == 3,
-            "phase3 qualified coefficient apply");
-    d.eq_done = 1; d.eq_result = 1; tick(d);
+    require(d.tx_eq_control == 0xdb,
+            "rejection reflects the requested preset with EC11");
+    // Legal coefficient request: EC=11, Use Preset=0, 0/28/12
+    // (sum=FS=40, C0-|C-1|-|C+1|=16 >= LF=12).
+    set_tuple(d, 0x03, 0, 28, 12);
+    pulse_ts(d); require(d.eq_req_valid == 0,
+                         "phase3 one coeff request insufficient");
+    d.ts1_valid = 1; tick(d); d.ts1_valid = 0;
+    require(d.eq_req_valid == 1 && d.eq_req_kind == 1 &&
+            d.eq_req_coeff == ((0u << 12) | (28u << 6) | 12u),
+            "phase3 applies EC11 coefficient request");
+    tick(d);
+    require(d.operation_state == 3, "phase3 coeff apply in flight");
+    d.eq_done = 1; d.eq_result = 1;
+    d.eq_rsp_coeff = (4u << 12) | (36u << 6); tick(d);
     d.eq_done = 0; d.eq_result = 0; tick(d);
-    require(d.operation_state == 4, "coefficient apply followed by Query");
+    require(d.operation_state == 5, "phase3 reflects applied coefficients");
+    require(d.tx_eq_control == 0x33,
+            "coeff reflection keeps the last preset field (P6)");
+    require(d.tx_eq_data == eq_data(0x33, 4, 36, 0),
+            "coeff reflection carries the applied coefficients");
+    // The downstream ends the equalization procedure with an EC=00 pair.
     set_tuple(d, 0x20, 0, 40, 0);
     pulse_ts(d); require(d.operation_state != 6,
                          "phase3 one EC00 insufficient");
-    d.ts1_valid = 1; d.eq_done = 1; d.eq_result = 1;
-    d.eq_rsp_coeff = (4 << 12) | (36 << 6); tick(d);
-    d.ts1_valid = 0; d.eq_done = 0; d.eq_result = 0; tick(d);
-    require(d.operation_state == 6,
-            "phase3 exits when second EC00 coincides with Query done");
+    pulse_ts(d); require(d.operation_state == 6,
+                         "phase3 exits on partner EC00 pair");
     std::cout << "K15_EQ_PHASES_DIRECTED_PASS\n";
 
-    // A reflected Phase-2 proposal with Reject=1 is a deterministic failure
-    // and must not launch another RX adaptation.
+    // A Phase-2 proposal answered with Reject=1 is a deterministic failure
+    // and must not launch another RX adaptation.  (Fresh reset: Phase 2 is
+    // entered without a partner advertisement, so the request stream is
+    // seeded with a maintain request for the partner's advertised preset.)
     d.phase_valid = 0; d.rst_n = 0; tick(d); tick(d); d.rst_n = 1; tick(d);
-    enter_phase(d, 1);
-    set_tuple(d, 0xba, 0, 40, 0); pulse_ts(d); pulse_ts(d);
     enter_phase(d, 2);
+    require(d.operation_state == 1, "reject: phase2 issues first adapt");
     d.eq_done = 1; d.eq_result = 2; d.eq_rsp_preset_sel = 1;
     d.eq_rsp_coeff = 6; tick(d); d.eq_done = 0; d.eq_result = 0; tick(d);
-    set_tuple(d, 0xb2, 0, 40, 0, true);
+    set_tuple(d, 0x32, 0, 36, 12, true);
     pulse_ts(d); pulse_ts(d);
     require(d.operation_state == 7,
             "phase2 Reject=1 fails instead of retrying proposal");
@@ -189,15 +249,12 @@ int main(int argc, char **argv) {
                 "EIEOS sync header follows block boundary");
         tick(d);
     }
-    for (int i = 0; i < 4; ++i) {
-        require(d.training_valid, "SKP prefix valid");
-        require(d.training_data == (i == 3 ? 0xbcbf9de1 : 0xaaaaaaaa),
-                "official EIEOS-to-SKP prefix");
-        require(d.training_start_block == (i == 0), "SKP block boundary");
-        require(d.training_sync_header == (i == 0 ? 0x1 : 0x0),
-                "SKP sync header follows block boundary");
-        tick(d);
-    }
+    // pcie_gen3_os_tx (as verified against the Xilinx RP and the SVT VIP in
+    // 2252e15) does not emit an SKP OS immediately after EIEOS: the explicit
+    // 16-symbol SKP OS replaces the 8th block of the 16-block run once every
+    // SKP_PERIOD+1 cadence periods, and the GT secureip substitutes real SKPs
+    // in the valid gaps.  The periodic-SKP loop below covers it.  The TS1
+    // stream therefore starts directly after the EIEOS re-seed.
     // First four Phase-0 TS1 blocks captured at the passing Xilinx hard-IP
     // Endpoint's lane-0 GT input.  Exact comparison catches both scrambler
     // continuity and the Symbol 14/15 running-DC substitution decision.

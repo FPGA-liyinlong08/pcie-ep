@@ -265,6 +265,32 @@ class k15_svt_x1_scenario extends vmm_ms_scenario;
         n++;
         return;
       end
+      // seen_eq_phase3 only proves the EP entered its Phase 3; the SVT
+      // VIP's own 32 us Phase-2 timer can still expire afterwards (it did
+      // on 2026-09-01 while the EP was already in Phase 3).  The EP-side
+      // proof that the DOWNSTREAM concluded Phase 3 is its EC=00 pair,
+      // observed as Recovery.Idle.  Wait for that (or a failure) too.
+      timed_out = 0;
+      fork
+        begin
+          wait (test_top.seen_recovery_idle ||
+                test_top.DUT.gen3_eq_failed ||
+                test_top.DUT.g_gen3_rate_change.speed_timeout_sticky ||
+                test_top.DUT.g_gen3_rate_change.speed_fallback_sticky);
+        end
+        begin
+          #3000000;
+          timed_out = 1;
+        end
+      join_any
+      disable fork;
+      if (timed_out) begin
+        test_top.display_diagnostics();
+        $display("K15_SVT_PHASE2_FAIL reason=phase3_completion_timeout");
+        `vmm_error(log, "K15 SVT Equalization did not complete after Phase3");
+        n++;
+        return;
+      end
       if (!(test_top.seen_partner_accept && test_top.seen_gen3_rate &&
             test_top.seen_gen3_phystatus && test_top.seen_eq_phase0 &&
             test_top.seen_eq_phase1 && test_top.seen_eq_phase2) ||
