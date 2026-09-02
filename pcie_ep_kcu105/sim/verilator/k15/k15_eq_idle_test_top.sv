@@ -32,6 +32,7 @@ module k15_eq_idle_test_top (
     output wire [23:0] tx_eq_data,
     output wire phase_done,
     output wire phase_failed,
+    output wire phase1_exit_skip,
     output wire [3:0] phase_ts_count,
     output wire [2:0] operation_state,
     output wire idle_valid,
@@ -69,7 +70,8 @@ module k15_eq_idle_test_top (
         .eq_rsp_preset_sel(eq_rsp_preset_sel),
         .eq_rsp_coeff(eq_rsp_coeff), .tx_eq_control(tx_eq_control),
         .tx_eq_data(tx_eq_data), .phase_done(phase_done),
-        .phase_failed(phase_failed), .phase_ts_count(phase_ts_count),
+        .phase_failed(phase_failed), .phase1_exit_skip(phase1_exit_skip),
+        .phase_ts_count(phase_ts_count),
         .operation_state(operation_state)
     );
 

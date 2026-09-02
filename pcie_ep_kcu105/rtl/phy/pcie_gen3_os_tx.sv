@@ -328,12 +328,22 @@ module pcie_gen3_os_tx (
                     link_is_pad ? K_PAD : link_number,
                     os_identifier
                 };
-                // Symbols 6..9 carry the role/phase-specific EQ tuple.  The
-                // upstream Endpoint response differs from the downstream
-                // Root Port request, so these fields must not be constants.
-                2'd1: plain_data = {eq_data[7:0], eq_control,
+                // TS1 (Table 4-5): symbols 6..9 carry the role/phase-specific
+                // EQ tuple.  The upstream Endpoint response differs from the
+                // downstream Root Port request, so these fields must not be
+                // constants.  TS2 (Table 4-6) has no EQ tuple at 8.0 GT/s:
+                // symbols 6..13 are the 45h identifier (symbol 6 bits 7/6 are
+                // the Request Equalization/Quiesce Guarantee flags, both 0b
+                // here), so the EQ inputs are bypassed in TS2 mode.
+                2'd1: plain_data = (output_mode == 2'd2) ?
+                                   {identifier, identifier,
+                                    training_control, rate_id} :
+                                   {eq_data[7:0], eq_control,
                                     training_control, rate_id};
-                2'd2: plain_data = {identifier, identifier,
+                2'd2: plain_data = (output_mode == 2'd2) ?
+                                   {identifier, identifier,
+                                    identifier, identifier} :
+                                   {identifier, identifier,
                                     eq_data[23:8]};
                 default: begin
                     // Symbols 12/13 carry the repeated post-cursor/parity

@@ -238,6 +238,33 @@ int main(int argc, char **argv) {
             "phase2 Reject=1 fails instead of retrying proposal");
     std::cout << "K15_EQ_REJECT_FALLBACK_PASS\n";
 
+    // Skip exit (spec 4.2.6.4.2.2.2): a downstream that does not want to
+    // execute Phase 2/3 goes straight to Recovery.RcvrLock and streams
+    // EC=00 TS1s.  The upstream needs EIGHT consecutive EC=00 TS1s (a
+    // stray EC=00 announcement must not end Phase 1), and the exit raises
+    // phase1_exit_skip so the LTSSM goes to RcvrLock instead of Phase 2.
+    d.phase_valid = 0; d.rst_n = 0; tick(d); tick(d); d.rst_n = 1; tick(d);
+    enter_phase(d, 1);
+    // A single EC=00 TS1 followed by the partner's EC=01 advertisement
+    // must not trip the skip path.
+    set_tuple(d, 0x20, 0, 40, 0);
+    pulse_ts(d);
+    set_tuple(d, 0x21, 40, 12, 0);
+    pulse_ts(d);
+    require(d.operation_state != 6,
+            "phase1 stray EC00 then EC01 keeps Phase 1 alive");
+    set_tuple(d, 0x20, 0, 40, 0);
+    pulse_ts(d); pulse_ts(d); pulse_ts(d);
+    require(d.operation_state != 6 && d.phase1_exit_skip == 0,
+            "phase1 three EC00 insufficient for the skip exit");
+    for (int i = 0; i < 5; ++i) pulse_ts(d);
+    require(d.operation_state == 6,
+            "phase1 exits on eight consecutive EC00 TS1s");
+    require(d.phase1_exit_skip == 1,
+            "skip exit raises phase1_exit_skip");
+    std::cout << "K15_EQ_PHASE1_SKIP_EXIT_PASS\n";
+    d.phase_valid = 0;
+
     d.phase_valid = 0;
     d.rst_n = 0; d.idle_enable = 0; d.training_enable = 0; tick(d); tick(d);
     d.rst_n = 1; d.training_enable = 1; d.eval();

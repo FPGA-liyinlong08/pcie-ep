@@ -118,7 +118,10 @@ module pcie_gen3_os_rx (
                     eieos_start <= 1'b1;
                 end else if (in_data == 32'haaaa_aaaa) begin
                     block_kind <= BLOCK_SKP;
-                    data_stream_armed <= 1'b0;
+                    // SKP OSs are inserted inside the data stream, not at
+                    // its end: keep data_stream_armed so logical idle
+                    // resumes after the deleted SKP block (a non-idle data
+                    // block here still fails the descramble-to-zero check).
                 end else if ((in_data == 32'h5555_55e1) && lfsr_ready) begin
                     block_kind <= BLOCK_SDS;
                     data_stream_armed <= 1'b0;

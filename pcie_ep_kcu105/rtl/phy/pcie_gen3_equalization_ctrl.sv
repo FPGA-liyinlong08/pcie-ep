@@ -61,6 +61,10 @@ module pcie_gen3_equalization_ctrl #(
     output reg  [23:0] tx_eq_data,
     output reg         phase_done,
     output reg         phase_failed,
+    // Phase 1 completed because the downstream sent the EC=00 RcvrLock
+    // stream (it skipped Phase 2/3, 4.2.6.4.2.2.2) -- the LTSSM must go to
+    // Recovery.RcvrLock, not Phase 2.
+    output reg         phase1_exit_skip,
     output reg  [3:0]  phase_ts_count,
     output reg  [2:0]  operation_state
 );
@@ -156,6 +160,7 @@ module pcie_gen3_equalization_ctrl #(
 
     reg phase_valid_q;
     reg [1:0] phase_q;
+    reg [3:0] ec00_count;       // consecutive EC=00 TS1s in Phase 1
     reg [31:0] timeout_count;
     reg consecutive_have;
     reg [31:0] consecutive_tuple;
@@ -308,12 +313,15 @@ module pcie_gen3_equalization_ctrl #(
             last_accepted_coeff <= 18'd0;
             last_accepted_tuple <= 32'd0;
             phase_done <= 1'b0; phase_failed <= 1'b0;
+            phase1_exit_skip <= 1'b0;
+            ec00_count <= 4'd0;
             phase_ts_count <= 4'd0; operation_state <= OP_IDLE;
         end else begin
             phase_valid_q <= phase_valid; phase_q <= phase;
             phase_done <= 1'b0; phase_failed <= 1'b0;
             if (!phase_valid) begin
                 timeout_count <= 32'd0; consecutive_have <= 1'b0;
+                phase1_exit_skip <= 1'b0; ec00_count <= 4'd0;
                 phase_ts_count <= 4'd0; request_pending <= 1'b0;
                 exit_pending <= 1'b0; proposal_pending <= 1'b0;
                 transition_tuple_valid <= 1'b0;
@@ -321,6 +329,7 @@ module pcie_gen3_equalization_ctrl #(
                 operation_state <= OP_IDLE;
             end else if (phase_entry) begin
                 timeout_count <= 32'd0; consecutive_have <= 1'b0;
+                phase1_exit_skip <= 1'b0; ec00_count <= 4'd0;
                 phase_ts_count <= 4'd0; request_pending <= 1'b0;
                 exit_pending <= 1'b0; proposal_pending <= 1'b0;
                 last_accepted_valid <= 1'b0;
@@ -393,35 +402,46 @@ module pcie_gen3_equalization_ctrl #(
                         // per 4.2.6.4.2.1.1) -- track it, apply nothing.
                         if (legal_ts1 && (incoming_ec == 2'b01))
                             partner_preset <= incoming_preset;
-                        if (second_same_ts) begin
-                            if (incoming_ec == 2'b10) begin
-                                // The downstream moved to its Phase 2; its
-                                // EC=10 stream advertises its transmitter
-                                // settings (4.2.6.4.2.1.2).  Spec
-                                // 4.2.6.4.2.2.3: our first Phase-2 request
-                                // reflects these settings ("maintain"),
-                                // so build that stream here.
-                                transition_tuple <= incoming_tuple;
-                                transition_tuple_valid <= 1'b1;
-                                reflected_control <=
-                                    {incoming_tuple[31],
-                                     incoming_tuple[30:27], 1'b0, 2'b10};
-                                reflected_data <= encode_eq_data(
-                                    {incoming_tuple[31],
-                                     incoming_tuple[30:27], 1'b0, 2'b10},
-                                    {incoming_tuple[5:0],
-                                     incoming_tuple[13:8],
-                                     incoming_tuple[21:16]}, 1'b0);
-                                phase_done <= 1'b1;
-                                operation_state <= OP_COMPLETE;
-                            end else if (incoming_ec == 2'b00) begin
-                                // EC=00 pair: the downstream skipped
-                                // Phase 2/3 and went straight to RcvrLock.
+                        if (second_same_ts && (incoming_ec == 2'b10)) begin
+                            // The downstream moved to its Phase 2; its
+                            // EC=10 stream advertises its transmitter
+                            // settings (4.2.6.4.2.1.2).  Spec
+                            // 4.2.6.4.2.2.3: our first Phase-2 request
+                            // reflects these settings ("maintain"),
+                            // so build that stream here.
+                            transition_tuple <= incoming_tuple;
+                            transition_tuple_valid <= 1'b1;
+                            reflected_control <=
+                                {incoming_tuple[31],
+                                 incoming_tuple[30:27], 1'b0, 2'b10};
+                            reflected_data <= encode_eq_data(
+                                {incoming_tuple[31],
+                                 incoming_tuple[30:27], 1'b0, 2'b10},
+                                {incoming_tuple[5:0],
+                                 incoming_tuple[13:8],
+                                 incoming_tuple[21:16]}, 1'b0);
+                            phase_done <= 1'b1;
+                            operation_state <= OP_COMPLETE;
+                        end
+                        // 4.2.6.4.2.2.2 skip exit: the downstream ended
+                        // equalization without running Phase 2/3 and went
+                        // straight to Recovery.RcvrLock; its RcvrLock TS1
+                        // stream carries EC=00.  The upstream leaves Phase 1
+                        // after EIGHT consecutive EC=00 TS1s (a partner that
+                        // merely still advertises EC=01/10 must not trip
+                        // this).  EIEOS beats are neither TS1 nor TS2 and do
+                        // not reset the count -- the spec's own post-EQ flow
+                        // intersperses an EIEOS every 32 TS1/TS2s.
+                        if (legal_ts1 && (incoming_ec == 2'b00)) begin
+                            if (ec00_count == 4'd7) begin
                                 transition_tuple_valid <= 1'b0;
                                 phase_done <= 1'b1;
+                                phase1_exit_skip <= 1'b1;
                                 operation_state <= OP_COMPLETE;
-                            end
-                        end
+                            end else
+                                ec00_count <= ec00_count + 1'b1;
+                        end else if (legal_ts1 || ts2_valid || ts_malformed)
+                            ec00_count <= 4'd0;
                     end
                     2'd2: begin
                         if (eq_req_valid && eq_req_ready) begin

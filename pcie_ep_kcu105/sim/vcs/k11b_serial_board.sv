@@ -1405,26 +1405,389 @@ module board;
                  k15_skp_first_time);
     end
 
+    // K15_RP_L0_EXIT_DUMP: each time the RP leaves L0 (0x10), dump the
+    // RP PIPE RX beats immediately before (ring buffer) and after the
+    // transition.  The wire view disambiguates what pulled the RP out of
+    // L0 -- EIOS, TS reception, electrical idle, or a plain receiver
+    // error in the logical-idle data stream.
+    reg [31:0] k15_l0d_data  [0:63];
+    reg        k15_l0d_valid [0:63];
+    reg        k15_l0d_start [0:63];
+    reg [1:0]  k15_l0d_sh    [0:63];
+    reg        k15_l0d_ei    [0:63];
+    reg [2:0]  k15_l0d_status[0:63];
+    reg [2:0]  k15_l0d_bufst [0:63];
+    reg        k15_l0d_phdone, k15_l0d_dlysdone;
+    integer    k15_l0d_wr, k15_l0d_i, k15_l0d_idx;
+    integer    k15_l0d_triggers, k15_l0d_post;
+    reg        k15_l0d_prev_l0;
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_RP_L0_EXIT_DUMP")) begin
+            k15_l0d_data[k15_l0d_wr]  <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0];
+            k15_l0d_valid[k15_l0d_wr] <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0];
+            k15_l0d_start[k15_l0d_wr] <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0];
+            k15_l0d_sh[k15_l0d_wr] <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0];
+            k15_l0d_ei[k15_l0d_wr] <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0];
+            k15_l0d_status[k15_l0d_wr] <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0];
+            k15_l0d_bufst[k15_l0d_wr] <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0];
+            k15_l0d_phdone <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxphaligndone[0];
+            k15_l0d_dlysdone <=
+                RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxdlysresetdone[0];
+            k15_l0d_wr <= (k15_l0d_wr + 1) % 64;
+            if (k15_l0d_post != 0) begin
+                $display("K15_RP_L0_POST n=%0d time_ps=%0t st=%0h valid=%0d start=%0d sh=%02b ei=%0d stat=%03b buf=%03b data=%08h",
+                         80 - k15_l0d_post, $time, RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_elec_idle[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+                k15_l0d_post <= k15_l0d_post - 1;
+            end
+            if (k15_l0d_prev_l0 && (RP.cfg_ltssm_state != 6'h10) &&
+                (k15_l0d_triggers < 3) && (k15_l0d_post == 0)) begin
+                k15_l0d_triggers <= k15_l0d_triggers + 1;
+                k15_l0d_post <= 40;
+                $display("K15_RP_L0_EXIT time_ps=%0t to_state=%0h",
+                         $time, RP.cfg_ltssm_state);
+                for (k15_l0d_i = 0; k15_l0d_i < 64; k15_l0d_i = k15_l0d_i + 1) begin
+                    k15_l0d_idx = (k15_l0d_wr + k15_l0d_i) % 64;
+                    $display("K15_RP_L0_PRE n=%0d valid=%0d start=%0d sh=%02b ei=%0d stat=%03b buf=%03b ph=%0d dlys=%0d data=%08h",
+                             k15_l0d_i,
+                             k15_l0d_valid[k15_l0d_idx],
+                             k15_l0d_start[k15_l0d_idx],
+                             k15_l0d_sh[k15_l0d_idx],
+                             k15_l0d_ei[k15_l0d_idx],
+                             k15_l0d_status[k15_l0d_idx],
+                             k15_l0d_bufst[k15_l0d_idx],
+                             k15_l0d_phdone,
+                             k15_l0d_dlysdone,
+                             k15_l0d_data[k15_l0d_idx]);
+                end
+            end
+            k15_l0d_prev_l0 <= (RP.cfg_ltssm_state == 6'h10);
+        end
+    end
+    initial begin
+        k15_l0d_wr = 0; k15_l0d_triggers = 0; k15_l0d_post = 0;
+        k15_l0d_prev_l0 = 0;
+    end
+
+    // K15_L0FIX: fine-grained event capture across one full RP loop
+    // (window 382.50-383.10us).  Prints (a) every RP LTSSM state change,
+    // (b) every PIPE beat where rxvalid drops (the GT bubble signature),
+    // (c) every change of gt_rxbufstatus / pipe_rx_status, (d) the EP's
+    // LTSSM changes.  Together these pin the bubble to the exact beat it
+    // follows on both the RP and EP state timelines.
+    reg [5:0] k15_lf_rp_last;
+    reg [5:0] k15_lf_ep_last;
+    reg [2:0] k15_lf_buf_last;
+    reg [2:0] k15_lf_stat_last;
+    // GT-side status/control snapshot for change detection: {rxcdrlock,
+    // rxpmaresetdone, rxresetdone, rxsyncdone, pcierateidle,
+    // pcieuserratestart}
+    wire k15_lf_cdrlock  = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxcdrlock[0];
+    wire k15_lf_pmadrst  = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxpmaresetdone[0];
+    wire k15_lf_rxrstdn  = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxresetdone[0];
+    wire k15_lf_rxsyn    = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxsyncdone[0];
+    wire k15_lf_rateidle = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcierateidle[0];
+    wire k15_lf_ratestrt = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_pcieuserratestart[0];
+    // gt_pcierategen3 is the GTHE3 primitive PCIERATEGEN3 *output* (netlist
+    // line 18716: assign GT_PCIERATEGEN3 = pcierategen3; GT wizard port at
+    // 17280 is `output`) = "channel operating at 8.0GT/s".  RXLPMEN/RX8B10BEN/
+    // comma-align are all !pcierategen3, so a toggle here flips LPM<->DFE and
+    // enables 8b/10b decode -- prime candidate for the fixed-time L0 bubble.
+    // The net lives inside rp_phy_wrapper instance `gt_top_i` under an
+    // unnamed generate block (core_top line ~3138).
+    wire k15_lf_gen3 = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierategen3[0];
+    wire k15_lf_cdrhold  = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.phy_rxcdrhold;
+    // QPLL1 rate-switch handshake (wrapper-level wires, same scope as
+    // gt_pcierategen3 -- resolves in VCS): model requests QPLL1 pd/reset,
+    // QPLL1 must relock (gtcom_qpll1lock) before PCIERATEGEN3 asserts.
+    wire k15_lf_q1pd    = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.qpll1pd[0];
+    wire k15_lf_q1rst   = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.qpll1reset[0];
+    wire k15_lf_q1lock  = RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gtcom_qpll1lock[0];
+    wire [1:0] k15_lf_q1mrate = {RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierateqpllpd[1:0]};
+    wire [1:0] k15_lf_q1mrst  = {RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_top_i.gt_pcierateqpllreset[1:0]};
+    wire [14:0] k15_lf_gt = {k15_lf_gen3, k15_lf_cdrhold,
+                            k15_lf_cdrlock, k15_lf_pmadrst, k15_lf_rxrstdn,
+                            k15_lf_rxsyn, k15_lf_rateidle, k15_lf_ratestrt,
+                            k15_lf_q1pd, k15_lf_q1rst, k15_lf_q1lock,
+                            k15_lf_q1mrate, k15_lf_q1mrst};
+    reg [14:0] k15_lf_gt_last;
+    reg k15_lf_ep_gt_printed;
+    initial begin
+        k15_lf_rp_last = 6'h3f; k15_lf_ep_last = 6'h3f;
+        k15_lf_buf_last = 3'b111; k15_lf_stat_last = 3'b111;
+        k15_lf_gt_last = 15'h7fff;
+        k15_lf_ep_gt_printed = 1'b0;
+    end
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ($time >= 381600000) && ($time < 383100000)) begin
+            if (RP.cfg_ltssm_state !== k15_lf_rp_last) begin
+                $display("K15_L0FIX_RP_ST time_ps=%0t st=%0h valid=%0d start=%0d sh=%02b stat=%03b buf=%03b data=%08h",
+                         $time, RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+                k15_lf_rp_last <= RP.cfg_ltssm_state;
+            end
+            if (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0] !== 1'b1)
+                $display("K15_L0FIX_GAP time_ps=%0t st=%0h start=%0d sh=%02b stat=%03b buf=%03b data=%08h",
+                         $time, RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+            if (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0] !== k15_lf_buf_last) begin
+                $display("K15_L0FIX_BUF time_ps=%0t st=%0h buf=%03b",
+                         $time, RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0]);
+                k15_lf_buf_last <= RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0];
+            end
+            if (RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0] !== k15_lf_stat_last) begin
+                $display("K15_L0FIX_STAT time_ps=%0t st=%0h stat=%03b data=%08h",
+                         $time, RP.cfg_ltssm_state,
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0],
+                         RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+                k15_lf_stat_last <= RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_status[2:0];
+            end
+            if (k15_lf_gt !== k15_lf_gt_last) begin
+                $display("K15_L0FIX_GT time_ps=%0t st=%0h gen3=%0d cdrhold=%0d cdrlock=%0d pmadone=%0d rxrstdone=%0d syncdone=%0d rateidle=%0d ratestart=%0d q1pd=%0d q1rst=%0d q1lock=%0d q1mrate=%02b q1mrst=%02b",
+                         $time, RP.cfg_ltssm_state,
+                         k15_lf_gt[14], k15_lf_gt[13], k15_lf_gt[12],
+                         k15_lf_gt[11], k15_lf_gt[10], k15_lf_gt[9],
+                         k15_lf_gt[8], k15_lf_gt[7],
+                         k15_lf_gt[6], k15_lf_gt[5], k15_lf_gt[4],
+                         k15_lf_gt[3:2], k15_lf_gt[1:0]);
+                k15_lf_gt_last <= k15_lf_gt;
+            end
+            // EP GT rate status for contrast (same wizard family as RP).
+            if (k15_lf_gt !== k15_lf_gt_last || !k15_lf_ep_gt_printed) begin
+                k15_lf_ep_gt_printed = 1;
+                $display("K15_L0FIX_EP_GT time_ps=%0t ep_gen3=%0d ep_gen3rdy=%0d ep_rate=%02b",
+                         $time,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIERATEGEN3,
+                         EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.gt_wizard.gtwizard_top_i.GT_PCIEUSERGEN3RDY,
+                         EP.DUT.phy_rate);
+            end
+        end
+    end
+    // K15_L0FIX_CC: RP GT RXCLKCORCNT change detector.  The elastic-buffer
+    // fill (rxbufstatus) stays constant through the loop, so a clock-correction
+    // delete/insert is the remaining candidate for the 1-beat valid=0 bubble
+    // and the permanent 1-beat syncheader lag.  RXCLKCORCNT 2'b01 = +1 beat
+    // inserted, 2'b10 = 1 beat deleted.  Path mirrors the working EP probe
+    // (gt_wizard generate label + rp_gt_i).
+    // NOTE: hierarchical path through the unnamed `generate for` does not
+    // resolve in VCS; RXCLKCORCNT probing needs a wrapper-level routing in
+    // the imports.  Disabled for now (constant 0 -> block prints nothing).
+    wire [1:0] k15_lf_cc = 2'b00;
+    reg [1:0] k15_lf_cc_last;
+    initial begin k15_lf_cc_last = 2'b11; end
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ($time >= 382500000) && ($time < 383100000) &&
+            (k15_lf_cc !== k15_lf_cc_last)) begin
+            $display("K15_L0FIX_CC time_ps=%0t st=%0h cc=%02b buf=%03b valid=%0d start=%0d sh=%02b data=%08h",
+                     $time, RP.cfg_ltssm_state, k15_lf_cc,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[2:0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+            k15_lf_cc_last <= k15_lf_cc;
+        end
+    end
+    // Per-beat RX dumps in narrow windows around bubble #1 (382613529) and
+    // #2 (382873504): align RP's RX PIPE output stream against the decoded
+    // EP serial stream to see whether the bubble is a clock-correction
+    // insert (block duplicated) / delete (block missing) at an EP SKP OS.
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ((($time >= 382595000) && ($time < 382625000)) ||
+             (($time >= 382865000) && ($time < 382885000))))
+            $display("K15_L0FIX_RPRX time_ps=%0t st=%0h v=%0d sb=%0d sh=%02b data=%08h",
+                     $time, RP.cfg_ltssm_state,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_start_block[0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_syncheader[1:0],
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data[31:0]);
+    end
+    // Per-beat TX dumps in narrow windows around bubble #1 (382613529) and
+    // #2 (382873504): if the GT model hiccups on its own TX activity (EIEOS
+    // TX in Idle / start-of-idle in L0) the trigger must show here.
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ((($time >= 382550000) && ($time < 382660000)) ||
+             (($time >= 382790000) && ($time < 382920000))))
+            $display("K15_L0FIX_RPTX time_ps=%0t tv=%0d tb=%0d tsh=%02b k=%02b ei=%0d pd=%02b data=%08h",
+                     $time,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data_valid,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_start_block,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_syncheader,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_char_is_k,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_elec_idle,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_powerdown,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_data);
+    end
+    always @(posedge EP.DUT.phy_pclk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ((($time >= 382550000) && ($time < 382660000)) ||
+             (($time >= 382790000) && ($time < 382920000))))
+            $display("K15_L0FIX_EPTX time_ps=%0t tv=%0d tb=%0d tsh=%02b k=%02b ei=%0d data=%08h",
+                     $time,
+                     EP.DUT.phy_txdata_valid, EP.DUT.phy_txstart_block,
+                     EP.DUT.phy_txsync_header, EP.DUT.phy_txdatak,
+                     EP.DUT.phy_txelecidle, EP.DUT.phy_txdata);
+    end
+    // K15_L0FIX: idle_tx SEND_GAP firings (the 1-beat 128b/130b rate-match
+    // pause every 16 blocks).  If these never print the gap never fired.
+    always @(posedge EP.DUT.phy_pclk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ($time >= 382500000) && ($time < 383200000) &&
+            (EP.DUT.u_ltssm_mac.u_gen3_idle_tx.state == 2'd3))
+            $display("K15_L0FIX_EPGAP time_ps=%0t", $time);
+    end
+    always @(posedge EP.DUT.phy_pclk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ($time >= 382500000) && ($time < 383100000) &&
+            (EP.DUT.ltssm_state !== k15_lf_ep_last)) begin
+            $display("K15_L0FIX_EP_ST time_ps=%0t st=%0h", $time, EP.DUT.ltssm_state);
+            k15_lf_ep_last <= EP.DUT.ltssm_state;
+        end
+    end
+
+    // K15 RX elastic-buffer fill trace across a full Recovery->L0 loop.  The
+    // RP GT RX buffer sits chronically at positive phase 2 (0b010) and slips
+    // during L0; this trace shows when the fill changes.  1024 beats = one
+    // full 3.2us loop at 250MHz.  Each printed hex digit packs
+    // {ltssm_is_L0, RXBUFSTATUS[1:0]} for the RP and the EP.
+    reg [3:0] k15_btr_rp[0:1023];
+    reg [3:0] k15_btr_ep[0:1023];
+    integer   k15_btr_wr, k15_btr_i, k15_btr_idx;
+    integer   k15_btr_triggers;
+    reg       k15_btr_prev_l0;
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_BUF_TRACE")) begin
+            k15_btr_rp[k15_btr_wr] <=
+                {(RP.cfg_ltssm_state == 6'h10),
+                 RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus[1:0]};
+            k15_btr_ep[k15_btr_wr] <=
+                {(EP.DUT.ltssm_state == 6'h10),
+                 EP.DUT.u_phy_wrapper.u_pcie_phy.inst.Uscale_gt.us_gt_phy_wrapper.GT_RXBUFSTATUS[1:0]};
+            k15_btr_wr <= (k15_btr_wr + 1) % 1024;
+            if (k15_btr_prev_l0 && (RP.cfg_ltssm_state != 6'h10) &&
+                (k15_btr_triggers < 2)) begin
+                k15_btr_triggers <= k15_btr_triggers + 1;
+                $display("K15_BUF_TRACE time_ps=%0t to_state=%0h",
+                         $time, RP.cfg_ltssm_state);
+                $write("K15_BUF_RP ");
+                for (k15_btr_i = 0; k15_btr_i < 1024; k15_btr_i = k15_btr_i + 1) begin
+                    k15_btr_idx = (k15_btr_wr + k15_btr_i) % 1024;
+                    $write("%x", k15_btr_rp[k15_btr_idx]);
+                end
+                $write("\nK15_BUF_EP ");
+                for (k15_btr_i = 0; k15_btr_i < 1024; k15_btr_i = k15_btr_i + 1) begin
+                    k15_btr_idx = (k15_btr_wr + k15_btr_i) % 1024;
+                    $write("%x", k15_btr_ep[k15_btr_idx]);
+                end
+                $write("\n");
+            end
+            k15_btr_prev_l0 <= (RP.cfg_ltssm_state == 6'h10);
+        end
+    end
+    initial begin
+        k15_btr_wr = 0; k15_btr_triggers = 0; k15_btr_prev_l0 = 0;
+    end
+
+    // K15 RP GT status change detector.  The per-beat ring buffers sample on
+    // pipe_clk and can miss a single-cycle pulse in the GT XCLK domain; this
+    // probe prints every transition of the GT RX status outputs inside the
+    // window that contains the L0-exit artifact.
+    always @(/*AS*/RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxstatus
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxphaligndone
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxdlysresetdone) begin
+        if ($test$plusargs("K15_GT_CHG") &&
+            ($time >= 382830000) && ($time < 382920000)) begin
+            $display("K15_GT_CHG time_ps=%0t buf=%03b stat=%03b phdone=%0d dlysdone=%0d st=%0h",
+                     $time,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxstatus,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxphaligndone,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxdlysresetdone,
+                     RP.cfg_ltssm_state);
+        end
+    end
+
+    // RP MAC PIPE control-output change detector: any transient the MAC
+    // drives into the GT (PowerDown/RxPolarity/TxCompliance/Rate/TxElecIdle/
+    // DetectRxEq) exactly when the bubble appears would be the trigger.
+    always @(/*AS*/RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_powerdown
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_polarity
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx_compliance
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rcvr_det
+             or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx_elec_idle) begin
+        if ($test$plusargs("K15_GT_CHG") &&
+            ($time >= 382830000) && ($time < 382920000)) begin
+            $display("K15_MAC_CHG time_ps=%0t pd=%02b pol=%0d comp=%0d rate=%02b det=%0d txidle=%0d st=%0h",
+                     $time,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_powerdown,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_polarity,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx_compliance,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rate,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rcvr_det,
+                     RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx_elec_idle,
+                     RP.cfg_ltssm_state);
+        end
+    end
+
     // K15 serial wire dump of the EP transmit pair.  Samples ep_txp at
     // ~4x oversampling of the 8 GT/s bit time (125 ps) so the 130b block
     // stream can be decoded offline: EIEOS (unscrambled) anchors the block
     // grid, and the os_tx valid-gap slot then reveals what the GT actually
     // places on the wire (spec SKP OS vs. something the VIP cannot count).
-    reg k15_ser_bits [0:70000];
+    reg k15_ser_bits [0:90000];
     integer k15_ser_count;
+    integer k15_ser_count_rp;
+    reg k15_ser_bits_rp [0:90000];
     integer k15_ser_i, k15_ser_j;
     reg [7:0] k15_ser_nib;
-    initial k15_ser_count = 0;
+    initial begin k15_ser_count = 0; k15_ser_count_rp = 0; end
     always #31 begin
-        if (($time >= 377900000) && ($time < 380000000) &&
-            (k15_ser_count < 70000)) begin
+        if (($time >= 382540000) && ($time < 382920000) &&
+            (k15_ser_count < 90000)) begin
             k15_ser_bits[k15_ser_count] = ep_txp;
             k15_ser_count = k15_ser_count + 1;
         end
     end
+    always #31 begin
+        if (($time >= 382540000) && ($time < 382920000) &&
+            (k15_ser_count_rp < 90000)) begin
+            k15_ser_bits_rp[k15_ser_count_rp] = rp_txp[0];
+            k15_ser_count_rp = k15_ser_count_rp + 1;
+        end
+    end
     initial begin
-        #380620000;
-        $display("K15_SER_DUMP bits=%0d (window 377.9-380.0us, ~31ps/sample)", k15_ser_count);
+        #382920000;
+        $display("K15_SER_DUMP bits=%0d (window 382.54-382.92us, ~31ps/sample)", k15_ser_count);
         k15_ser_i = 0;
         while (k15_ser_i + 7 < k15_ser_count) begin
             for (k15_ser_j = 0; k15_ser_j < 8; k15_ser_j = k15_ser_j + 1)
@@ -1436,6 +1799,18 @@ module board;
         end
         $write("\n");
         $display("K15_SER_DUMP_END");
+        $display("K15_SER_DUMP_RP bits=%0d (RP txp, same window)", k15_ser_count_rp);
+        k15_ser_i = 0;
+        while (k15_ser_i + 7 < k15_ser_count_rp) begin
+            for (k15_ser_j = 0; k15_ser_j < 8; k15_ser_j = k15_ser_j + 1)
+                k15_ser_nib[k15_ser_j] = k15_ser_bits_rp[k15_ser_i + k15_ser_j];
+            $write("%02x", k15_ser_nib);
+            k15_ser_i = k15_ser_i + 8;
+            if ((k15_ser_i % 248) == 0)
+                $write("\n");
+        end
+        $write("\n");
+        $display("K15_SER_DUMP_RP_END");
     end
 
     // Once the RP reaches its explicit Phase-0/1 state, sample the EP side
@@ -2929,6 +3304,68 @@ module board;
                      EP.DUT.rx_ts_count, EP.DUT.training_error_count,
                      EP.DUT.timeout_count, EP.DUT.frame_error_count);
             $fatal(1);
+        end
+    end
+
+    // K15 diagnostic: dump the Root Port config space (standard DWs 0x00-0x3F
+    // plus extended space with type1 access) and look for the Secondary PCI
+    // Express Extended Capability (ext cap ID 0x0019).  Its Link Control 3
+    // register holds the Perform Equalization bit, which per PCIe spec 7.27.2
+    // is the software lever that makes a Downstream Port execute EQ Phases
+    // 2/3 instead of exiting Phase 1 straight to Recovery.RcvrLock (observed
+    // on 2026-09-01: the RP saw the EP EC=01 pair and returned to RcvrLock).
+    initial begin : k15_rp_cfg_scan
+        integer dw;
+        if ($test$plusargs("K15_RP_CFG_SCAN")) begin
+            wait (RP.user_reset === 1'b0);
+            repeat (4000) @(posedge RP.user_clk);
+            $display("K15_RP_CFG_SCAN_BEGIN");
+            for (dw = 0; dw < 64; dw = dw + 1) begin
+                RP.cfg_usrapp.TSK_READ_CFG_DW(dw[31:0]);
+                $display("K15_RP_CFG_STD dw=%02x data=%08x",
+                         dw, RP.cfg_usrapp.cfg_rd_data);
+            end
+            force RP.cfg_usrapp.cfg_mgmt_type1_cfg_reg_access = 1'b1;
+            for (dw = 64; dw < 512; dw = dw + 1) begin
+                RP.cfg_usrapp.TSK_READ_CFG_DW(dw[31:0]);
+                if (RP.cfg_usrapp.cfg_rd_data !== 32'h0)
+                    $display("K15_RP_CFG_EXT dw=%02x data=%08x",
+                             dw, RP.cfg_usrapp.cfg_rd_data);
+            end
+            release RP.cfg_usrapp.cfg_mgmt_type1_cfg_reg_access;
+            $display("K15_RP_CFG_SCAN_END");
+            $finish;
+        end
+    end
+
+    // K15: perform the spec 7.27.2 software-directed equalization flow on
+    // the Root Port before training reaches Recovery.RcvrCfg: set the
+    // Perform Equalization bit (Link Control 3, bit 0, Secondary PCIe
+    // Extended Capability at extended DW 0xC0 -- byte 0x300, so type1
+    // access is required) and the Link Control 2 Target Link Speed to
+    // 8.0 GT/s.  Without this the Xilinx RP exited EQ Phase 1 straight to
+    // Recovery.RcvrLock on the EP's EC=01 pair (2026-09-01), which stalls
+    // the EP in EQ Phase 2 until its watchdog falls back to Gen1.
+    initial begin : k15_rp_enable_eq
+        if ($test$plusargs("K15_RP_ENABLE_EQ")) begin
+            wait (RP.user_reset === 1'b0);
+            repeat (4000) @(posedge RP.user_clk);
+            // Link Control 2 (PCIe cap + 0x30, standard DW 0x3C): Target
+            // Link Speed [3:2] = 11b (8.0 GT/s); keep the read-only high
+            // half as read (0x0001).
+            RP.cfg_usrapp.TSK_WRITE_CFG_DW(32'h0000_003C, 32'h0001_000F, 4'hF);
+            RP.cfg_usrapp.TSK_READ_CFG_DW(32'h0000_003C);
+            $display("K15_RP_LC2_AFTER_WRITE data=%08x",
+                     RP.cfg_usrapp.cfg_rd_data);
+            // Link Control 3 (Secondary PCIe Ext Cap + 0x04, extended DW
+            // 0xC1): Perform Equalization = bit 0.
+            force RP.cfg_usrapp.cfg_mgmt_type1_cfg_reg_access = 1'b1;
+            RP.cfg_usrapp.TSK_WRITE_CFG_DW(32'h0000_00C1, 32'h0000_0001, 4'h1);
+            RP.cfg_usrapp.TSK_READ_CFG_DW(32'h0000_00C1);
+            $display("K15_RP_LC3_AFTER_WRITE data=%08x",
+                     RP.cfg_usrapp.cfg_rd_data);
+            release RP.cfg_usrapp.cfg_mgmt_type1_cfg_reg_access;
+            $display("K15_RP_ENABLE_EQ_DONE time_ps=%0t", $time);
         end
     end
 

@@ -109,6 +109,11 @@ if [[ "${k15_mode}" == "1" ]]; then
     if [[ "${k15_xilinx_pattern_ab}" == "1" ]]; then
         tb_defines+=(+define+K15_AB_XILINX_PATTERN)
     fi
+    # Must live in the tb_defines build section: it gates a localparam in
+    # pcie_gen3_idle_tx.sv, which is compiled by vlogan below (line ~263).
+    if [[ "${K15_L0_SKP_DENSE:-0}" == "1" ]]; then
+        tb_defines+=(+define+K15_L0_SKP_DENSE)
+    fi
 fi
 if [[ "${k14_rate_ab_mode}" == "1" ]]; then
     case "${k14_ep_tx_rate_id}" in
@@ -348,6 +353,24 @@ fi
 
 if [[ "${k15_mode}" == "1" ]]; then
     k15_plusargs=(+K15_GEN3)
+    if [[ "${K15_RP_CFG_SCAN:-0}" == "1" ]]; then
+        k15_plusargs+=(+K15_RP_CFG_SCAN)
+    fi
+    if [[ "${K15_RP_ENABLE_EQ:-0}" == "1" ]]; then
+        k15_plusargs+=(+K15_RP_ENABLE_EQ)
+    fi
+    if [[ "${K15_RP_L0_EXIT_DUMP:-0}" == "1" ]]; then
+        k15_plusargs+=(+K15_RP_L0_EXIT_DUMP)
+    fi
+    if [[ "${K15_BUF_TRACE:-0}" == "1" ]]; then
+        k15_plusargs+=(+K15_BUF_TRACE)
+    fi
+    if [[ "${K15_GT_CHG:-0}" == "1" ]]; then
+        k15_plusargs+=(+K15_GT_CHG)
+    fi
+    if [[ "${K15_L0FIX:-0}" == "1" ]]; then
+        k15_plusargs+=(+K15_L0FIX)
+    fi
     if [[ "${k15_phase2_only}" == "1" ]]; then
         k15_plusargs+=(+K15_PHASE2_ONLY)
     fi

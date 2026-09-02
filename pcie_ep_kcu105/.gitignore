@@ -43,3 +43,6 @@ sim/verilator/k05_native/summary.txt
 sim/verilator/k06_native/summary.txt
 # KCU105 XDMA x1硬件对照工程生成物
 fpga/kcu105/xdma_x1_demo/build/
+# VCS/SVT 运行时钥匙与 Verilator 临时构建目录(勿提交)
+sim/vcs_svt/ucli.key
+sim/verilator/k15/preset_capture_build/

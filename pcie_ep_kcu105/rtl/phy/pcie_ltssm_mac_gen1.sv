@@ -229,7 +229,13 @@ module pcie_ltssm_mac_gen1 #(
     // Phase-0 tuple, including during post-rate Receiver Lock.
     wire [7:0] tx_gen3_eq_control = k15_tx_eq_control;
     wire [23:0] tx_gen3_eq_data = k15_tx_eq_data;
-    wire eq_phase_done, eq_phase_failed;
+    wire eq_phase_done, eq_phase_failed, eq_phase1_skip;
+    // Set once the 8.0 GT/s equalization procedure has ended (Phase 1 skip
+    // exit or Phase 3 close).  While set, RcvrLock/RcvrCfg at 8.0 GT/s take
+    // the ordinary post-equalization path instead of looping back into
+    // Recovery.Speed/Equalization; a fresh speed_retrain_active pulse (or
+    // Recovery.Speed) clears it for the next equalization cycle.
+    reg eq_completed_8g;
     wire [3:0] eq_phase_ts_count;
     wire [2:0] eq_operation_state;
     assign gen3_eq_active = eq_phase_valid;
@@ -625,6 +631,7 @@ module pcie_ltssm_mac_gen1 #(
         .eq_rsp_coeff(eq_rsp_coeff),
         .tx_eq_control(k15_tx_eq_control), .tx_eq_data(k15_tx_eq_data),
         .phase_done(eq_phase_done), .phase_failed(eq_phase_failed),
+        .phase1_exit_skip(eq_phase1_skip),
         .phase_ts_count(eq_phase_ts_count),
         .operation_state(eq_operation_state)
     );
@@ -875,6 +882,7 @@ module pcie_ltssm_mac_gen1 #(
             dbg_l0_seen <= 1'b0;
             cfg_complete_pending <= 1'b0;
             recovery_speed_changed <= 1'b0;
+            eq_completed_8g <= 1'b0;
             speed_retrain_active_q <= 1'b0;
             recovery_speed_eios_sent <= 1'b0;
         end else begin
@@ -883,8 +891,10 @@ module pcie_ltssm_mac_gen1 #(
                 recovery_speed_eios_sent <= 1'b0;
             else if (!recovery_needs_gen1_eios || gen1_eios_complete)
                 recovery_speed_eios_sent <= 1'b1;
-            if (speed_retrain_active && !speed_retrain_active_q)
+            if (speed_retrain_active && !speed_retrain_active_q) begin
                 recovery_speed_changed <= 1'b0;
+                eq_completed_8g <= 1'b0;
+            end
             speed_retrain_active_q <= speed_retrain_active;
             if (ltssm_state == CFG_COMPLETE)
                 dbg_cfg_complete_seen <= 1'b1;
@@ -1223,8 +1233,14 @@ module pcie_ltssm_mac_gen1 #(
                         end else if (os_ts1_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
+                                // eq_completed_8g: this RcvrLock follows an
+                                // already-finished 8.0 GT/s equalization (e.g.
+                                // the Phase-1 skip exit) -- run the ordinary
+                                // RcvrCfg handshake instead of restarting the
+                                // equalization procedure.
                                 ltssm_state <= ((active_phy_rate == 2'b10) &&
-                                                recovery_speed_changed) ?
+                                                recovery_speed_changed &&
+                                                !eq_completed_8g) ?
                                                RECOVERY_EQ_PHASE0 :
                                                RECOVERY_RCVRCFG;
                                 state_timer <= 32'd0;
@@ -1253,10 +1269,17 @@ module pcie_ltssm_mac_gen1 #(
                         end else if (os_ts2_valid && !os_link_is_pad && !os_lane_is_pad &&
                             (os_link_number == link_number) && (os_lane_number == 0)) begin
                             if (rx_ts_count == TS_REQUIRED-1'b1) begin
-                                if (speed_retrain_active &&
-                                    (!recovery_speed_changed ||
-                                     (recovery_fallback_active &&
-                                      (active_phy_rate != 2'b00))))
+                                // eq_completed_8g: the equalization that
+                                // accompanied this speed change has finished
+                                // (Phase-1 skip or Phase-3 close) -- settle
+                                // through Recovery.Idle instead of routing
+                                // back into Recovery.Speed, which would
+                                // restart the equalization forever.
+                                if ((speed_retrain_active &&
+                                     !recovery_speed_changed &&
+                                     !eq_completed_8g) ||
+                                    (recovery_fallback_active &&
+                                     (active_phy_rate != 2'b00)))
                                     ltssm_state <= RECOVERY_SPEED;
                                 else
                                     ltssm_state <= RECOVERY_IDLE;
@@ -1276,6 +1299,7 @@ module pcie_ltssm_mac_gen1 #(
                         rx_ts_count <= 5'd0;
                         if (recovery_speed_done) begin
                             recovery_speed_changed <= 1'b1;
+                            eq_completed_8g <= 1'b0;
                             ltssm_state <= RECOVERY_RCVRLOCK;
                             state_timer <= 32'd0;
                         end else if (state_timer >= TRAIN_TIMEOUT_LIMIT) begin
@@ -1302,7 +1326,20 @@ module pcie_ltssm_mac_gen1 #(
                             ltssm_state <= RECOVERY_SPEED;
                             state_timer <= 32'd0;
                         end else if (eq_phase_done && (state_timer != 0)) begin
-                            ltssm_state <= RECOVERY_EQ_PHASE2;
+                            // 4.2.6.4.2.2.2: eight consecutive EC=00 TS1s mean
+                            // the downstream ended equalization without Phase
+                            // 2/3 and is already in Recovery.RcvrLock --
+                            // finish the retrain through the ordinary
+                            // RcvrLock/RcvrCfg handshake instead of requesting
+                            // Phase 2 from a partner that has left.  Clearing
+                            // recovery_speed_changed keeps RcvrLock from
+                            // re-entering Phase 0, and eq_completed_8g keeps
+                            // RcvrCfg from looping back into Recovery.Speed.
+                            eq_completed_8g <= 1'b1;
+                            recovery_speed_changed <= 1'b0;
+                            ltssm_state <= eq_phase1_skip ?
+                                           RECOVERY_RCVRLOCK :
+                                           RECOVERY_EQ_PHASE2;
                             state_timer <= 32'd0;
                         end
                     end
@@ -1324,6 +1361,7 @@ module pcie_ltssm_mac_gen1 #(
                             ltssm_state <= RECOVERY_SPEED;
                             state_timer <= 32'd0;
                         end else if (eq_phase_done && (state_timer != 0)) begin
+                            eq_completed_8g <= 1'b1;
                             ltssm_state <= RECOVERY_RCVRCFG;
                             state_timer <= 32'd0;
                         end
