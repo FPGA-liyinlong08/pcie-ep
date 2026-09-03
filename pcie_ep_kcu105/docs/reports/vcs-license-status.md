@@ -153,3 +153,15 @@ Cannot open /home/wx/Documents/vcs_compile_simlib/synopsys_sim.setup
 `XILINX_VCS_SIMLIB`、`VIVADO_SIMLIB`、本机已知路径的顺序选择 simlib，
 为每次运行生成临时 `synopsys_sim.setup` 并设置 `SYNOPSYS_SIM_SETUP`。
 迁移到其他电脑时只需设置环境变量，不应把机器路径提交回仓库 setup。
+
+## 2026-09-03 XDMA Golden 当前复核
+
+`make xdma-x1-svt-vcs` 的源码编译和 VCS common elaboration 均可开始，但在本
+受限执行环境中，直接运行 `lmutil lmstat -c 27000@wx-linux` 返回
+`(-15,570) Operation not permitted`；这表示环境网络策略阻断了 FlexNet 端口，
+不是 license feature 不存在或席位耗尽。
+
+在允许访问许可证端口的受控环境复核结果为：`wx-linux`/`snpslmd` UP，
+`VCSCompiler_Net` 99 issued/0 in use，`VCSRuntime_Net` 99 issued/0 in use。
+因此 Golden 必须迁移到可访问 `27000@wx-linux` 的执行环境运行；继续增加
+`-licqueue` timeout、重启 daemon 或修改 RTL 都不能解决本轮阻塞。

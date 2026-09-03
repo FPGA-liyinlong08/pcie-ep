@@ -1,5 +1,6 @@
 build/
 sim/vcs_svt/build_k14/
+sim/vcs_svt/build_xdma_x1/
 sim_build*/
 results*.xml
 sim/verilator/k*/negative_checker_observed.txt

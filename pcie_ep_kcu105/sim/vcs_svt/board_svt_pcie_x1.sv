@@ -65,6 +65,9 @@ module test_top;
     reg [2:0] ep_rxblk_last;
     reg [31:0] ep_rxblk_w0;
     integer ep_rxblk_trace_count;
+    integer phy_forensics_count;
+    integer phy_forensics_skp_count;
+    integer phy_forensics_error_count;
 
     `include "svc_util_parms.v"
 
@@ -102,6 +105,9 @@ module test_top;
         sh11_ep_head = 0;
         sh11_ep_post = 0;
         ep_rxblk_trace_count = 0;
+        phy_forensics_count = 0;
+        phy_forensics_skp_count = 0;
+        phy_forensics_error_count = 0;
         ep_ltssm_trace_last = 6'h3f;
         global_random_seed = 0;
         apply_reset_epoch();
@@ -374,6 +380,42 @@ module test_top;
         end else if (ep_ltssm_state != ep_ltssm_trace_last) begin
             ep_ltssm_trace_last <= ep_ltssm_state;
         end
+    end
+
+    // Unified physical/data-stream evidence record.  This deliberately uses
+    // the same field names and ordering as the XDMA Golden probe, allowing a
+    // cycle-by-cycle diff at the first Gen3 L0/SKP/compensation divergence.
+    // It is opt-in so normal K15 regressions retain their existing log volume.
+    always @(posedge root0.port0.pipe_clk) begin
+        if ($test$plusargs("PHY_FORENSICS") && !vip_reset &&
+            (DUT.phy_active_rate == 2'b10) && (phy_forensics_count < 20000)) begin
+            #1;
+            if (root0.port0.pcs0_rx_start_block)
+                phy_forensics_skp_count = phy_forensics_skp_count + 1;
+            if ((root0.port0.pcs0_rx_sync_header == 2'b11) ||
+                (root0.port0.pcs0_rx_status != 0) ||
+                (root0.port0.pcs0_rx_ei_code != 0))
+                phy_forensics_error_count = phy_forensics_error_count + 1;
+            $display("PHY_FORENSICS side=K15 t_ps=%0t ltssm=%02h rate=%0d txdata=%08h txdata_valid=%0d txstart_block=%0d txsync_header=%02h tx_electrical_idle=%0d rxdata=%08h rxdata_valid=%0d rxstart_block=%0d rxsync_header=%02h rxstatus=%0h rx_electrical_idle=%0d",
+                     $time, ep_ltssm_state,
+                     (DUT.phy_active_rate == 2'b10) ? 3 :
+                     ((DUT.phy_active_rate == 2'b01) ? 2 : 1),
+                     DUT.phy_txdata, DUT.phy_txdata_valid,
+                     DUT.phy_txstart_block, DUT.phy_txsync_header,
+                     DUT.phy_txelecidle, root0.port0.pcs0_rx_data,
+                     root0.port0.pcs0_rx_data_valid,
+                     root0.port0.pcs0_rx_start_block,
+                     root0.port0.pcs0_rx_sync_header,
+                     root0.port0.pcs0_rx_status,
+                     DUT.phy_rxelecidle);
+            phy_forensics_count = phy_forensics_count + 1;
+        end
+    end
+
+    final begin
+        $display("K15_SVT_FORENSICS_SUMMARY records=%0d start_blocks=%0d errors=%0d",
+                 phy_forensics_count, phy_forensics_skp_count,
+                 phy_forensics_error_count);
     end
 
     // K15_L0FIX: re-arm the beat captures at the EP's first Gen3

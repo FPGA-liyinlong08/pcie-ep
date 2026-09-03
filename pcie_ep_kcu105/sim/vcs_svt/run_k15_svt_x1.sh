@@ -37,6 +37,7 @@ svt_fail_marker="${SVT_FAIL_MARKER:-K15_SVT_X1_FAIL}"
 svt_run_label="${SVT_RUN_LABEL:-K15_SVT_X1}"
 phase2_only="${K15_SVT_PHASE2_ONLY:-0}"
 header_held_ab="${K15_SVT_HEADER_HELD_AB:-0}"
+forensics_enable="${K15_SVT_FORENSICS:-1}"
 
 if [[ -n "${XILINX_VCS_SIMLIB:-}" ]]; then
     simlib_dir="${XILINX_VCS_SIMLIB}"
@@ -250,6 +251,9 @@ fi
 simulation_plusargs=()
 if [[ "${phase2_only}" == "1" ]]; then
     simulation_plusargs+=(+K15_PHASE2_ONLY)
+fi
+if [[ "${forensics_enable}" == "1" ]]; then
+    simulation_plusargs+=(+PHY_FORENSICS)
 fi
 
 for ((process_epoch = 0; process_epoch < process_epochs; process_epoch++)); do

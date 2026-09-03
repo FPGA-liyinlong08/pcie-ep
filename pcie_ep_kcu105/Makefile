@@ -53,7 +53,7 @@ DESIGNWARE_HOME ?= /home/wx/synopsys/designware
 	k13-rate-contract k13-ctrl-lint k13-ctrl-sim \
 	ku040-hw-probe ku040-hw-program \
 	remote-check remote-reboot remote-wait remote-lspci remote-cycle remote-retrain-gen3 \
-	xdma-x1-demo xdma-x1-hw-program clean
+	xdma-x1-demo xdma-x1-svt-vcs xdma-x1-hw-program clean
 
 PYTHON ?= python3
 VIVADO ?= /home/Xilinx/Vivado/2021.2/bin/vivado
@@ -725,6 +725,9 @@ g2-gen1-hw-program:
 
 xdma-x1-demo:
 	./fpga/kcu105/xdma_x1_demo/run_xdma_x1_demo.sh
+
+xdma-x1-svt-vcs:
+	DESIGNWARE_HOME="$(DESIGNWARE_HOME)" ./sim/vcs_svt/run_xdma_x1_svt.sh
 
 xdma-x1-hw-program:
 	$(VIVADO) -mode batch -nojournal -nolog \

@@ -179,3 +179,18 @@ parity，禁止携带 SVT 的 64-byte 诊断密度。
 `non-IDL token 0x4a`。因此“进入 L0”修复不是密集模式的偶然结果；默认路径
 和密集诊断路径只是同一 65-byte 模型问题的两种表现（前者首帧规范 SKP 尚未
 到期，后者第二帧 SKP_END 被模型删除）。
+
+## 七、官方 XDMA Golden A/B（2026-09-03，本轮）
+
+已建立 `xdma_x1_demo` 官方 Endpoint + 同一 SVT RP 的串行 Golden，并加入
+`XDMA_SVT_GEN3_L0_PASS`（首次进入）和 `XDMA_SVT_L0_STABLE_PASS`（随后
+8192 个 Gen3 PIPE 周期）两级判定。Golden 与 K15 均输出统一
+`PHY_FORENSICS side=...` 字段，可由
+`sim/vcs_svt/analyze_phy_forensics.py` 统计 stall、header、status、0x4a 和
+start-block 间隔。
+
+本轮运行被 `27000@wx-linux` 的 VCS license checkout 阻塞在 elaboration，
+尚未生成可用的 Golden `simulate.log`；故不能把 K15 的 65-byte/`0x4a` 事实
+外推为 Golden 事实，也暂不修改生产 RTL。解锁后应先取得 Golden 稳定性和
+同格式首个差异，再按 A/B 报告
+`docs/reports/xdma-svt-k15-ab-root-cause-20260903.md` 的判定表归因。
