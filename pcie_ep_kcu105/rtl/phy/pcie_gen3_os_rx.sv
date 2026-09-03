@@ -37,6 +37,7 @@ module pcie_gen3_os_rx (
     localparam [7:0] D_TS2 = 8'h45;
     localparam [7:0] OS_TS1 = 8'h1e;
     localparam [7:0] OS_TS2 = 8'h2d;
+    localparam [31:0] EDS_TOKEN = 32'h0090_801f;
     localparam [1:0] SH_ORDERED_SET = 2'b01;
     localparam [2:0] BLOCK_NONE  = 3'd0;
     localparam [2:0] BLOCK_EIEOS = 3'd1;
@@ -53,11 +54,13 @@ module pcie_gen3_os_rx (
     reg lfsr_ready;
     reg data_stream_armed;
     reg [22:0] lfsr_state;
+    reg data_parity;
     wire [31:0] descrambled_data;
     wire [22:0] lfsr_next;
     wire [31:0] expected_skp_end = {
         lfsr_state[7:0], lfsr_state[15:8],
-        ~lfsr_state[22], lfsr_state[22:16], 8'he1
+        data_stream_armed ? data_parity : ~lfsr_state[22],
+        lfsr_state[22:16], 8'he1
     };
     wire ts_start = start_block &&
                     ((in_data[7:0] == OS_TS1) ||
@@ -78,6 +81,7 @@ module pcie_gen3_os_rx (
             lfsr_ready <= 1'b0;
             data_stream_armed <= 1'b0;
             lfsr_state <= LANE0_SEED;
+            data_parity <= 1'b0;
             ts1_valid <= 1'b0;
             ts2_valid <= 1'b0;
             malformed <= 1'b0;
@@ -106,6 +110,7 @@ module pcie_gen3_os_rx (
                 lfsr_ready <= 1'b0;
                 data_stream_armed <= 1'b0;
                 lfsr_state <= LANE0_SEED;
+                data_parity <= 1'b0;
             end else if (!in_valid) begin
                 // RxDataValid is a per-cycle use/ignore qualifier.  A bubble
                 // inside a 128-bit block does not terminate or corrupt it.
@@ -118,10 +123,9 @@ module pcie_gen3_os_rx (
                     eieos_start <= 1'b1;
                 end else if (in_data == 32'haaaa_aaaa) begin
                     block_kind <= BLOCK_SKP;
-                    // SKP OSs are inserted inside the data stream, not at
-                    // its end: keep data_stream_armed so logical idle
-                    // resumes after the deleted SKP block (a non-idle data
-                    // block here still fails the descramble-to-zero check).
+                    // An in-stream SKP is preceded by an EDS token, but does
+                    // not end the Data Stream; keep data_stream_armed so the
+                    // following Data Block resumes without another SDS.
                 end else if ((in_data == 32'h5555_55e1) && lfsr_ready) begin
                     block_kind <= BLOCK_SDS;
                     data_stream_armed <= 1'b0;
@@ -142,6 +146,7 @@ module pcie_gen3_os_rx (
                     block_kind <= BLOCK_IDLE;
                     parse_error <= (descrambled_data != 32'd0);
                     lfsr_state <= lfsr_next;
+                    data_parity <= data_parity ^ (^in_data);
                 end else begin
                     block_kind <= BLOCK_NONE;
                     malformed <= 1'b1;
@@ -158,6 +163,7 @@ module pcie_gen3_os_rx (
                             end else begin
                                 lfsr_state <= LANE0_SEED;
                                 lfsr_ready <= 1'b1;
+                                data_parity <= 1'b0;
                             end
                             block_kind <= BLOCK_NONE;
                             word_index <= 2'd0;
@@ -176,6 +182,7 @@ module pcie_gen3_os_rx (
                             end
                             block_kind <= BLOCK_NONE;
                             word_index <= 2'd0;
+                            data_parity <= 1'b0;
                         end else word_index <= word_index + 1'b1;
                     end
                     BLOCK_SDS: begin
@@ -191,6 +198,7 @@ module pcie_gen3_os_rx (
                                 data_stream_armed <= 1'b0;
                             end else begin
                                 data_stream_armed <= 1'b1;
+                                data_parity <= 1'b0;
                             end
                         end else begin
                             word_index <= word_index + 1'b1;
@@ -243,14 +251,21 @@ module pcie_gen3_os_rx (
                     end
                     BLOCK_IDLE: begin
                         lfsr_state <= lfsr_next;
-                        if (descrambled_data != 32'd0)
+                        data_parity <= data_parity ^ (^in_data);
+                        if ((word_index != 2'd3) &&
+                            (descrambled_data != 32'd0))
                             parse_error <= 1'b1;
                         if (word_index == 2'd3) begin
                             block_kind <= BLOCK_NONE;
                             word_index <= 2'd0;
-                            if (parse_error || (descrambled_data != 32'd0))
+                            // A valid idle data block may end either in IDL
+                            // or in the four-Symbol EDS token that frames an
+                            // immediately following SKP Ordered Set.
+                            if (parse_error ||
+                                ((descrambled_data != 32'd0) &&
+                                 (descrambled_data != EDS_TOKEN)))
                                 malformed <= 1'b1;
-                            else
+                            else if (descrambled_data == 32'd0)
                                 idle_valid <= 1'b1;
                         end else begin
                             word_index <= word_index + 1'b1;

@@ -12,8 +12,8 @@
 // The GT only substitutes SKPs at its own buffer-drift rate, however, and
 // the SVT VIP's max_rx_skp_interval check (and PG239's "the MAC must
 // transmit SKP Ordered Sets as 16 symbols") require the MAC to emit
-// explicit Gen3 SKP OS content: once every 8 cadence periods the 8th block
-// of the 16-block run is replaced by a 16-symbol SKP OS (13x 1Ch + SKP_END
+// explicit Gen3 SKP OS content: once every 8 cadence periods a block in
+// the 16-block run is replaced by a 16-symbol SKP OS (12x AAh + SKP_END
 // carrying Data Parity and the LFSR value). The LFSR is frozen across the
 // SKP block exactly like the valid gap.
 // SDS is for the Ordered-Set-to-Data-Stream transition in Recovery.Idle.
@@ -71,27 +71,10 @@ module pcie_gen3_os_tx (
     localparam [1:0] SEND_TS    = 2'd2;
     localparam [1:0] SEND_GAP   = 2'd3;
     // One explicit SKP OS every 8 cadence periods (~260 blocks, well under
-    // the VIP's 375-block max_rx_skp_interval).
+    // the VIP's 375-block max_rx_skp_interval).  This counter advances at a
+    // cadence boundary, independently of gap_run and EIEOS completion.
     localparam [2:0] SKP_PERIOD = 3'd7;
     localparam [22:0] LANE0_SEED = 23'h1dbfbc;
-    // l0fix31k root cause: the GT secureip does not substitute an SKP OS at
-    // the 1-beat Recovery-stream gap; each gap beat reaches an
-    // insertion-type receiver (SVT VIP) as one extra byte on the wire (a
-    // repeat of the preceding byte), and the VIP's descrambler LFSR counts
-    // those bytes while this transmitter's LFSR freezes across the gap --
-    // the phases diverge by one symbol per gap and the VIP eventually
-    // descrambles a false token ("non-IDL token 0x4a") in Recovery.Idle.
-    // K15_SVT_RCVR_GAP_OFF removes the gap beats from the Recovery stream
-    // entirely and schedules the periodic EIEOS directly (framed EIEOS
-    // blocks re-seed both scramblers, so drift cannot accumulate).  The
-    // Xilinx RP profile keeps the gap structure that l0fix30b proved out
-    // (its comp deletion is phase-aligned onto the gap beat).
-`ifdef K15_SVT_RCVR_GAP_OFF
-    localparam RCVR_GAP_OFF = 1'b1;
-`else
-    localparam RCVR_GAP_OFF = 1'b0;
-`endif
-
     reg [1:0] word_index;
     reg [1:0] active_mode;
     reg [1:0] stream_state;
@@ -247,6 +230,8 @@ module pcie_gen3_os_tx (
                 // second gap of the period the stream returns to EIEOS.
                 // The LFSR is frozen across the gap.
                 gap_run <= ~gap_run;
+                if (gap_run)
+                    skp_period_count <= skp_period_count + 1'b1;
                 // Periodic EIEOS slot: suppressed while the MAC holds
                 // eieos_suppress (RcvrCfg TS2 phase); the stream then
                 // continues with TS blocks separated by 1-beat gaps.
@@ -258,8 +243,6 @@ module pcie_gen3_os_tx (
                 // frozen across the block (same semantics as the gap beat).
                 if (skp_word_index == 2'd3) begin
                     skp_word_index <= 2'd0;
-                    skp_period_count <= (skp_period_count == SKP_PERIOD) ?
-                                        3'd0 : skp_period_count + 1'b1;
                     word_index <= 2'd0;
                     if (mode == 2'd0) begin
                         active_mode <= 2'd0;
@@ -279,7 +262,7 @@ module pcie_gen3_os_tx (
                     active_mode <= 2'd0;
                     stream_state <= SEND_EIEOS;
                     ts_interval_count <= 6'd0;
-                end else if (!RCVR_GAP_OFF && ts_interval_count ==
+                end else if (ts_interval_count ==
                              (gap_run ? 6'd15 : 6'd14)) begin
                     // Official cadence: 1-beat PIPE gap between TS block
                     // runs (15 blocks then 16 blocks per EIEOS period), so
@@ -287,28 +270,19 @@ module pcie_gen3_os_tx (
                     active_mode <= mode;
                     stream_state <= SEND_GAP;
                     ts_interval_count <= 6'd0;
-                end else if (RCVR_GAP_OFF && (ts_interval_count == 6'd30)) begin
-                    // Gap-free cadence (K15_SVT_RCVR_GAP_OFF): 31 TS blocks
-                    // per period, then the EIEOS slot directly (no gap beat
-                    // in front of it).  eieos_suppress (RcvrCfg/Idle) still
-                    // masks the slot -- the stream then just continues with
-                    // TS blocks.  gap_run keeps toggling so the explicit
-                    // SKP OS fires on alternating periods as before.
-                    active_mode <= mode;
-                    stream_state <= eieos_suppress ? SEND_TS : SEND_EIEOS;
-                    ts_interval_count <= 6'd0;
-                    gap_run <= ~gap_run;
                 end else if (gap_run && (ts_interval_count == 6'd7) &&
-                             (skp_period_count == 3'd0)) begin
-                    // Insert an explicit SKP OS after the 8th block of the
-                    // 16-block run once every SKP_PERIOD+1 cadence periods
-                    // (the period gains one beat, negligible against the
-                    // VIP's 375-block budget).  The gap before the periodic
-                    // EIEOS stays adjacent.
+                             (skp_period_count == SKP_PERIOD)) begin
+                    // Replace the 9th block slot with an explicit SKP OS once
+                    // every SKP_PERIOD+1 cadence periods.  Counting the SKP
+                    // as a cadence block is essential: treating it as an
+                    // extra block shifts the following GT compensation grid
+                    // by four beats and produces a false data block before
+                    // SDS.  The gap before periodic EIEOS stays adjacent.
+                    // The 16-block second run is selected via gap_run.
                     active_mode <= mode;
                     stream_state <= SEND_SKP;
                     skp_word_index <= 2'd0;
-                    ts_interval_count <= 6'd8;
+                    ts_interval_count <= 6'd9;
                 end else begin
                     active_mode <= mode;
                     ts_interval_count <= ts_interval_count + 1'b1;
@@ -339,11 +313,11 @@ module pcie_gen3_os_tx (
             // PAT_GEN_GEN3_PAT_Z3/Z4 states.  l0fix31k forensics: the GT
             // secureip never transmits the gap beat's own TXDATA -- the
             // receiver sees a *repeat of the preceding byte* (one extra
-            // unframed byte per gap, no SKP substitution).  That extra byte
-            // is scrambler-counted by insertion-type receivers, so SVT runs
-            // remove the gap entirely (K15_SVT_RCVR_GAP_OFF); the Xilinx RP
-            // GT deletes the gap beat wholesale (content-independent), so
-            // the gap content is don't-care there.
+            // unframed byte per gap, no SKP substitution).  The official
+            // 15/16 gap cadence must nevertheless remain intact through EQ
+            // and RcvrCfg; removing either gap prevents the VIP state machine
+            // from completing those phases.  Explicit SKP blocks are counted
+            // as cadence slots above so they do not shift this grid.
             out_data = 32'd0;
             out_valid = 1'b0;
             start_block = 1'b0;

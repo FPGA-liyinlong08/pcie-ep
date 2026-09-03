@@ -31,7 +31,7 @@ DESIGNWARE_HOME ?= /home/wx/synopsys/designware
 	k14-rate-id-ab-vcs \
 	k14-direct-sim \
 	k14-reboot-vcs k14-reboot-sim \
-	k15-directed-test k15-preset-capture-test k15-static k15-vcs k15-vcs-phase2 k15-svt-vcs \
+	k15-directed-test k15-directed-dense-test k15-preset-capture-test k15-static k15-vcs k15-vcs-phase2 k15-svt-vcs \
 	k15-svt-phase2-vcs k15 \
 	g2-gen1-vcs-serial g2-gen1-vivado g2-gen1-hw-program \
 	k11b2-debug-finalize k11b2-ila-lint k11b2-ila-vivado \
@@ -287,6 +287,7 @@ phy-command-ownership:
 
 k15-directed-test:
 	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \
+		$(K15_VERILATOR_DEFINES) \
 		--top-module k15_eq_idle_test_top \
 		$(CURDIR)/rtl/phy/pcie_gen3_scrambler32.sv \
 		$(CURDIR)/rtl/phy/pcie_gen3_os_rx.sv \
@@ -297,6 +298,9 @@ k15-directed-test:
 		$(CURDIR)/sim/verilator/k15/k15_eq_idle_test.cpp \
 		-Mdir sim/verilator/k15/sim_build
 	./sim/verilator/k15/sim_build/Vk15_eq_idle_test_top
+
+k15-directed-dense-test:
+	$(MAKE) k15-directed-test K15_VERILATOR_DEFINES=-DK15_L0_SKP_DENSE
 
 k15-preset-capture-test:
 	verilator --cc --exe --build -Wall -Wno-fatal -Wno-TIMESCALEMOD \

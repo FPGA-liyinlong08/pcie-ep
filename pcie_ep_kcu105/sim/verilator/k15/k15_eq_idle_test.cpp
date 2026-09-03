@@ -300,29 +300,44 @@ int main(int argc, char **argv) {
                 "Phase0 TS sync header");
         tick(d);
     }
-    bool periodic_skp_seen = false;
+    int periodic_skp_started = 0;
+    int periodic_skp_completed = 0;
+    int blocks_since_skp = 0;
     int skp_word = -1;
-    for (int i = 0; i < 2200 && !periodic_skp_seen; ++i) {
-        if (d.training_start_block && d.training_data == 0xaaaaaaaa)
+    for (int i = 0; i < 3200 && periodic_skp_completed < 2; ++i) {
+        if (d.training_start_block && d.training_data == 0xaaaaaaaa) {
+            if (periodic_skp_started > 0)
+                require(blocks_since_skp <= 375,
+                        "periodic SKP interval exceeds 375 blocks");
+            ++periodic_skp_started;
+            blocks_since_skp = 0;
             skp_word = 0;
-        else if (skp_word >= 0)
-            ++skp_word;
-        if (skp_word >= 0 && skp_word < 3)
+        } else {
+            if (d.training_start_block && periodic_skp_started > 0)
+                ++blocks_since_skp;
+            if (skp_word >= 0)
+                ++skp_word;
+        }
+        if (skp_word >= 0 && skp_word < 3) {
             require(d.training_data == 0xaaaaaaaa,
                     "periodic SKP prefix malformed");
-        if (skp_word == 3) {
+        } else if (skp_word == 3) {
             require((d.training_data & 0xff) == 0xe1,
                     "periodic SKP_END identifier");
             require(d.training_data != 0xbcbf9de1,
                     "periodic SKP_END must carry live LFSR state");
-            periodic_skp_seen = true;
+            ++periodic_skp_completed;
+            skp_word = -1;
+        } else if (skp_word >= 0) {
+            ++skp_word;
         }
         tick(d);
         require(!d.idle_malformed,
                 "dynamic periodic SKP rejected by receiver");
     }
-    require(periodic_skp_seen, "periodic dynamic SKP was not emitted");
-    std::cout << "K15_DYNAMIC_SKP_END_PASS\n";
+    require(periodic_skp_completed == 2,
+            "periodic dynamic SKP did not recur");
+    std::cout << "K15_DYNAMIC_SKP_END_PASS recurring=2\n";
     d.training_enable = 0;
     d.idle_enable = 1;
     int idle_pulses = 0;

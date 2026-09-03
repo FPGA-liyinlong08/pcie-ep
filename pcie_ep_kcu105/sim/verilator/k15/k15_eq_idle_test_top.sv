@@ -102,6 +102,7 @@ module k15_eq_idle_test_top (
         .lane_number(8'd0), .lane_is_pad(1'b0), .n_fts(8'hff),
         .rate_id(8'h0e), .training_control(8'h00),
         .eq_control(8'h20), .eq_data(24'h802800),
+        .eieos_suppress(1'b0),
         .out_data(training_data), .out_valid(training_valid),
         .start_block(training_start_block),
         .sync_header(training_sync_header),

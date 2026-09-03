@@ -1389,7 +1389,15 @@ module pcie_ltssm_mac_gen1 #(
                         // K13 Speed/EQ控制未释放前保持Recovery，避免PHY已切速而
                         // 生产LTSSM提前回L0并恢复Gen1事务。
                         if (!force_recovery && os_idle_pair_valid) begin
-                            if (rx_ts_count == TS_REQUIRED-1'b1) begin
+                            // At 8 GT/s, gen3_os_idle_valid represents one
+                            // fully descrambled 16-Symbol Logical-Idle Data
+                            // Block, which already exceeds the eight
+                            // consecutive IDL Symbols required for
+                            // Recovery.Idle exit.  TS_REQUIRED counts whole
+                            // Gen1/2 idle pairs and must not be reused as an
+                            // eight-*block* requirement here.
+                            if (gen3_mode ||
+                                (rx_ts_count == TS_REQUIRED-1'b1)) begin
                                 ltssm_state <= STATE_L0;
                                 state_timer <= 32'd0;
                                 rx_ts_count <= 5'd0;

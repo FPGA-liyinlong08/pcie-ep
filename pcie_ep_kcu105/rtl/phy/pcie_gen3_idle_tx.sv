@@ -2,8 +2,10 @@
 `default_nettype none
 
 // Minimal K15 Gen3 Data Stream source.  It emits one SDS block followed by
-// continuous scrambled 128-bit logical-idle data blocks, separated every 370
-// and 371 blocks by an explicit 16-symbol SKP Ordered Set block, and pauses
+// continuous scrambled 128-bit logical-idle data blocks.  An EDS-terminated
+// Data Block frames each explicit 16-symbol SKP Ordered Set scheduled every
+// 370/371 blocks, after which the Data Stream resumes without another SDS.
+// The transmitter also pauses
 // TXDATA_VALID for one beat at a block boundary every 16 blocks (128b/130b
 // rate match; see RATE_GAP_BLOCKS below).
 //
@@ -38,22 +40,32 @@ module pcie_gen3_idle_tx (
     localparam [1:0] SH_ORDERED_SET = 2'b01;
     localparam [1:0] SH_DATA = 2'b10;
     localparam [22:0] LANE0_SEED = 23'h1dbfbc;
-    localparam [1:0] SEND_SDS = 2'd0;
-    localparam [1:0] SEND_IDLE = 2'd1;
-    localparam [1:0] SEND_SKP  = 2'd2;
-    localparam [1:0] SEND_GAP  = 2'd3;
+    localparam [2:0] SEND_SDS  = 3'd0;
+    localparam [2:0] SEND_IDLE = 3'd1;
+    localparam [2:0] SEND_SKP  = 3'd2;
+    localparam [2:0] SEND_GAP  = 3'd3;
+    localparam [2:0] SEND_EDS  = 3'd4;
+    // Four-Symbol End Data Stream token, wire byte order 1f 80 90 00.
+    localparam [31:0] EDS_TOKEN = 32'h0090_801f;
     // Gen3 SKP symbol: 8'haa (8'h1c is the 8b/10b Gen1/2 code).
     localparam [7:0] SKP_SYM = 8'haa;
     // Spec Errata B34: SKP OS interval 370..375 blocks outside SRIS.  The
     // 10-bit counter toggles between 370 and 371 so both values stay legal.
-    // DEBUG K15_RP_L0_FIX: dense SRIS-class cadence so the RP RX GT always
-    // has real SKP OSs to clock-correct against in L0.
+    // Diagnostic dense cadence for the 65-byte compensation artifact in the
+    // composed Xilinx secureip/SVT model.  It is not the board default.
 `ifdef K15_L0_SKP_DENSE
-    localparam [9:0] SKP_GAP_A = 10'd4;
-    localparam [9:0] SKP_GAP_B = 10'd5;
+    // After the first SKP, two Idle Data Blocks plus the EDS and SKP blocks
+    // form a 64-byte cycle.  This brackets every 65-byte structural
+    // compensation event in the SVT PIPE model with a legal SKP boundary.
+    localparam [9:0] SKP_GAP_A = 10'd1;
+    localparam [9:0] SKP_GAP_B = 10'd1;
+    // Recovery.Idle still needs eight consecutive Idle Data Blocks before
+    // the first EDS/SKP pair is allowed to interrupt the stream.
+    localparam [9:0] FIRST_SKP_GAP = 10'd7;
 `else
     localparam [9:0] SKP_GAP_A = 10'd370;
     localparam [9:0] SKP_GAP_B = 10'd371;
+    localparam [9:0] FIRST_SKP_GAP = SKP_GAP_A;
 `endif
     // l0fix29 finding: the first SKP OS block in L0 breaks the RP GT's
     // 128b/130b framing (3 aa beats decoded, 4th beat alien, sb never
@@ -110,19 +122,28 @@ module pcie_gen3_idle_tx (
     localparam [4:0] RATE_GAP_PHASE = 5'd0;
 `endif
 
-    reg [1:0] state;
+    reg [2:0] state;
     reg [1:0] word_index;
     reg [1:0] skp_word_index;
     reg [22:0] lfsr_state;
+    // XOR reduction of every scrambled Data Block payload bit since the
+    // preceding SDS/SKP boundary.  This is the SKP_END Data Parity bit;
+    // deriving it from LFSR[22] is only valid for the old no-data training
+    // case and fails once logical-idle blocks precede a SKP.
+    reg       data_parity;
     reg [9:0] skp_gap_count;
     reg [4:0] rate_gap_cnt;
     reg       gap_run;
-    wire [31:0] scrambled_zero;
+    reg       first_skp_pending;
+    wire [31:0] scrambler_data_in = ((state == SEND_EDS) &&
+                                     (word_index == 2'd3)) ? EDS_TOKEN : 32'd0;
+    wire [31:0] scrambled_data;
     wire [22:0] lfsr_next;
 
     pcie_gen3_scrambler32 u_scrambler (
-        .state_in(lfsr_state), .data_in(32'd0), .bypass_byte(4'b0000),
-        .data_out(scrambled_zero), .state_out(lfsr_next)
+        .state_in(lfsr_state), .data_in(scrambler_data_in),
+        .bypass_byte(4'b0000), .data_out(scrambled_data),
+        .state_out(lfsr_next)
     );
 
     assign idle_block_complete = enable && (state == SEND_IDLE) &&
@@ -136,7 +157,9 @@ module pcie_gen3_idle_tx (
             skp_gap_count <= 10'd0;
             rate_gap_cnt <= 5'd0;
             gap_run <= 1'b0;
+            first_skp_pending <= 1'b1;
             lfsr_state <= LANE0_SEED;
+            data_parity <= 1'b0;
         end else if (!enable) begin
             state <= SEND_SDS;
             word_index <= 2'd0;
@@ -144,9 +167,11 @@ module pcie_gen3_idle_tx (
             skp_gap_count <= 10'd0;
             rate_gap_cnt <= 5'd0;
             gap_run <= 1'b0;
+            first_skp_pending <= 1'b1;
             // Track the training transmitter while idle.  On the first SDS
             // beat this is already the state after the final TS word.
             lfsr_state <= lfsr_state_in;
+            data_parity <= 1'b0;
         end else if (state == SEND_GAP) begin
             // One-beat pause between blocks; out_valid is low this beat and
             // the GT secureip substitutes an SKP OS (see RATE_GAP_BLOCKS).
@@ -160,27 +185,41 @@ module pcie_gen3_idle_tx (
                 word_index <= 2'd0;
                 rate_gap_cnt <= rate_gap_cnt + 1'b1;
                 state <= SEND_IDLE;
+                data_parity <= 1'b0;
             end else begin
                 skp_word_index <= skp_word_index + 1'b1;
             end
         end else if (word_index == 2'd3) begin
             word_index <= 2'd0;
+            if (state == SEND_IDLE)
+                data_parity <= data_parity ^ (^scrambled_data);
             if (state == SEND_SDS) begin
                 state <= SEND_IDLE;
+                data_parity <= 1'b0;
                 // Phase knob: offset the gap grid after each SDS.  With
                 // PHASE=0 the first gap fires after 16 blocks (65-beat
                 // period); PHASE=k shifts the whole grid k blocks earlier.
                 rate_gap_cnt <= RATE_GAP_PHASE;
+            end else if (state == SEND_EDS) begin
+                // A SKP Ordered Set may interrupt a Data Stream only when
+                // the preceding Data Block ends in an EDS token.  Resume
+                // directly with a Data Block after SKP; a second SDS is not
+                // used for this in-stream insertion.
+                state <= SEND_SKP;
+                skp_word_index <= 2'd0;
+                rate_gap_cnt <= rate_gap_cnt + 1'b1;
+                data_parity <= data_parity ^ (^scrambled_data);
             end else if (!GAP_OS_DISABLE &&
                          rate_gap_cnt >= RATE_GAP_BLOCKS - 5'd1) begin
                 rate_gap_cnt <= 5'd0;
                 state <= SEND_GAP;
             end else if (!SKP_OS_DISABLE &&
-                         skp_gap_count == (gap_run ? SKP_GAP_B : SKP_GAP_A)) begin
+                         skp_gap_count == (first_skp_pending ? FIRST_SKP_GAP :
+                                          (gap_run ? SKP_GAP_B : SKP_GAP_A))) begin
                 skp_gap_count <= 10'd0;
                 gap_run <= ~gap_run;
-                state <= SEND_SKP;
-                skp_word_index <= 2'd0;
+                first_skp_pending <= 1'b0;
+                state <= SEND_EDS;
                 rate_gap_cnt <= rate_gap_cnt + 1'b1;
             end else begin
                 skp_gap_count <= skp_gap_count + 1'b1;
@@ -192,6 +231,8 @@ module pcie_gen3_idle_tx (
         end else begin
             word_index <= word_index + 1'b1;
             lfsr_state <= lfsr_next;
+            if ((state == SEND_IDLE) || (state == SEND_EDS))
+                data_parity <= data_parity ^ (^scrambled_data);
         end
     end
 
@@ -211,7 +252,7 @@ module pcie_gen3_idle_tx (
             case (skp_word_index)
                 2'd0, 2'd1, 2'd2: out_data = {4{SKP_SYM}};
                 default: out_data = {lfsr_state[7:0], lfsr_state[15:8],
-                                     ~lfsr_state[22], lfsr_state[22:16],
+                                     data_parity, lfsr_state[22:16],
                                      8'he1};
             endcase
         end else if (state == SEND_SDS) begin
@@ -224,7 +265,7 @@ module pcie_gen3_idle_tx (
         end else begin
             sync_header = out_valid && (word_index == 2'd0) ?
                           SH_DATA : 2'b00;
-            out_data = scrambled_zero;
+            out_data = scrambled_data;
         end
     end
 endmodule

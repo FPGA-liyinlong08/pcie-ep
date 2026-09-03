@@ -197,12 +197,18 @@ fi
 # receivers therefore run the idle stream with NO gap beats -- rate matching
 # rides on the scheduled SKP OS blocks and the VIP's own benign stalls.
 rtl_defines+=("+define+K15_L0_GAP_OFF")
-# l0fix31k: same treatment for the Recovery TS stream -- each 1-beat gap
-# reaches the VIP as one extra repeated byte and the VIP's descrambler LFSR
-# counts it (+1 phase drift per gap -> false non-IDL token in Recovery.Idle).
-# The periodic EIEOS is scheduled directly (no gap in front of it); framed
-# EIEOS blocks re-seed both scramblers.
-rtl_defines+=("+define+K15_SVT_RCVR_GAP_OFF")
+# Diagnostic only: the SVT/Xilinx model combination inserts one structural
+# compensation byte every 65 byte clocks.  K15_SVT_L0_SKP_DENSE=1 schedules
+# the first SKP after eight Idle Blocks, then uses the 64-byte
+# 2-Idle+EDS+SKP grid.  Keep it opt-in: this artificial density is not the
+# normal 370/371-block board cadence and the model can delete SKP_END.
+if [[ "${K15_SVT_L0_SKP_DENSE:-0}" == "1" ]]; then
+    rtl_defines+=("+define+K15_L0_SKP_DENSE")
+fi
+# l0fix32 experiments proved both official Recovery cadence gaps are required
+# through EQ and RcvrCfg.  Do not define the retired K15_SVT_RCVR_GAP_OFF;
+# recurring explicit SKP OSs now replace a cadence block without shifting the
+# 15/16 gap grid.
 run_logged "${vcs_home}/bin/vlogan" -full64 -sverilog -work xil_defaultlib \
     "${rtl_defines[@]}" \
     "${rtl_paths[@]}" "${vivado_home}/data/verilog/src/glbl.v"
