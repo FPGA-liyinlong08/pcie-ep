@@ -196,3 +196,183 @@ start-block 间隔。
 Gen3 `PHY_FORENSICS`，不能把 K15 的 65-byte/`0x4a` 事实外推到 XDMA，也暂不
 修改生产 RTL。下一步应先修复 Golden/SVT PL callback 启动时序，再按
 `docs/reports/xdma-svt-k15-ab-root-cause-20260903.md` 的判定表做 A/B。
+
+## 八、0x4a 根因定位完成：GT TX 弹性缓冲溢出（64/65 duty 违例，2026-09-03）
+
+用 XDMA Golden 做字节级 A/B（不改生产 RTL，只做取证）：
+
+### 8.1 方法
+
+- K15 侧探针：`K15_SVT_EP_TX_PIPE`（`DUT.phy_tx*`，MAC 侧扰码后）与
+  `K15_SVT_RP_PIPE_RX`（VIP PCS 解扰前）捕的是**同一条流的两端**，可做
+  字节对齐（t_ps/1e3=ns；此前把 16ns 误读成"16 拍"的 TXSTART 异常作废，
+  实际每 4 拍 start、sh=10、与 idle_tx 设计一致）。
+- XDMA 侧探针死网线已修：`pcie3_ip_i.inst.pipe_tx_0_sigs` 在编译的
+  `EXT_PIPE_SIM=="FALSE"` 分支被 tie 成 `84'd0`（core_top line 4542）；
+  改探 unpacked 活信号 `pipe_tx0_data/char_is_k/elec_idle/data_valid/
+  start_block/syncheader`（core_top lines 1389-1461 → GT 4299-4379）。
+  重跑 Golden 仍 `XDMA_SVT_L0_STABLE_PASS cycles=8192 errors=0`。
+
+### 8.2 XDMA 官方 TX 行为（Golden 实测）
+
+- Gen3 L0 中官方 MAC 每 **64 拍（16 块）插 1 拍 `txdata_valid=0` gap**：
+  73 个周期性 gap 严格 64 拍间隔，296/296 全部落在块边界（前一块
+  start 之后、下一块 start 之前）——即 PG194 的 64/65 payload duty。
+- VIP RX 侧的 65-byte 插入型 comp stall 与该 gap 同节奏，落在边界上
+  被良性消化 → 8192 周期零错误。
+
+### 8.3 K15 失败机制（字节对齐证明）
+
+`K15_L0_GAP_OFF` 使 L0 idle流 100% duty（无 gap）。用户接口供 payload
+速率 = 线上 130-bit/块 消耗的 64/65 → GT TX 弹性缓冲持续超载。对齐结果：
+
+- L0 前两个 idle 块 RX 与 TX **逐字节全等**（如 RX 块 266980 起 =
+  TX beat 266936 `4120098d`→`8d 09 20 41`…）。
+- 第 3 块（RX 267012 起）：前 12 字节全等，**后 4 字节 RX 收到
+  `c2 53 62 96`，而 MAC 发的是 `88 59 f1 14`；且 TX 的下一拍
+  `f0 94 98 a5` 整体被跳过**（此后 RX 流相对 TX 永久偏移 -4 字节）。
+  `c2 53 62 96` 在整段 TX 流中不存在 = GT TX 自行发出的字节。
+- VIP 在 267.026µs 报 `non-IDL token 0x4a` = 该破坏块的下游后果。
+- VIP 的 65-byte stall 已彻底排除：失败点在下一个 stall 之前；唯一
+  stall（266979）落在块边界且良性。
+
+### 8.4 结论与修复方向
+
+- **首因 = K15 自定义 GT wrapper 未实现官方 64/65 TX duty**。去 gap
+  （GAP_OFF）→ 缓冲溢出 → 静默字节破坏；留 gap（RP 配置）→ l0fix30i
+  的"4 字节无帧残留泄漏"说明 wrapper 对 gap 拍（valid=0）的 GT 侧
+  处理也与官方不同。两种占空比都坏、坏法不同，指向同一处：
+  **wrapper 的 GT TX 数据通路**，而非 LTSSM/EQ/LFSR/VIP comp。
+- 修复方向：对照 XDMA 官方 `phy_wrapper` 在 gap 拍把
+  `pipe_tx0_data_valid=0` 送入 GT 的完整行为（含 TX buffer/时钟配比），
+  在 K15 wrapper 复刻；随后退役 `K15_L0_GAP_OFF`，向零 define 收敛。
+- Golden 探针修复已合入 `sim/vcs_svt/xdma_x1_svt_board.sv`。
+
+## 九、步骤①完成：留 gap SVT 取证 —— 缺陷定位在 GT wrapper 相位锚定（2026-09-03）
+
+`K15_SVT_L0_GAP_OFF=0 K15_L0_GAP_PHASE=4 PHY_FORENSICS=1` 运行，
+VIP 报 `pcs_invalid_sync_header_0 Invalid sync hdr 2'b00. Block
+alignment lost`（266.987µs）→ `phy_rx_invalid_data_in_data_stream`
+（266.997µs）→ EP 0a→0b→0c → `link_timeout`。字节级取证
+（`sim/vcs_svt/analyze_rx_tx_align.py`，注意探针扰码域：
+`DUT.phy_txdata`=加扰后，`pcs0_rx_data` 解扰域不同，整流对齐必须限定
+L0 窗口且滤 `data_valid=0` 填充）：
+
+### 9.1 MAC 侧 gap 拍行为 = 正确（MAC 侧排除）
+
+- L0 进入 266.939504µs；第一个 L0 内 gap 拍 t=266.951505µs
+  （`K15_SVT_EP_TX_PIPE n=51`，`valid=0`，数据总线持有下一拍数据
+  `93d7599c`）；下一拍 n=52 以 `valid=1 start=1 sh=10` 重发同数据
+  `93d7599c`，随后块起点严格每 4 拍（52/56/60…）。
+- gap 落点：前一组 64 个 valid 拍（16 块）的末尾，即块的第 4 拍位置，
+  与官方 64/65 duty 语义一致。
+- 同一 MAC 流在 Xilinx RP 仿真（删除型 comp）带 gap 是 PASS 的
+  （run_k15_gen3.sh K15_L0FIX=1），MAC 流本身有背书。
+
+### 9.2 GT 原语配置 = 与官方完全一致（原语排除）
+
+- XDMA GT 与 K15 GT 均为 `C_TX_DATA_ENCODING(1)`、
+  `GTHE3_CHANNEL_TXGEARBOX_EN("FALSE")`、`C_TX_BUFFBYPASS_MODE(0)`、
+  `C_TX_USER_DATA_WIDTH(16)`、`TX_INT_DATAWIDTH(0)`。
+- 两者 `txctrl0_in` 元数据映射逐位相同
+  （`{10'd0, TXSYNC_HEADER[1:0], TXSTART_BLOCK, TXDATA_VALID, 2'd0}`，
+  K15 gtwizard_top.v:757 vs XDMA 同构）。
+
+### 9.3 VIP 侧证据：gap 拍未被 GT 吸收，块栅格破坏
+
+- VIP RX 块起点（`start=1 sh=02`）：n=203(266.947µs) → n=219
+  (266.963µs) → n=236(266.980µs)，间隔 16→17→17 条记录：gap 拍后每
+  16 字节块多出字节，130-bit 块栅格被破坏；数块后 VIP 判
+  `sync hdr 2'b00` 死锁。与 l0fix30i"gap 拍 = 4 字节无帧残留上线"
+  一致：**valid=0 拍没有被 GT 内部 TX buffer 吸收，而是以残留形式
+  直接上线**。
+- 机制模型：64/65 duty 的本质是 GT TX buffer 每块净 +32bit（线上块
+  周期 16.25ns vs 用户块供给 16ns），gap 拍 = 让 buffer 排掉积压的
+  1 拍。**gap 拍必须落在 buffer 非空且与 GT 线上块栅格对齐的相位**；
+  相位错 → buffer 下溢 → GT 发陈旧/保持数据（无帧残留）。
+- K15 的 gap 相位来自编译期 `K15_L0_GAP_PHASE`（为 RP comp 事件调的
+  PHASE=4），**未锚定到 GT 的块栅格**；官方设计用 PCIE-mode
+  TXSYNC 流程（`pciersttxsyncstart → pciesynctxsyncdone`）把 MAC
+  块栅格锚到 GT 线上栅格。K15 中 TXSYNC done 只进了复位 FSM
+  （us_gt_phy_rst.v:442），从未参与 TX 数据相位。
+
+### 9.4 步骤②裁决：走 GT wrapper/core_top 侧，非 MAC
+
+- `rtl/phy/pcie_gen3_idle_tx.sv`（MAC gap 生成）保持现状；
+  `pcie_gen3_os_tx.sv` 不动。
+- 修复目标 = `fpga/kcu105/ip/pcie_phy_x1_gen3/source/`（core_top 的
+  32b@250MHz→16b@400MHz pipeline 与 gap 拍供数时序），两步：
+  1. **廉价探针**：SVT 扫 `K15_L0_GAP_PHASE` 0..7（留 gap），若某
+     相位 VIP 稳定 → 相位标定即可修（需同时复跑 RP 回归确认兼容）。
+  2. **构造性修法**：在 wrapper 内用 `GT_PCIESYNCTXSYNCDONE` 锚定
+     MAC gap 计数器相位（复刻官方 TXSYNC 对齐流程），使相位对任意
+     接收端构造正确，然后退役 `K15_L0_GAP_PHASE`/`K15_L0_GAP_OFF`。
+
+## 十、最终收敛：L0 首 gap 重定相 + SKP 计数修复（2026-09-03）
+
+### 10.1 对“surplus 耗尽”模型的裁决
+
+结论是**方向成立，表述需精确一处**：`txdata_valid=0` 不是让 wire 少发或
+多发一个完整 130-bit block，而是 MAC 暂停一个 32-bit PIPE beat；wire 在这
+4ns 内继续消耗 GT 已缓存的串行 bit。因而临界量是 GT 内部的**分数拍相位/余量**，
+不一定能用整数个 32-bit beat 表示。`SH=00` 是该 gap 相位触发 TX 欠载后的
+可见结果，不是 PCIe 允许发送的 gap block。
+
+因果扫点如下：
+
+| L0 后首 gap | 结果 |
+|---|---|
+| 原始约 3 个 valid beat | 约 36ns 后 `Invalid sync hdr 2'b00`，欠载 |
+| 延后 1 个完整 block，约 7 beat | 仍为 `SH=00` 欠载 |
+| 延后 2 个完整 block，约 11 beat | 两个 reset epoch 均进入并保持 Gen3 x1 L0 |
+| 完全取消首 gap | 约 19 beat 后 `non-IDL 0x4a/SH=11`，过载 |
+
+因此安全窗口确实夹在“过早 gap 欠载”和“过晚 gap 过载”之间；2-block 是本
+Xilinx secureip/SVT 组合实测落入窗口的最小 block-aligned 校准点。此前 0..7
+静态 phase 全失败，是因为这些 phase 从 SDS/Recovery 起算，没有在
+`Recovery.Idle -> L0` 边沿重新锚定。
+
+### 10.2 已实施修复
+
+- `pcie_gen3_idle_tx.sv` 新增 `l0_active`。在 L0 上升沿丢弃 Recovery.Idle
+  遗留的 gap 相位，完成当前 block 后再等待 2 个完整 block，强制首个 gap；
+  此后恢复正常 64-valid/1-gap 周期。
+- 显式 `K15_L0_GAP_PHASE` 的板级/RP 校准优先，不叠加 SVT 的 L0 重定相；
+  `K15_L0_PREWARM_BLOCKS` 仍可显式覆盖，用于受控 A/B。
+- 修复 L0 SKP 长期计数：rate-gap 分支原来漏计刚完成的 Idle Data Block，
+  使名义 370/371 cadence 实际越过 VIP 的 375-block 上限；补计后将触发条件
+  从 `==` 改为 `>=`，避免阈值恰落在 gap 分支时永久跳过。
+- `run_k15_svt_x1.sh` 默认重新启用 64/65 gap；`K15_SVT_L0_GAP_OFF=1`
+  只保留为过载诊断开关。
+- Verilator 增加首 gap 与首 SKP deadline 的定向断言。
+
+### 10.3 验证结果
+
+- `make k15-directed-test`：PASS；首 gap 为 12 个 testbench valid beats，
+  首个 L0 SKP 为第 373 个 block。
+- `make k15-directed-dense-test`：PASS；dense 分支首个 L0 SKP 为第 9 个
+  block。
+- 默认零校准 define 的完整 SVT：
+  - epoch 0：EP L0 `266.939504us`，首 gap `266.983505us`；
+  - epoch 1：EP L0 `821.867504us`，首 gap `821.903505us`；
+  - 两轮均输出 `K15_SVT_X1_EPOCH_PASS`，最终
+    `K15_SVT_X1_PASS epochs=2`；
+  - 原 `Invalid sync hdr`、`non-IDL 0x4a`、`phy_max_rx_skp_interval`
+    均未出现；epoch 1 首个 wire SKP 在 `827.782384us`，赶在原
+    `827.833us` deadline 前。
+- SVT 日志仍有两条 epoch 间主动 PERST 引起的 Recovery timeout，以及 reset
+  瞬间的一条 framing warning；第二轮随后正常通过。这是现有双 epoch reset
+  驱动的监视器噪声，不属于 L0 数据流失败。
+- Xilinx RP 兼容回归用显式 `K15_L0_GAP_PHASE=4 K15_L0_SKP_OFF=1`：
+  修正“显式 phase 优先”后，EP/RP 连续处于 Gen3 L0 约 2.17ms；旧 gate
+  仍因 DLL/link 判定条件未完成而不出最终 PASS，随后 RP 自身超时回 Detect，
+  因此本轮不把该 gate 记为完整通过。
+
+### 10.4 尚未由本轮区分的事项
+
+仿真已证明 L0 handoff 的 buffer phase 是直接控制量，但仍不能区分该初始相位
+究竟来自 Gen1/Gen3 rate-change 历史，还是 Recovery/EQ 期间的不同 duty。
+当前生成的 GT wrapper 也未暴露 `TXBUFSTATUS` 类占用信号，不能实现真正的
+occupancy-closed-loop gap。若后续硬件跨 PVT/不同 Root Port 仍有边界问题，优先
+增加 GT 内部 buffer/gearbox 可观测性或用 TXSYNC 完成事件建立正式相位锚点，
+而不是继续扩大静态 gap phase 扫描。

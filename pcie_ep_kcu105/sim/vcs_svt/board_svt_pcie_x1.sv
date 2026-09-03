@@ -57,6 +57,12 @@ module test_top;
     // the EP's idle stream.  Re-arm both PIPE beat captures at the EP's
     // first Gen3 Recovery.Idle entry so the 0d->L0 handoff is covered.
     integer ep_tx_debug_count;
+    // Step-2 windowed RX capture (2026-09-03): when the EP MAC presents a
+    // gap beat (txdata_valid=0) in Gen3, dump the next 256 VIP pipe_clk
+    // beats unconditionally so the wire content of the gap (SKP insert vs
+    // TXDATA residue vs seamless) is visible at block level.
+    integer gap_rx_win;
+    integer gap_rx_count;
     reg recov_idle_cap_armed;
     // K15_L0FIX: mirror probe -- what the VIP transmits as seen by the EP's
     // ordered-set receiver.  The VIP sat silent in Recovery.Idle while the
@@ -99,6 +105,8 @@ module test_top;
         rx_pipe_debug_count = 0;
         tx_eieos_debug_count = 0;
         ep_tx_debug_count = 0;
+        gap_rx_win = 0;
+        gap_rx_count = 0;
         sh11_triggered = 1'b0;
         sh11_ep_dump = 1'b0;
         sh11_vip_head = 0;
@@ -447,6 +455,46 @@ module test_top;
                      DUT.phy_txdata_valid, DUT.phy_txstart_block,
                      DUT.phy_txsync_header, DUT.phy_txdata);
             ep_tx_debug_count = ep_tx_debug_count + 1;
+        end
+    end
+
+    // Step-2 gap-window trigger: arm on every EP gap beat (txdata_valid=0)
+    // in Gen3 L0, and also on every VIP block start, so the capture is
+    // continuous across the gap grid (the VIP runs 4 samples per EP beat).
+    always @(posedge DUT.phy_pclk) begin
+        if ($test$plusargs("PHY_FORENSICS") && !vip_reset &&
+            (DUT.phy_active_rate == 2'b10) &&
+            !DUT.phy_txdata_valid && (gap_rx_win == 0)) begin
+            gap_rx_win <= 96;
+            gap_rx_count <= 0;
+        end
+    end
+
+    always @(posedge root0.port0.pipe_clk) begin
+        if ($test$plusargs("PHY_FORENSICS") && !vip_reset &&
+            (root0.port0.pcs0_rx_start_block == 1'b1) &&
+            (root0.port0.pcs0_rx_valid == 1'b1) && (gap_rx_win == 0)) begin
+            gap_rx_win <= 96;
+            gap_rx_count <= 0;
+        end
+    end
+
+    // Step-2 gap-window RX dump: unconditional per-beat capture of the VIP
+    // receive PIPE interface while the window is open.
+    always @(posedge root0.port0.pipe_clk) begin
+        if ($test$plusargs("PHY_FORENSICS") && (gap_rx_win > 0)) begin
+            #1;
+            $display("K15_SVT_GAP_RX n=%0d t_ps=%0t valid=%0d data_valid=%0d start=%0d sh=%02h data=%08h ei=%08h status=%0h",
+                     gap_rx_count, $time,
+                     root0.port0.pcs0_rx_valid,
+                     root0.port0.pcs0_rx_data_valid,
+                     root0.port0.pcs0_rx_start_block,
+                     root0.port0.pcs0_rx_sync_header,
+                     root0.port0.pcs0_rx_data,
+                     root0.port0.pcs0_rx_ei_code,
+                     root0.port0.pcs0_rx_status);
+            gap_rx_count <= gap_rx_count + 1;
+            gap_rx_win <= gap_rx_win - 1;
         end
     end
 

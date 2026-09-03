@@ -22,6 +22,7 @@ module k15_eq_idle_test_top (
     input  wire initial_coeff_valid,
     input  wire [17:0] initial_coeff,
     input  wire idle_enable,
+    input  wire idle_l0_active,
     input  wire training_enable,
     input  wire [1:0] training_mode,
     output wire eq_req_valid,
@@ -77,6 +78,7 @@ module k15_eq_idle_test_top (
 
     pcie_gen3_idle_tx u_idle_tx (
         .clk(clk), .rst_n(rst_n), .enable(idle_enable),
+        .l0_active(idle_l0_active),
         .lfsr_state_in(training_lfsr_after_word),
         .out_data(idle_data), .out_valid(idle_data_valid),
         .start_block(idle_start_block), .sync_header(idle_sync_header),

@@ -29,6 +29,10 @@ module pcie_gen3_idle_tx (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        enable,
+    // Asserted only in L0 (not Recovery.Idle).  The rising edge delays the
+    // first scheduled rate-match gap by a small number of complete blocks,
+    // nudging the fractional GT-buffer phase without changing steady cadence.
+    input  wire        l0_active,
     // Lane scrambler state immediately after the final Recovery Ordered Set.
     input  wire [22:0] lfsr_state_in,
     output reg  [31:0] out_data,
@@ -79,19 +83,11 @@ module pcie_gen3_idle_tx (
 `else
     localparam SKP_OS_DISABLE = 1'b0;
 `endif
-    // K15_SVT l0fix30i finding: the 1-beat v=0 gap beat reaches the wire as
-    // 4 bytes of TXDATA residue with no block framing (the GT secureip does
-    // NOT substitute an SKP OS there in a data stream).  The Xilinx RP GT
-    // survives because its 65-beat comp event is a *deletion* phase-aligned
-    // onto the gap (PHASE=4), which swallows exactly those 4 bytes.  The SVT
-    // VIP comp event is an *insertion* (1-beat data_valid=0 stall, mask +
-    // repeat): the VIP PCS counts stalls correctly (12 clean blocks verified
-    // across 3 stalls) but cannot swallow the unframed gap bytes -- the next
-    // block boundary check reads their sh bits (2'b00) and shuts the
-    // receiver down (status=6).  K15_L0_GAP_OFF removes the gap beat from
-    // the idle stream entirely for SVT-class receivers; rate matching is
-    // then carried by the scheduled SKP OS blocks (370/371-block cadence)
-    // and the VIP's own benign stalls.
+    // The one-beat v=0 gap is the 32-bit PIPE-side rate-match slack.  It must
+    // remain enabled: suppressing it overruns the GT TX path and silently
+    // replaces/deletes MAC bytes.  A gap presented with the wrong fractional
+    // elastic-buffer phase instead causes the observed unframed SH=00 data.
+    // K15_L0_GAP_OFF is retained only as a diagnostic A/B switch.
 `ifdef K15_L0_GAP_OFF
     localparam GAP_OS_DISABLE = 1'b1;
 `else
@@ -99,18 +95,8 @@ module pcie_gen3_idle_tx (
 `endif
     // K15 RP L0 fix: 1-beat PIPE valid gap (TXDATA_VALID low) every 16
     // blocks, at a block boundary, for a gap period of exactly 65 beats
-    // (16 blocks x 4 + 1 gap).  l0fix27 root cause: the RP GT RX runs a
-    // structural clock-compensation cycle of exactly 65 beats (the 128b/130b
-    // payload duty at the 250MHz/32-bit PIPE rate) and deletes 1 beat per
-    // cycle no matter what the EP transmits (zero refclk ppm difference does
-    // NOT suppress it).  The deletion is benign only when it lands on an EP
-    // slack gap -- the Xilinx demo EP gaps every 65 beats and its RP never
-    // leaves L0 (297 benign deletions observed); our EP's gap grid sat at a
-    // different cadence/phase, so the deletion landed mid-stream: mask beat +
-    // data-path-ahead-of-framing + descrambler-realignment aliens -> sh=00
-    // at block starts -> rxstatus=100 -> exit L0 -> endless Recovery loop.
-    // The elastic buffer was exonerated by l0fix27 BUF_TRACE (chronic +2
-    // watermark, but never an overflow transition through the fatal window).
+    // (16 blocks x 4 + 1 gap).  The steady cadence is correct; the remaining
+    // failure was its fractional phase at the Recovery.Idle -> L0 handoff.
     // K15_L0_GAP_PHASE (0..15): blocks of initial offset applied to the gap
     // grid after each SDS, to scan the gap phase against the RP's deletion
     // cycle (period is identical at 65 beats, so the relative phase is
@@ -120,6 +106,22 @@ module pcie_gen3_idle_tx (
     localparam [4:0] RATE_GAP_PHASE = 5'd`K15_L0_GAP_PHASE;
 `else
     localparam [4:0] RATE_GAP_PHASE = 5'd0;
+`endif
+`ifdef K15_L0_PREWARM_BLOCKS
+    localparam       L0_REPHASE_ENABLE = 1'b1;
+    localparam [3:0] L0_PREWARM_BLOCKS = 4'd`K15_L0_PREWARM_BLOCKS;
+`elsif K15_L0_GAP_PHASE
+    // An explicitly calibrated board/RP phase owns the handoff cadence.
+    // Do not apply a second, SVT-derived phase adjustment on top of it.
+    localparam       L0_REPHASE_ENABLE = 1'b0;
+    localparam [3:0] L0_PREWARM_BLOCKS = 4'd0;
+`else
+    // The Xilinx secureip/SVT composition underflows with 0/1 blocks and
+    // overruns when the first gap is suppressed for roughly 19 beats.  Two
+    // complete blocks puts the first L0 gap at 11-12 valid beats, inside the
+    // measured safe window.
+    localparam       L0_REPHASE_ENABLE = 1'b1;
+    localparam [3:0] L0_PREWARM_BLOCKS = 4'd2;
 `endif
 
     reg [2:0] state;
@@ -135,6 +137,10 @@ module pcie_gen3_idle_tx (
     reg [4:0] rate_gap_cnt;
     reg       gap_run;
     reg       first_skp_pending;
+    reg       l0_active_q;
+    reg       l0_rephase_pending;
+    reg [3:0] l0_rephase_blocks_left;
+    wire      l0_entry = l0_active && !l0_active_q;
     wire [31:0] scrambler_data_in = ((state == SEND_EDS) &&
                                      (word_index == 2'd3)) ? EDS_TOKEN : 32'd0;
     wire [31:0] scrambled_data;
@@ -158,6 +164,9 @@ module pcie_gen3_idle_tx (
             rate_gap_cnt <= 5'd0;
             gap_run <= 1'b0;
             first_skp_pending <= 1'b1;
+            l0_active_q <= 1'b0;
+            l0_rephase_pending <= 1'b0;
+            l0_rephase_blocks_left <= 4'd0;
             lfsr_state <= LANE0_SEED;
             data_parity <= 1'b0;
         end else if (!enable) begin
@@ -168,71 +177,106 @@ module pcie_gen3_idle_tx (
             rate_gap_cnt <= 5'd0;
             gap_run <= 1'b0;
             first_skp_pending <= 1'b1;
+            l0_active_q <= l0_active;
+            l0_rephase_pending <= 1'b0;
+            l0_rephase_blocks_left <= 4'd0;
             // Track the training transmitter while idle.  On the first SDS
             // beat this is already the state after the final TS word.
             lfsr_state <= lfsr_state_in;
             data_parity <= 1'b0;
-        end else if (state == SEND_GAP) begin
-            // One-beat pause between blocks; out_valid is low this beat and
-            // the GT secureip substitutes an SKP OS (see RATE_GAP_BLOCKS).
-            state <= SEND_IDLE;
-            word_index <= 2'd0;
-        end else if (state == SEND_SKP) begin
-            // Four unscrambled beats; the lane LFSR is frozen across the SKP
-            // OS exactly as in the training transmitter.
-            if (skp_word_index == 2'd3) begin
-                skp_word_index <= 2'd0;
-                word_index <= 2'd0;
-                rate_gap_cnt <= rate_gap_cnt + 1'b1;
-                state <= SEND_IDLE;
-                data_parity <= 1'b0;
-            end else begin
-                skp_word_index <= skp_word_index + 1'b1;
-            end
-        end else if (word_index == 2'd3) begin
-            word_index <= 2'd0;
-            if (state == SEND_IDLE)
-                data_parity <= data_parity ^ (^scrambled_data);
-            if (state == SEND_SDS) begin
-                state <= SEND_IDLE;
-                data_parity <= 1'b0;
-                // Phase knob: offset the gap grid after each SDS.  With
-                // PHASE=0 the first gap fires after 16 blocks (65-beat
-                // period); PHASE=k shifts the whole grid k blocks earlier.
-                rate_gap_cnt <= RATE_GAP_PHASE;
-            end else if (state == SEND_EDS) begin
-                // A SKP Ordered Set may interrupt a Data Stream only when
-                // the preceding Data Block ends in an EDS token.  Resume
-                // directly with a Data Block after SKP; a second SDS is not
-                // used for this in-stream insertion.
-                state <= SEND_SKP;
-                skp_word_index <= 2'd0;
-                rate_gap_cnt <= rate_gap_cnt + 1'b1;
-                data_parity <= data_parity ^ (^scrambled_data);
-            end else if (!GAP_OS_DISABLE &&
-                         rate_gap_cnt >= RATE_GAP_BLOCKS - 5'd1) begin
-                rate_gap_cnt <= 5'd0;
-                state <= SEND_GAP;
-            end else if (!SKP_OS_DISABLE &&
-                         skp_gap_count == (first_skp_pending ? FIRST_SKP_GAP :
-                                          (gap_run ? SKP_GAP_B : SKP_GAP_A))) begin
-                skp_gap_count <= 10'd0;
-                gap_run <= ~gap_run;
-                first_skp_pending <= 1'b0;
-                state <= SEND_EDS;
-                rate_gap_cnt <= rate_gap_cnt + 1'b1;
-            end else begin
-                skp_gap_count <= skp_gap_count + 1'b1;
-                rate_gap_cnt <= rate_gap_cnt + 1'b1;
-            end
-            // SDS bypasses XOR but, unlike SKP, advances the LFSR over all
-            // 16 Symbols.  The first Data Block therefore starts here.
-            lfsr_state <= lfsr_next;
         end else begin
-            word_index <= word_index + 1'b1;
-            lfsr_state <= lfsr_next;
-            if ((state == SEND_IDLE) || (state == SEND_EDS))
-                data_parity <= data_parity ^ (^scrambled_data);
+            l0_active_q <= l0_active;
+            if (!l0_active) begin
+                l0_rephase_pending <= 1'b0;
+                l0_rephase_blocks_left <= 4'd0;
+            end
+            else if (l0_entry && L0_REPHASE_ENABLE) begin
+                l0_rephase_pending <= 1'b1;
+                l0_rephase_blocks_left <= L0_PREWARM_BLOCKS;
+            end
+
+            if (state == SEND_GAP) begin
+                // The GT consumes buffered data while the MAC pauses for one
+                // beat; no new logical block is presented on this beat.
+                state <= SEND_IDLE;
+                word_index <= 2'd0;
+            end else if (state == SEND_SKP) begin
+                // Four unscrambled beats; the lane LFSR is frozen across the
+                // SKP OS exactly as in the training transmitter.
+                if (skp_word_index == 2'd3) begin
+                    skp_word_index <= 2'd0;
+                    word_index <= 2'd0;
+                    rate_gap_cnt <= rate_gap_cnt + 1'b1;
+                    state <= SEND_IDLE;
+                    data_parity <= 1'b0;
+                end else begin
+                    skp_word_index <= skp_word_index + 1'b1;
+                end
+            end else if (word_index == 2'd3) begin
+                word_index <= 2'd0;
+                if (state == SEND_IDLE)
+                    data_parity <= data_parity ^ (^scrambled_data);
+                if (state == SEND_SDS) begin
+                    state <= SEND_IDLE;
+                    data_parity <= 1'b0;
+                    // Phase knob: offset the gap grid after each SDS.  With
+                    // PHASE=0 the first gap fires after 16 blocks (65-beat
+                    // period); PHASE=k shifts the grid k blocks earlier.
+                    rate_gap_cnt <= RATE_GAP_PHASE;
+                end else if (state == SEND_EDS) begin
+                    // A SKP Ordered Set may interrupt a Data Stream only when
+                    // the preceding Data Block ends in an EDS token.  Resume
+                    // directly with a Data Block after SKP; a second SDS is
+                    // not used for this in-stream insertion.
+                    state <= SEND_SKP;
+                    skp_word_index <= 2'd0;
+                    rate_gap_cnt <= rate_gap_cnt + 1'b1;
+                    data_parity <= data_parity ^ (^scrambled_data);
+                end else if (!GAP_OS_DISABLE && l0_rephase_pending) begin
+                    // Discard the Recovery.Idle cadence phase at the L0
+                    // handoff.  Wait a bounded number of whole blocks, then
+                    // force one gap in the measured safe window.
+                    if (l0_rephase_blocks_left != 0) begin
+                        l0_rephase_blocks_left <= l0_rephase_blocks_left - 1'b1;
+                        rate_gap_cnt <= RATE_GAP_BLOCKS - 5'd1;
+                        skp_gap_count <= skp_gap_count + 1'b1;
+                        state <= SEND_IDLE;
+                    end else begin
+                        l0_rephase_pending <= 1'b0;
+                        rate_gap_cnt <= 5'd0;
+                        skp_gap_count <= skp_gap_count + 1'b1;
+                        state <= SEND_GAP;
+                    end
+                end else if (!GAP_OS_DISABLE &&
+                             rate_gap_cnt >= RATE_GAP_BLOCKS - 5'd1) begin
+                    rate_gap_cnt <= 5'd0;
+                    // The just-completed Idle Data Block still counts toward
+                    // the SKP interval.  Omitting this increment made every
+                    // 16th block invisible and missed the 375-block deadline.
+                    skp_gap_count <= skp_gap_count + 1'b1;
+                    state <= SEND_GAP;
+                end else if (!SKP_OS_DISABLE &&
+                             skp_gap_count >=
+                               (first_skp_pending ? FIRST_SKP_GAP :
+                                (gap_run ? SKP_GAP_B : SKP_GAP_A))) begin
+                    skp_gap_count <= 10'd0;
+                    gap_run <= ~gap_run;
+                    first_skp_pending <= 1'b0;
+                    state <= SEND_EDS;
+                    rate_gap_cnt <= rate_gap_cnt + 1'b1;
+                end else begin
+                    skp_gap_count <= skp_gap_count + 1'b1;
+                    rate_gap_cnt <= rate_gap_cnt + 1'b1;
+                end
+                // SDS bypasses XOR but, unlike SKP, advances the LFSR over
+                // all 16 Symbols.  The first Data Block therefore starts here.
+                lfsr_state <= lfsr_next;
+            end else begin
+                word_index <= word_index + 1'b1;
+                lfsr_state <= lfsr_next;
+                if ((state == SEND_IDLE) || (state == SEND_EDS))
+                    data_parity <= data_parity ^ (^scrambled_data);
+            end
         end
     end
 

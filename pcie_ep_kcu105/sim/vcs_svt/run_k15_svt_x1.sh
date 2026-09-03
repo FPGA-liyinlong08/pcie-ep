@@ -192,12 +192,22 @@ fi
 if [[ -n "${K15_L0_GAP_PHASE:-}" ]]; then
     rtl_defines+=("+define+K15_L0_GAP_PHASE=${K15_L0_GAP_PHASE}")
 fi
+if [[ -n "${K15_L0_PREWARM_BLOCKS:-}" ]]; then
+    rtl_defines+=("+define+K15_L0_PREWARM_BLOCKS=${K15_L0_PREWARM_BLOCKS}")
+fi
 # l0fix30i: the 1-beat gap beat reaches the VIP as 4 unframed TXDATA-residue
 # bytes mid-block (the GT only swallows them via the RP's deletion-type comp
 # event; the VIP's comp is an insertion and dies on them).  SVT-class
 # receivers therefore run the idle stream with NO gap beats -- rate matching
 # rides on the scheduled SKP OS blocks and the VIP's own benign stalls.
-rtl_defines+=("+define+K15_L0_GAP_OFF")
+# 2026-09-03 forensics: the no-gap stream was proven to overrun the GT TX
+# buffer (MAC bytes silently replaced/deleted; see the debug report section
+# 8), so the gap path is now opt-out for A/B runs: set
+# K15_SVT_L0_GAP_OFF=1 only for the no-gap overrun diagnostic.  The verified
+# default keeps the official 64/65 duty-cycle gap.
+if [[ "${K15_SVT_L0_GAP_OFF:-0}" == "1" ]]; then
+    rtl_defines+=("+define+K15_L0_GAP_OFF")
+fi
 # Diagnostic only: the SVT/Xilinx model combination inserts one structural
 # compensation byte every 65 byte clocks.  K15_SVT_L0_SKP_DENSE=1 schedules
 # the first SKP after eight Idle Blocks, then uses the 64-byte
@@ -279,6 +289,14 @@ for ((process_epoch = 0; process_epoch < process_epochs; process_epoch++)); do
         exit 1
     fi
     grep -Fq "${svt_pass_marker}" "${process_log}"
+    # Reaching L0 again after a framing recovery is not a clean pass.  Keep
+    # the reset-epoch monitor noise tolerated by the legacy test, but reject
+    # the concrete L0 stream failures this regression is meant to prevent.
+    if grep -Eq "Invalid sync hdr|phy_rx_non_idl|phy_max_rx_skp_interval|pcs_skp_end_not_detected" \
+        "${process_log}"; then
+        echo "${svt_run_label} L0 stream monitor reported a framing/SKP failure" >&2
+        exit 1
+    fi
     if [[ "${phase2_only}" == "1" ]]; then
         # The SKP-interval / SDS / EIOS monitors are fatal only before
         # Equalization entry: the EP EQ pattern stream does not carry SKP

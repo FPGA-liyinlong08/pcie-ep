@@ -724,6 +724,7 @@ module pcie_ltssm_mac_gen1 #(
     pcie_gen3_idle_tx u_gen3_idle_tx (
         .clk(phy_pclk), .rst_n(pipe_rst_n),
         .enable(gen3_idle_tx_enable),
+        .l0_active(ltssm_state == STATE_L0),
         .lfsr_state_in(gen3_os_tx_lfsr_after_word),
         .out_data(gen3_idle_tx_data),
         .out_valid(gen3_idle_tx_valid),

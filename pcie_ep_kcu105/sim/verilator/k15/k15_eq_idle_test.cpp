@@ -58,7 +58,8 @@ int main(int argc, char **argv) {
     d.eq_result = 0; d.eq_rsp_preset_sel = 0; d.eq_rsp_coeff = 0;
     d.initial_preset_valid = 1; d.initial_preset = 10;
     d.initial_coeff_valid = 0; d.initial_coeff = 0;
-    d.idle_enable = 0; d.training_enable = 0; d.training_mode = 1;
+    d.idle_enable = 0; d.idle_l0_active = 0;
+    d.training_enable = 0; d.training_mode = 1;
     tick(d); tick(d); d.rst_n = 1; tick(d);
 
     enter_phase(d, 0);
@@ -266,7 +267,8 @@ int main(int argc, char **argv) {
     d.phase_valid = 0;
 
     d.phase_valid = 0;
-    d.rst_n = 0; d.idle_enable = 0; d.training_enable = 0; tick(d); tick(d);
+    d.rst_n = 0; d.idle_enable = 0; d.idle_l0_active = 0;
+    d.training_enable = 0; tick(d); tick(d);
     d.rst_n = 1; d.training_enable = 1; d.eval();
     for (int i = 0; i < 4; ++i) {
         require(d.training_valid, "training prefix valid");
@@ -348,6 +350,70 @@ int main(int argc, char **argv) {
     }
     require(idle_pulses >= 8, "idle block loopback");
     std::cout << "K15_GEN3_IDLE_STREAM_PASS blocks=" << idle_pulses << '\n';
+
+    // Entering L0 discards the Recovery.Idle cadence phase and schedules the
+    // first gap after the current block plus two complete 128b blocks.  This
+    // targets 12 valid beats here (11-12 in the integrated design depending on
+    // the exact LTSSM transition beat), safely below the observed no-gap
+    // overflow point.  Thereafter normal 64-valid/1-gap duty resumes.  Reset
+    // the source so the counts are independent of the
+    // preceding long SKP test.
+    d.rst_n = 0; d.idle_enable = 0; d.idle_l0_active = 0;
+    tick(d); tick(d);
+    d.rst_n = 1; d.idle_enable = 1;
+    int recovery_gaps = 0;
+    while (recovery_gaps == 0) {
+        tick(d);
+        if (!d.idle_data_valid) ++recovery_gaps;
+    }
+    d.idle_l0_active = 1;
+    int valid_since_l0 = 0;
+    int first_l0_gap_at = -1;
+    for (int i = 0; i < 160 && first_l0_gap_at < 0; ++i) {
+        tick(d);
+        if (d.idle_data_valid)
+            ++valid_since_l0;
+        else
+            first_l0_gap_at = valid_since_l0;
+    }
+    require(first_l0_gap_at == 12,
+            "L0 rephase must place the first gap after three blocks");
+    std::cout << "K15_L0_TX_PREWARM_PASS valid_beats="
+              << first_l0_gap_at << '\n';
+
+    // Count actual transmitted block starts, including blocks that coincide
+    // with a rate-gap decision.  This catches the former counter bug where
+    // every 16th completed Idle Data Block was omitted and the first SKP OS
+    // arrived after a receiver's 375-block deadline.
+    d.rst_n = 0; d.idle_enable = 0; d.idle_l0_active = 0;
+    tick(d); tick(d);
+    d.rst_n = 1; d.idle_enable = 1;
+    d.eval();
+    bool idle_data_started = false;
+    for (int i = 0; i < 16 && !idle_data_started; ++i) {
+        tick(d);
+        idle_data_started = d.idle_start_block &&
+                            d.idle_sync_header == 0x2;
+    }
+    require(idle_data_started, "L0 idle data stream did not start");
+    d.idle_l0_active = 1;
+    int l0_blocks_to_skp = 0;
+    bool idle_skp_seen = false;
+    for (int i = 0; i < 1800 && !idle_skp_seen; ++i) {
+        if (d.idle_start_block) {
+            if (d.idle_sync_header == 0x1 &&
+                d.idle_data == 0xaaaaaaaa)
+                idle_skp_seen = true;
+            else
+                ++l0_blocks_to_skp;
+        }
+        tick(d);
+    }
+    require(idle_skp_seen, "L0 periodic SKP was not transmitted");
+    require(l0_blocks_to_skp <= 375,
+            "L0 first SKP interval exceeds 375 blocks");
+    std::cout << "K15_L0_SKP_INTERVAL_PASS blocks="
+              << l0_blocks_to_skp << '\n';
     std::cout << "K15_EQ_EIEOS_SKP_TS_PASS\n";
     d.final();
     return 0;

@@ -107,20 +107,26 @@ module test_top;
     // hierarchy for configuration-space and memory bookkeeping.
     pciesvc_global_shadow #(.DISPLAY_NAME("global_shadow0.")) global_shadow0();
 
-    // Keep the Golden probe at the official core's PIPE boundary.  The
-    // generated PCIe wrapper packs the lane-0 transmit PIPE fields in
-    // pipe_tx_0_sigs (see xdma_x1_pcie3_ip_pcie3_uscale_core_top.v):
-    // data[31:0], elec_idle[34], data_valid[35], start_block[36],
-    // sync_header[38:37].  This is the exact shape used by the K15 probe.
-    wire [83:0] xdma_pipe_tx0 =
-        EP.xdma_x1_i.inst.pcie3_ip_i.inst.pipe_tx_0_sigs;
+    // Keep the Golden probe at the official core's MAC/GT PIPE boundary.
+    // The packed pipe_tx_0_sigs bus is tied to 84'd0 in the compiled
+    // EXT_PIPE_SIM=="FALSE" branch of xdma_x1_pcie3_ip_pcie3_uscale_core_top.v
+    // (the GT connects through the unpacked nets instead), so probe the
+    // unpacked lane-0 MAC-side PIPE nets directly (core_top lines ~1389-1461,
+    // wired to the GT wrapper at lines ~4299-4379).
+    wire [31:0] xdma_txdata =
+        EP.xdma_x1_i.inst.pcie3_ip_i.inst.pipe_tx0_data;
+    wire [1:0] xdma_txcharisk =
+        EP.xdma_x1_i.inst.pcie3_ip_i.inst.pipe_tx0_char_is_k;
+    wire xdma_tx_electrical_idle =
+        EP.xdma_x1_i.inst.pcie3_ip_i.inst.pipe_tx0_elec_idle;
+    wire xdma_txdata_valid =
+        EP.xdma_x1_i.inst.pcie3_ip_i.inst.pipe_tx0_data_valid;
+    wire xdma_txstart_block =
+        EP.xdma_x1_i.inst.pcie3_ip_i.inst.pipe_tx0_start_block;
+    wire [1:0] xdma_txsync_header =
+        EP.xdma_x1_i.inst.pcie3_ip_i.inst.pipe_tx0_syncheader;
     wire [5:0] xdma_ltssm = EP.xdma_x1_i.inst.pcie3_ip_i.cfg_ltssm_state;
     wire [2:0] xdma_rate = EP.xdma_x1_i.inst.pcie3_ip_i.cfg_current_speed;
-    wire [31:0] xdma_txdata = xdma_pipe_tx0[31:0];
-    wire xdma_tx_electrical_idle = xdma_pipe_tx0[34];
-    wire xdma_txdata_valid = xdma_pipe_tx0[35];
-    wire xdma_txstart_block = xdma_pipe_tx0[36];
-    wire [1:0] xdma_txsync_header = xdma_pipe_tx0[38:37];
     integer xdma_forensics_count;
     integer xdma_forensics_skp_count;
     integer xdma_forensics_error_count;
