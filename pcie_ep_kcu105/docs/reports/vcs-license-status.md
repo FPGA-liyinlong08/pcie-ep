@@ -163,5 +163,7 @@ Cannot open /home/wx/Documents/vcs_compile_simlib/synopsys_sim.setup
 
 在允许访问许可证端口的受控环境复核结果为：`wx-linux`/`snpslmd` UP，
 `VCSCompiler_Net` 99 issued/0 in use，`VCSRuntime_Net` 99 issued/0 in use。
-因此 Golden 必须迁移到可访问 `27000@wx-linux` 的执行环境运行；继续增加
-`-licqueue` timeout、重启 daemon 或修改 RTL 都不能解决本轮阻塞。
+Golden 已在该环境完成 compile/elab/link，说明 license checkout 已恢复；随后
+仿真在 `5482900 fs` 进入 SVT `svt_pcie_pl_proxy.sv:5280` 空对象错误。后续应
+把问题转交 Golden/SVT 启动时序分析；继续增加 `-licqueue` timeout、重启 daemon
+或修改生产 RTL 都不能解决该仿真错误。
