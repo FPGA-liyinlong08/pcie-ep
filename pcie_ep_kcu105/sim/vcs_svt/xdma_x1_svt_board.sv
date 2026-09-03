@@ -27,12 +27,15 @@ module test_top;
     wire ep_rxn = vip_txn[0];
     wire [0:0] ep_txp;
     wire [0:0] ep_txn;
-    // The encrypted GT model can drive X/Z on its serial TX pins while the
-    // SVT device is still in reset.  Clamp only that reset interval so the
-    // SVT PL callback never dereferences an uninitialized reception object;
-    // after reset the official serial lane is connected without alteration.
+    // While the SVT device is held in reset the encrypted Xilinx GT may drive
+    // X on its serial TX pins.  Clamp only that reset interval to a defined
+    // electrical-idle pair so the SVT serdes never samples X; after reset the
+    // official serial lane is connected without alteration.  (The historical
+    // pl-proxy Null-object-access crash was not caused by these pins: its
+    // root cause was the VMM program missing from the simv because VCS did
+    // not pick it up as a top -- see run_xdma_x1_svt.sh.)
     wire golden_rxp0 = vip_reset ? 1'b0 : ep_txp[0];
-    wire golden_rxn0 = vip_reset ? 1'b0 : ep_txn[0];
+    wire golden_rxn0 = vip_reset ? 1'b1 : ep_txn[0];
 
     initial begin
         refclk_p = 1'b0;
@@ -122,6 +125,27 @@ module test_top;
     integer xdma_forensics_skp_count;
     integer xdma_forensics_error_count;
 
+    // Startup probe: two fixed samples of the serial pins and the SVT
+    // decoder's PIPE result while the environment is still in reset.
+    initial begin
+        #4_000;
+        $display("XDMA_SVT_STARTUP_PROBE t_ps=%0t reset=%b ep_perst_n=%b raw_tx=%b%b rx_pcs=%08h valid=%b data_valid=%b start=%b sh=%b status=%h ei=%h",
+                 $time, vip_reset, ep_perst_n, ep_txp[0], ep_txn[0],
+                 root0.port0.pcs0_rx_data, root0.port0.pcs0_rx_valid,
+                 root0.port0.pcs0_rx_data_valid,
+                 root0.port0.pcs0_rx_start_block,
+                 root0.port0.pcs0_rx_sync_header,
+                 root0.port0.pcs0_rx_status, root0.port0.pcs0_rx_ei_code);
+        #1_000;
+        $display("XDMA_SVT_STARTUP_PROBE t_ps=%0t reset=%b ep_perst_n=%b raw_tx=%b%b rx_pcs=%08h valid=%b data_valid=%b start=%b sh=%b status=%h ei=%h",
+                 $time, vip_reset, ep_perst_n, ep_txp[0], ep_txn[0],
+                 root0.port0.pcs0_rx_data, root0.port0.pcs0_rx_valid,
+                 root0.port0.pcs0_rx_data_valid,
+                 root0.port0.pcs0_rx_start_block,
+                 root0.port0.pcs0_rx_sync_header,
+                 root0.port0.pcs0_rx_status, root0.port0.pcs0_rx_ei_code);
+    end
+
     initial begin
         xdma_forensics_count = 0;
         xdma_forensics_skp_count = 0;
@@ -131,9 +155,11 @@ module test_top;
     // One machine-readable record per Gen3 PIPE cycle.  Keep the SVT-side
     // fields in the same record so the two environments can be diffed by
     // cycle without interpreting transaction/DLLP logs.
+    // cfg_current_speed uses the Xilinx PG194 encoding: 3'b001 = Gen1,
+    // 3'b010 = Gen2, 3'b100 = Gen3 (verified live: 3'b100 in 8GT/s L0).
     always @(posedge root0.port0.pipe_clk) begin
         if ($test$plusargs("PHY_FORENSICS") && !vip_reset &&
-            (xdma_rate == 3'd3) && (xdma_forensics_count < 20000)) begin
+            (xdma_rate == 3'd4) && (xdma_forensics_count < 20000)) begin
             #1;
             if (root0.port0.pcs0_rx_start_block)
                 xdma_forensics_skp_count = xdma_forensics_skp_count + 1;

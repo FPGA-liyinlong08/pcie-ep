@@ -167,3 +167,28 @@ Golden 已在该环境完成 compile/elab/link，说明 license checkout 已恢�
 仿真在 `5482900 fs` 进入 SVT `svt_pcie_pl_proxy.sv:5280` 空对象错误。后续应
 把问题转交 Golden/SVT 启动时序分析；继续增加 `-licqueue` timeout、重启 daemon
 或修改生产 RTL 都不能解决该仿真错误。
+
+## 2026-09-03 XDMA Golden NOA 根因与解除
+
+`5482900 fs` 的 `svt_pcie_pl_proxy.sv:5280` 空对象错误根因已查明，与 license、
+串行钳位电平和 VIP 启动时序均无关：
+
+- VCS `vcs` 命令只列了 `xil_defaultlib.test_top`/`glbl`，未把未被任何模块
+  实例化引用的 `xdma_x1_svt_program` 列为顶层，program 未进入 simv；
+- 于是 VMM 测试从未启动（simulate.log 无 `Running Test Case`、无
+  `env:root` 层级消息、无 cfg 构造消息），`svt_pcie_pl_proxy` 的 callback
+  client 始终未注册；
+- VIP clkgen 在 `5482900 fs` 完成 re-init 后 PCS 输出首个有定义的 RX 拍，
+  `pl0.ReceivePCS` 回调路径解引用空 callback client，报 NOA。
+
+修复：`run_xdma_x1_svt.sh` 的 vcs 命令显式加入
+`xil_defaultlib.xdma_x1_svt_program` 顶层（带原因注释）。K15 脚本未列
+program 也能运行属于另一条路径（其 program 被自动拾取），保持不动。
+
+修复后 `make xdma-x1-svt-vcs` 完整通过：`XDMA_SVT_GEN3_L0_PASS`、
+`XDMA_SVT_L0_STABLE_PASS cycles=8192 skp_observed=505`、
+`XDMA_X1_SVT_VCS_PASS`。`+PHY_FORENSICS` 记录 19442 条（此前 0 条的次级
+原因：board 把 `cfg_current_speed` 按 3'd3=Gen3 比较，而 Xilinx PG194 编码
+Gen3 是 3'b100，已改为 `3'd4`）。日志末尾的 1 个 VMM error 是复位释放瞬间
+GT 输出引起的一次 8b/10b 非法解码（202.65us，Detect 之前），属启动噪声，
+不影响 L0 判定。

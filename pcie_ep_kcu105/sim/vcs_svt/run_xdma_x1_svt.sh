@@ -153,8 +153,13 @@ run_logged "${vcs_home}/bin/vlogan" -v2k_generate "${vlog_common[@]}" -work xil_
     -l "${build_dir}/svt_vlogan.log"
 
 set +e
+# The VMM program is not instantiated inside test_top.  It must be listed as
+# an explicit top-level design unit, otherwise VCS omits it from the simv and
+# svt_pcie_pl_proxy's callback client is never registered (the pl proxy then
+# reports a Null object access at the first defined RX beat, ~5.48us).
 timeout --foreground "${license_timeout}" "${vcs_home}/bin/vcs" -full64 -lca \
     xil_defaultlib.test_top xil_defaultlib.glbl \
+    xil_defaultlib.xdma_x1_svt_program \
     -Lgtwizard_ultrascale_v1_7_12 -Lsecureip -Lunisims_ver -Lxpm \
     -debug_access+pp+dmptf -t ps -licqueue -LDFLAGS "-Wl,--no-as-needed" \
     -P "${run_dir}/pli.tab" "${run_dir}/msglog.o" \

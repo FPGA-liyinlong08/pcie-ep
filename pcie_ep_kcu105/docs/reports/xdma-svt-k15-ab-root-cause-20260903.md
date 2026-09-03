@@ -8,12 +8,29 @@ license 参考流程切换到可访问 `27000@wx-linux` 的环境后，
 `VCSCompiler_Net`/`VCSRuntime_Net` 均成功 checkout，源码编译、elaboration、link
 全部完成。因此 license 已排除，不是当前 Golden 的根因。
 
-当前 Golden 在仿真启动后约 `5.4829 ns` 由 SVT
-`svt_pcie_pl_proxy::callback_client_exists` 报 `Null object access`，在 Detect/
-Polling 之前终止；`XDMA_SVT_FORENSICS_SUMMARY records=0`，两个 L0 marker 均未
-产生。故目前不能宣称 XDMA Golden 已稳定 Gen3 L0，也不能用缺失的 Golden 波形
-判定 65-beat compensation 属于哪一层。下一步应先修复/隔离这个 Golden
-testbench 与 SVT PL callback 的启动时序问题，再进行 Gen3 A/B 取证。
+**（同日晚间更新）NOA 已修复，Golden 已完整通过。**`5482900 fs` 的
+`svt_pcie_pl_proxy.sv:5280` 空对象错误的根因是 VCS 未把未实例化引用的
+`xdma_x1_svt_program` 拾取为顶层，VMM 测试从未启动，pl proxy callback client
+从未注册；详见 `docs/reports/vcs-license-status.md` 的"XDMA Golden NOA 根因
+与解除"一节。修复后 `make xdma-x1-svt-vcs` 产生：
+
+- `XDMA_SVT_GEN3_L0_PASS speed=8.0GT/s width=1`（首次进入，260.07us）；
+- `XDMA_SVT_L0_STABLE_PASS cycles=8192 skp_observed=505`；
+- `XDMA_X1_SVT_VCS_PASS`；
+- `PHY_FORENSICS` 19442 条记录（start_block 间隔 16,16,16,17 循环）。
+
+官方 Golden 判定表初填（`analyze_phy_forensics.py
+sim/vcs_svt/build_xdma_x1/simulate.log`）：
+
+1. `XDMA_SVT_L0_STABLE_PASS` 有；
+2. `rxdata_valid` stall 全部为**单拍 gap**（299 个 run，长度均为 1）——
+   官方 core 在 Gen3 L0 也周期性插入 1 拍 valid gap，与 K15 根因第一层一致；
+3. start_block 间隔呈 **16,16,16,17** 四拍组循环（合计 65 beat）——65 拍
+   结构性补偿在官方 Golden 同样存在，形态是 SKP OS 组的第 4 个多 1 拍；
+4. `rxsync_header=11` 出现 0 次，`rxstatus!=0` 0 次，`rx_ei_code!=0` 0 次；
+5. 首个 `sh=11` 无；首个 token 0x4a 在 record 4（共 57 次）；
+6. 与 K15 的逐 cycle 对齐待做：Golden 侧 0x4a 早于 L0 稳定窗（EQ 后期），
+   需先按 LTSSM 分窗再比对。
 
 license 诊断依据 `docs/reports/vcs-license-status.md`：该服务器当前复核为 UP、
 `VCSCompiler_Net`/`VCSRuntime_Net` 各 99 席且 0 占用；受限环境中的 `-15,570`
