@@ -189,8 +189,10 @@ parity，禁止携带 SVT 的 64-byte 诊断密度。
 `sim/vcs_svt/analyze_phy_forensics.py` 统计 stall、header、status、0x4a 和
 start-block 间隔。
 
-本轮运行被 `27000@wx-linux` 的 VCS license checkout 阻塞在 elaboration，
-尚未生成可用的 Golden `simulate.log`；故不能把 K15 的 65-byte/`0x4a` 事实
-外推为 Golden 事实，也暂不修改生产 RTL。解锁后应先取得 Golden 稳定性和
-同格式首个差异，再按 A/B 报告
-`docs/reports/xdma-svt-k15-ab-root-cause-20260903.md` 的判定表归因。
+受限环境中的 `27000@wx-linux` 报错为 `(-15,570) Operation not permitted`，但
+在可访问 license server 的环境中，Golden 已完成 compile/elab/link，证明不是
+席位不足或 license feature 缺失。当前真正阻塞点是仿真启动 `5482900 fs` 的
+`svt_pcie_pl_proxy.sv:5280` `Null object access`；因此尚未生成 Golden 的
+Gen3 `PHY_FORENSICS`，不能把 K15 的 65-byte/`0x4a` 事实外推到 XDMA，也暂不
+修改生产 RTL。下一步应先修复 Golden/SVT PL callback 启动时序，再按
+`docs/reports/xdma-svt-k15-ab-root-cause-20260903.md` 的判定表做 A/B。

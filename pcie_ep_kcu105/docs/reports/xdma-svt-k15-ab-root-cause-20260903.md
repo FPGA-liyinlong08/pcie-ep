@@ -2,16 +2,23 @@
 
 ## 结论状态
 
-本轮已完成 Golden testbench、统一取证格式、Gen3 L0 双阶段判定和离线统计脚本，
-但 `make xdma-x1-svt-vcs` 在 VCS elaboration 阶段被 `27000@wx-linux` 的
-`VCSCompiler_Net` license checkout 阻塞（8 秒快速回归和此前 300 秒尝试均未
-进入 `simulate.log`）。因此当前不能诚实地宣称 XDMA Golden 已稳定 Gen3 L0，
-也不能用缺失的 Golden 波形判定 65-beat compensation 属于哪一层。阻塞解除后，
-同一命令会自动要求两个 marker，避免“刚进 L0”被误报为通过。
+本轮已完成 Golden testbench、统一取证格式、Gen3 L0 双阶段判定和离线统计脚本。
+最初的受限环境在 VCS checkout 处报 `(-15,570) Operation not permitted`，但按
+license 参考流程切换到可访问 `27000@wx-linux` 的环境后，
+`VCSCompiler_Net`/`VCSRuntime_Net` 均成功 checkout，源码编译、elaboration、link
+全部完成。因此 license 已排除，不是当前 Golden 的根因。
 
-license 诊断依据 `docs/reports/vcs-license-status.md`：该服务器历史上为 UP、
-`VCSCompiler_Net`/`VCSRuntime_Net` 各 99 席且 0 占用；因此应先在允许访问
-`27000@wx-linux` 的环境用 `lmutil lmstat` 区分 daemon/席位问题，再运行 Golden。
+当前 Golden 在仿真启动后约 `5.4829 ns` 由 SVT
+`svt_pcie_pl_proxy::callback_client_exists` 报 `Null object access`，在 Detect/
+Polling 之前终止；`XDMA_SVT_FORENSICS_SUMMARY records=0`，两个 L0 marker 均未
+产生。故目前不能宣称 XDMA Golden 已稳定 Gen3 L0，也不能用缺失的 Golden 波形
+判定 65-beat compensation 属于哪一层。下一步应先修复/隔离这个 Golden
+testbench 与 SVT PL callback 的启动时序问题，再进行 Gen3 A/B 取证。
+
+license 诊断依据 `docs/reports/vcs-license-status.md`：该服务器当前复核为 UP、
+`VCSCompiler_Net`/`VCSRuntime_Net` 各 99 席且 0 占用；受限环境中的 `-15,570`
+只表示网络策略阻断 FlexNet 端口。因此应先在允许访问 `27000@wx-linux` 的环境
+用 `lmutil lmstat` 区分 daemon/席位问题，再运行 Golden。
 Golden 脚本现在自动设置 `SNPSLMD_LICENSE_FILE`/`LM_LICENSE_FILE`，对 Compiler
 和 Runtime 两个 feature 做 10 秒 preflight，并支持 `XILINX_VCS_SIMLIB`、
 `VIVADO_SIMLIB` 及本机 compile_simlib fallback。若 preflight 通过而 VCS 仍在
@@ -29,6 +36,18 @@ Golden 脚本现在自动设置 `SNPSLMD_LICENSE_FILE`/`LM_LICENSE_FILE`，对 C
 - `+PHY_FORENSICS`（Golden 默认打开，可用 `XDMA_X1_SVT_FORENSICS=0` 关闭）和
   K15 默认打开的同名开关，输出统一的 `PHY_FORENSICS side=...` 行。统计工具：
   `python3 sim/vcs_svt/analyze_phy_forensics.py <simulate.log> ...`。
+
+### license 与当前运行证据
+
+- 受限环境：`lmutil lmstat -c 27000@wx-linux` 返回 `(-15,570) Operation not
+  permitted`。
+- 可访问环境：server/master 与 `snpslmd` 均 UP，Compiler/Runtime 均为
+  `99 issued / 0 in use`；同一 Golden 完成 VCS compile/elab/link。
+- 可访问环境的当前失败点：`simulate.log` 在 `5482900 fs` 报
+  `svt_pcie_pl_proxy.sv:5280` 空对象，随后 `records=0`。
+
+这三条证据将 license 问题与 SVT 启动 callback 问题明确分层；不要再通过增加
+`-licqueue` timeout、重启 license daemon 或修改生产 RTL 来处理当前失败。
 
 ## 取证边界
 

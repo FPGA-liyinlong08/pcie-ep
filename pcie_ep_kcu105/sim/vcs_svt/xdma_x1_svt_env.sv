@@ -44,6 +44,10 @@ class xdma_x1_svt_dl_link_scenario extends vmm_ms_scenario;
   svt_pcie_dl_configuration dl_cfg;
 
   `vmm_scenario_new(xdma_x1_svt_dl_link_scenario)
+  `vmm_scenario_member_begin(xdma_x1_svt_dl_link_scenario)
+    `vmm_scenario_member_vmm_data(blueprint, DO_ALL, DO_REFCOPY)
+    `vmm_scenario_member_vmm_data(dl_cfg, DO_ALL, DO_REFCOPY)
+  `vmm_scenario_member_end(xdma_x1_svt_dl_link_scenario)
   function new(svt_pcie_dl_configuration dl_cfg = null);
     super.new(null);
     this.dl_cfg = dl_cfg;
@@ -66,6 +70,8 @@ class xdma_x1_svt_dl_link_scenario extends vmm_ms_scenario;
       n++;
     end
   endtask
+
+  `vmm_class_factory(xdma_x1_svt_dl_link_scenario)
 endclass
 
 class xdma_x1_svt_equalization_scenario extends vmm_ms_scenario;
@@ -74,6 +80,10 @@ class xdma_x1_svt_equalization_scenario extends vmm_ms_scenario;
   svt_pcie_device_status root_status;
 
   `vmm_scenario_new(xdma_x1_svt_equalization_scenario)
+  `vmm_scenario_member_begin(xdma_x1_svt_equalization_scenario)
+    `vmm_scenario_member_vmm_data(blueprint, DO_ALL, DO_REFCOPY)
+    `vmm_scenario_member_vmm_data(pl_cfg, DO_ALL, DO_REFCOPY)
+  `vmm_scenario_member_end(xdma_x1_svt_equalization_scenario)
   function new(svt_pcie_pl_configuration pl_cfg = null,
                svt_pcie_device_status root_status = null);
     super.new(null);
@@ -100,6 +110,8 @@ class xdma_x1_svt_equalization_scenario extends vmm_ms_scenario;
       n++;
     end
   endtask
+
+  `vmm_class_factory(xdma_x1_svt_equalization_scenario)
 endclass
 
 class xdma_x1_svt_env extends vmm_group;

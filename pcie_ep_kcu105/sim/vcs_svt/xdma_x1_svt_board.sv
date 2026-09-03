@@ -27,9 +27,20 @@ module test_top;
     wire ep_rxn = vip_txn[0];
     wire [0:0] ep_txp;
     wire [0:0] ep_txn;
+    // The encrypted GT model can drive X/Z on its serial TX pins while the
+    // SVT device is still in reset.  Clamp only that reset interval so the
+    // SVT PL callback never dereferences an uninitialized reception object;
+    // after reset the official serial lane is connected without alteration.
+    wire golden_rxp0 = vip_reset ? 1'b0 : ep_txp[0];
+    wire golden_rxn0 = vip_reset ? 1'b0 : ep_txn[0];
 
     initial begin
         refclk_p = 1'b0;
+        // Let the VMM program construct its environment before the encrypted
+        // GT model starts producing serial/PIPE callbacks.  Without this
+        // delta-time guard the official GT can emit an X startup beat while
+        // svt_pcie_pl_proxy's callback client is still null.
+        #1_000;
         forever #REF_CLK_HALF_CYCLE refclk_p = ~refclk_p;
     end
 
@@ -71,8 +82,8 @@ module test_top;
     ) root0 (
         .reset(vip_reset),
         .clkreq_n(clkreq_n),
-        .rx_datap_0(ep_txp[0]),
-        .rx_datan_0(ep_txn[0]),
+        .rx_datap_0(golden_rxp0),
+        .rx_datan_0(golden_rxn0),
         .rx_datap_1(1'b0),
         .rx_datan_1(1'b0),
         .rx_datap_2(1'b0),
