@@ -381,6 +381,9 @@ module board;
         .led           (ep_led)
     );
 
+    // K15_L0FIX: probe wire for the new top-level debug port.
+    wire rp_k15_pg3;
+
     xilinx_pcie3_uscale_rp #(
         .C_DATA_WIDTH                       (256),
         .PL_LINK_CAP_MAX_LINK_SPEED         (3'h4),
@@ -394,7 +397,9 @@ module board;
         .pci_exp_rxn (rp_rxn),
         .sys_clk_p   (refclk_p),
         .sys_clk_n   (refclk_n),
-        .sys_rst_n   (rp_reset_n)
+        .sys_rst_n   (rp_reset_n),
+        // K15_L0FIX: bring RP's gt_pcierategen3[0] up to the testbench.
+        .K15_PG3_OUT (rp_k15_pg3)
     );
 
 `ifdef K11B2_DUT
@@ -1620,8 +1625,9 @@ module board;
     // insert (block duplicated) / delete (block missing) at an EP SKP OS.
     always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
         if ($test$plusargs("K15_L0FIX") &&
-            ((($time >= 382595000) && ($time < 382625000)) ||
-             (($time >= 382865000) && ($time < 382885000))))
+            ((($time >= 382600000) && ($time < 382920000)) ||
+             (($time >= 389000000) && ($time < 389400000)) ||
+             (($time >= 400500000) && ($time < 400900000))))
             $display("K15_L0FIX_RPRX time_ps=%0t st=%0h v=%0d sb=%0d sh=%02b data=%08h",
                      $time, RP.cfg_ltssm_state,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_rx_data_valid[0],
@@ -1648,13 +1654,29 @@ module board;
     end
     always @(posedge EP.DUT.phy_pclk) begin
         if ($test$plusargs("K15_L0FIX") &&
-            ((($time >= 382550000) && ($time < 382660000)) ||
-             (($time >= 382790000) && ($time < 382920000))))
+            ((($time >= 382480000) && ($time < 382920000)) ||
+             (($time >= 388800000) && ($time < 389400000)) ||
+             (($time >= 400300000) && ($time < 400900000))))
             $display("K15_L0FIX_EPTX time_ps=%0t tv=%0d tb=%0d tsh=%02b k=%02b ei=%0d data=%08h",
                      $time,
                      EP.DUT.phy_txdata_valid, EP.DUT.phy_txstart_block,
                      EP.DUT.phy_txsync_header, EP.DUT.phy_txdatak,
                      EP.DUT.phy_txelecidle, EP.DUT.phy_txdata);
+    end
+    // Clock-frequency drift detector: count both PIPE-clock edges over the
+    // same absolute window.  If the EP's GT PLL model and the RP's GT PLL
+    // model disagree by even 1 edge over 150 beats the RX elastic buffer
+    // drifts chronically and the post-state-transition corrections become
+    // violent (drop/stale reads) instead of the demo's gentle 1-beat delay.
+    integer k15_epc, k15_rpc;
+    initial begin k15_epc = 0; k15_rpc = 0; end
+    always @(posedge EP.DUT.phy_pclk)
+        if (($time >= 382500000) && ($time < 383100000)) k15_epc = k15_epc + 1;
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk)
+        if (($time >= 382500000) && ($time < 383100000)) k15_rpc = k15_rpc + 1;
+    initial begin
+        #383100000;
+        $display("K15_CLKCNT ep=%0d rp=%0d diff=%0d", k15_epc, k15_rpc, k15_epc - k15_rpc);
     end
     // K15_L0FIX: idle_tx SEND_GAP firings (the 1-beat 128b/130b rate-match
     // pause every 16 blocks).  If these never print the gap never fired.
@@ -1678,6 +1700,15 @@ module board;
     // during L0; this trace shows when the fill changes.  1024 beats = one
     // full 3.2us loop at 250MHz.  Each printed hex digit packs
     // {ltssm_is_L0, RXBUFSTATUS[1:0]} for the RP and the EP.
+    // K15_L0FIX: gt_pcierategen3 change trace via VCS bind.  The wire is
+    // hidden inside an unnamed generate-if and XMR from the TB fails
+    // (VCS forbids reaching into module internals from a non-bind path).
+    // Binding a monitor module to the gt_top_i instance places the
+    // monitor's always/initial blocks in the wrapper's scope, where the
+    // wire and pipe_clk are visible by simple name.
+`ifndef K15_L0FIX_PG3_BIND
+`define K15_L0FIX_PG3_BIND
+`endif
     reg [3:0] k15_btr_rp[0:1023];
     reg [3:0] k15_btr_ep[0:1023];
     integer   k15_btr_wr, k15_btr_i, k15_btr_idx;
@@ -1725,7 +1756,8 @@ module board;
              or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxphaligndone
              or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxdlysresetdone) begin
         if ($test$plusargs("K15_GT_CHG") &&
-            ($time >= 382830000) && ($time < 382920000)) begin
+            ((($time >= 382830000) && ($time < 382920000)) ||
+             (($time >= 388950000) && ($time < 389250000)))) begin
             $display("K15_GT_CHG time_ps=%0t buf=%03b stat=%03b phdone=%0d dlysdone=%0d st=%0h",
                      $time,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.gt_rxbufstatus,
@@ -1746,7 +1778,8 @@ module board;
              or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_rcvr_det
              or RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx_elec_idle) begin
         if ($test$plusargs("K15_GT_CHG") &&
-            ($time >= 382830000) && ($time < 382920000)) begin
+            ((($time >= 382830000) && ($time < 382920000)) ||
+             (($time >= 388950000) && ($time < 389250000)))) begin
             $display("K15_MAC_CHG time_ps=%0t pd=%02b pol=%0d comp=%0d rate=%02b det=%0d txidle=%0d st=%0h",
                      $time,
                      RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_tx0_powerdown,
@@ -3370,6 +3403,24 @@ module board;
     end
 
     wire _unused = &{1'b0, ep_led};
+
+    // K15_L0FIX: monitor rp_k15_pg3 (= RP's gt_pcierategen3[0] threaded
+    // out of rp_phy_wrapper for this debug build) for transitions in
+    // the recovery/L0 window.  gt_pcierategen3 controls RXLPMEN /
+    // RX8B10BEN / comma-align family and is the lone unprobed
+    // candidate for the L0-entry +60/+108ns fixed-time bubble.
+    reg last_pg3;
+    initial last_pg3 = 1'b0;
+    always @(posedge RP.pcie3_uscale_rp_top_i.pcie3_uscale_core_top_inst.pipe_clk) begin
+        if ($test$plusargs("K15_L0FIX") &&
+            ($time >= 382000000) && ($time < 392000000)) begin
+            if (rp_k15_pg3 !== last_pg3) begin
+                $display("K15_L0FIX_PG3 time_ps=%0t st=%0h from=%0d to=%0d",
+                         $time, RP.cfg_ltssm_state, last_pg3, rp_k15_pg3);
+                last_pg3 <= rp_k15_pg3;
+            end
+        end
+    end
 endmodule
 
 // XDMA Root Port 的示例 usrapp 在未被调用的测试 task 中仍存在对 board.EP AXI
@@ -3610,4 +3661,6 @@ module k13_gen1_os_boundary_monitor #(
     end
 endmodule
 
+// K15_L0FIX: monitor lives inside the board module above; this file
+// ends here so VCS can append its default-nettype restore.
 `default_nettype wire

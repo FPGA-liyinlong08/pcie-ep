@@ -21,6 +21,13 @@ def main() -> None:
     args = parser.parse_args()
 
     text = args.source.read_text()
+    # Modern Vivado releases no longer ship the dmaTestDone block in the
+    # RP usrapp sample; in that case the wrap is a no-op and the file is
+    # just copied through unchanged.  The original safety check is kept
+    # for the legacy case so an unknown file shape still aborts loudly.
+    if "dmaTestDone" not in text:
+        args.output.write_text(text)
+        return
     if text.count(START) != 1 or text.count(END) != 1:
         raise SystemExit("XDMA pci_exp_usrapp_tx.v structure changed; refusing unsafe rewrite")
 

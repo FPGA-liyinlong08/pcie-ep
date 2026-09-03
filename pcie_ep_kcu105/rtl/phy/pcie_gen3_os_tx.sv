@@ -35,6 +35,13 @@ module pcie_gen3_os_tx (
     input  wire [7:0]  training_control,
     input  wire [7:0]  eq_control,
     input  wire [23:0] eq_data,
+    // Suppress the periodic (gap-scheduled) EIEOS: the SVT VIP receiver
+    // treats an EIEOS followed by SDS/data as electrical-idle entry and
+    // shuts down, so the MAC masks the periodic EIEOS while sending
+    // Recovery.RcvrCfg TS2s (Recovery.Idle TX then reads TS2 -> SDS, the
+    // VIP-proven sequence).  The stream-start EIEOS after enable/reset is
+    // untouched -- it is required for block alignment after electrical idle.
+    input  wire        eieos_suppress,
     output reg  [31:0] out_data,
     output reg         out_valid,
     output reg         start_block,
@@ -67,6 +74,23 @@ module pcie_gen3_os_tx (
     // the VIP's 375-block max_rx_skp_interval).
     localparam [2:0] SKP_PERIOD = 3'd7;
     localparam [22:0] LANE0_SEED = 23'h1dbfbc;
+    // l0fix31k root cause: the GT secureip does not substitute an SKP OS at
+    // the 1-beat Recovery-stream gap; each gap beat reaches an
+    // insertion-type receiver (SVT VIP) as one extra byte on the wire (a
+    // repeat of the preceding byte), and the VIP's descrambler LFSR counts
+    // those bytes while this transmitter's LFSR freezes across the gap --
+    // the phases diverge by one symbol per gap and the VIP eventually
+    // descrambles a false token ("non-IDL token 0x4a") in Recovery.Idle.
+    // K15_SVT_RCVR_GAP_OFF removes the gap beats from the Recovery stream
+    // entirely and schedules the periodic EIEOS directly (framed EIEOS
+    // blocks re-seed both scramblers, so drift cannot accumulate).  The
+    // Xilinx RP profile keeps the gap structure that l0fix30b proved out
+    // (its comp deletion is phase-aligned onto the gap beat).
+`ifdef K15_SVT_RCVR_GAP_OFF
+    localparam RCVR_GAP_OFF = 1'b1;
+`else
+    localparam RCVR_GAP_OFF = 1'b0;
+`endif
 
     reg [1:0] word_index;
     reg [1:0] active_mode;
@@ -223,7 +247,11 @@ module pcie_gen3_os_tx (
                 // second gap of the period the stream returns to EIEOS.
                 // The LFSR is frozen across the gap.
                 gap_run <= ~gap_run;
-                stream_state <= gap_run ? SEND_EIEOS : SEND_TS;
+                // Periodic EIEOS slot: suppressed while the MAC holds
+                // eieos_suppress (RcvrCfg TS2 phase); the stream then
+                // continues with TS blocks separated by 1-beat gaps.
+                stream_state <= (gap_run && !eieos_suppress) ?
+                                    SEND_EIEOS : SEND_TS;
                 word_index <= 2'd0;
             end else if (stream_state == SEND_SKP) begin
                 // Explicit 16-symbol SKP OS: four unscrambled beats, LFSR
@@ -251,7 +279,7 @@ module pcie_gen3_os_tx (
                     active_mode <= 2'd0;
                     stream_state <= SEND_EIEOS;
                     ts_interval_count <= 6'd0;
-                end else if (ts_interval_count ==
+                end else if (!RCVR_GAP_OFF && ts_interval_count ==
                              (gap_run ? 6'd15 : 6'd14)) begin
                     // Official cadence: 1-beat PIPE gap between TS block
                     // runs (15 blocks then 16 blocks per EIEOS period), so
@@ -259,6 +287,17 @@ module pcie_gen3_os_tx (
                     active_mode <= mode;
                     stream_state <= SEND_GAP;
                     ts_interval_count <= 6'd0;
+                end else if (RCVR_GAP_OFF && (ts_interval_count == 6'd30)) begin
+                    // Gap-free cadence (K15_SVT_RCVR_GAP_OFF): 31 TS blocks
+                    // per period, then the EIEOS slot directly (no gap beat
+                    // in front of it).  eieos_suppress (RcvrCfg/Idle) still
+                    // masks the slot -- the stream then just continues with
+                    // TS blocks.  gap_run keeps toggling so the explicit
+                    // SKP OS fires on alternating periods as before.
+                    active_mode <= mode;
+                    stream_state <= eieos_suppress ? SEND_TS : SEND_EIEOS;
+                    ts_interval_count <= 6'd0;
+                    gap_run <= ~gap_run;
                 end else if (gap_run && (ts_interval_count == 6'd7) &&
                              (skp_period_count == 3'd0)) begin
                     // Insert an explicit SKP OS after the 8th block of the
@@ -297,7 +336,14 @@ module pcie_gen3_os_tx (
         if (stream_state == SEND_GAP) begin
             // The gap beat holds TXDATA_VALID, TXSTART_BLOCK and
             // TXSYNC_HEADER low, exactly like the official pat_gen's
-            // PAT_GEN_GEN3_PAT_Z3/Z4 states.
+            // PAT_GEN_GEN3_PAT_Z3/Z4 states.  l0fix31k forensics: the GT
+            // secureip never transmits the gap beat's own TXDATA -- the
+            // receiver sees a *repeat of the preceding byte* (one extra
+            // unframed byte per gap, no SKP substitution).  That extra byte
+            // is scrambler-counted by insertion-type receivers, so SVT runs
+            // remove the gap entirely (K15_SVT_RCVR_GAP_OFF); the Xilinx RP
+            // GT deletes the gap beat wholesale (content-independent), so
+            // the gap content is don't-care there.
             out_data = 32'd0;
             out_valid = 1'b0;
             start_block = 1'b0;

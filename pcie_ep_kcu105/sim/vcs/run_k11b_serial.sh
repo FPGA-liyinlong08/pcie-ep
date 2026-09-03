@@ -114,6 +114,14 @@ if [[ "${k15_mode}" == "1" ]]; then
     if [[ "${K15_L0_SKP_DENSE:-0}" == "1" ]]; then
         tb_defines+=(+define+K15_L0_SKP_DENSE)
     fi
+    if [[ "${K15_L0_SKP_OFF:-0}" == "1" ]]; then
+        tb_defines+=(+define+K15_L0_SKP_OFF)
+    fi
+    # Gap-grid phase scan (0..15 blocks of offset after each SDS); default 0
+    # gives the corrected 65-beat gap period (16 blocks x 4 + 1 gap).
+    if [[ -n "${K15_L0_GAP_PHASE:-}" ]]; then
+        tb_defines+=("+define+K15_L0_GAP_PHASE=${K15_L0_GAP_PHASE}")
+    fi
 fi
 if [[ "${k14_rate_ab_mode}" == "1" ]]; then
     case "${k14_ep_tx_rate_id}" in

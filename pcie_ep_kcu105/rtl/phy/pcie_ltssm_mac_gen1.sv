@@ -670,6 +670,22 @@ module pcie_ltssm_mac_gen1 #(
     reg gen3_idle_tx_owner;
     wire gen3_os_tx_enable = gen3_mode && !gen3_idle_tx_owner;
     wire gen3_idle_tx_enable = gen3_mode && gen3_idle_tx_owner;
+    // K15_SVT L0 fix: the SVT VIP receiver shuts its PIPE output down
+    // forever when an EIEOS block is followed by SDS/idle data (it treats
+    // EIEOS-then-data as the electrical-idle entry sequence), and its
+    // Recovery.Idle state bounces to RcvrCfg/RcvrLock on receiving any TS
+    // block.  The VIP's own Recovery.Idle stream (decoded by
+    // pcie_gen3_os_rx, K15_SVT_EP_RXBLK trace) is TS2 -> SDS -> logical
+    // idle with NO EIEOS anywhere.  The pat_gen's periodic EIEOS can land
+    // right at the RcvrCfg -> Recovery.Idle boundary, so suppress the
+    // periodic EIEOS while transmitting RcvrCfg TS2s; the Recovery.Idle
+    // handoff then always reads TS2 -> SDS, the VIP-proven sequence.
+    // RECOVERY_IDLE is included so an EIEOS already scheduled by the gap
+    // FSM cannot fire after the 0d boundary (the gap-end edge samples the
+    // suppress input while the state has already moved to Recovery.Idle).
+    wire gen3_cfg_eieos_suppress = gen3_mode &&
+                                   (ltssm_state == RECOVERY_RCVRCFG ||
+                                    ltssm_state == RECOVERY_IDLE);
     pcie_gen3_os_tx u_gen3_os_tx (
         .clk(phy_pclk), .rst_n(pipe_rst_n),
         .enable(gen3_os_tx_enable), .mode(tx_os_mode),
@@ -678,6 +694,7 @@ module pcie_ltssm_mac_gen1 #(
         .n_fts(8'hff), .rate_id(tx_os_rate_id),
         .training_control(tx_os_training_control),
         .eq_control(tx_gen3_eq_control), .eq_data(tx_gen3_eq_data),
+        .eieos_suppress(gen3_cfg_eieos_suppress),
         .out_data(gen3_os_tx_data), .out_valid(gen3_os_tx_valid),
         .start_block(gen3_os_tx_start_block),
         .sync_header(gen3_os_tx_sync_header),
@@ -799,6 +816,7 @@ module pcie_ltssm_mac_gen1 #(
             CFG_LANENUM_ACCEPT, RECOVERY_RCVRLOCK: tx_os_mode = 2'd1;
             CFG_COMPLETE:                         tx_os_mode = 2'd2;
             RECOVERY_RCVRCFG:                     tx_os_mode = 2'd2;
+            RECOVERY_IDLE: tx_os_mode = 2'd0;
             RECOVERY_EQ_PHASE0, RECOVERY_EQ_PHASE1,
             RECOVERY_EQ_PHASE2, RECOVERY_EQ_PHASE3:
                                                    tx_os_mode = 2'd1;

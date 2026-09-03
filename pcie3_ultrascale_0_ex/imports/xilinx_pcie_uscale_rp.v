@@ -89,7 +89,10 @@ module xilinx_pcie3_uscale_rp # (
   input   [(PL_LINK_CAP_MAX_LINK_WIDTH - 1) : 0]  pci_exp_rxn,
   input                                        sys_clk_p,
   input                                        sys_clk_n,
-  input                                        sys_rst_n
+  input                                        sys_rst_n,
+  // K15_L0FIX debug-only: gt_pcierategen3[0] out from rp_phy_wrapper
+  // (drives RXLPMEN/RX8B10BEN/comma-align family), exposed to the TB.
+  output wire                                  K15_PG3_OUT
 );
 
   localparam         TCQ = 1;
@@ -418,7 +421,9 @@ pcie3_uscale_rp_top  pcie3_uscale_rp_top_i(
     .pcie_perstn0_out       (),
     .pcie_perstn1_in        (1'b0),
     .pcie_perstn1_out       (),
-    .sys_reset              (sys_rst_n_c) 
+    .sys_reset              (sys_rst_n_c),
+    // K15_L0FIX debug-only: bring gt_pcierategen3[0] up to the testbench.
+    .K15_PG3_OUT            (K15_PG3_OUT)
   );
 
   pci_exp_usrapp_rx # (

@@ -39,6 +39,33 @@ module test_top;
     integer rx_pipe_debug_count;
     integer tx_eieos_debug_count;
 
+    // K15_L0FIX: the VIP detects "Invalid sync hdr 2'b11 -- block alignment
+    // lost" within ~33ns of L0 up, then non-IDL token / framing error.
+    // sh=11 is the classic 1-bit-slip signature ("01|10" read one bit late),
+    // so capture the VIP RX and EP TX beats around the first Gen3 sh==11 to
+    // see exactly what the wire carried and where alignment diverged.
+    localparam SH11_RING = 96;
+    // {status[1:0], ei_code[7:0], valid, data_valid, start, sh[1:0], data[31:0]}
+    reg [46:0] sh11_vip_ring [0:SH11_RING-1];
+    reg [35:0] sh11_ep_ring  [0:SH11_RING-1]; // {valid, start, sh[1:0], data[31:0]}
+    integer sh11_vip_head, sh11_ep_head, sh11_j;
+    reg sh11_triggered, sh11_ep_dump;
+    integer sh11_ep_post, sh11_vip_post;
+    reg [5:0] ep_ltssm_trace_last;
+    // K15_L0FIX: the VIP sat in Recovery.Idle for its full 20us timeout
+    // while the EP was already in L0 (267.07-286.97us) -- it never accepted
+    // the EP's idle stream.  Re-arm both PIPE beat captures at the EP's
+    // first Gen3 Recovery.Idle entry so the 0d->L0 handoff is covered.
+    integer ep_tx_debug_count;
+    reg recov_idle_cap_armed;
+    // K15_L0FIX: mirror probe -- what the VIP transmits as seen by the EP's
+    // ordered-set receiver.  The VIP sat silent in Recovery.Idle while the
+    // EP's stream (TS2 -> EIEOS -> SDS -> idle) killed its receiver, so
+    // record the block sequence the EP RX decodes from the VIP side.
+    reg [2:0] ep_rxblk_last;
+    reg [31:0] ep_rxblk_w0;
+    integer ep_rxblk_trace_count;
+
     `include "svc_util_parms.v"
 
     initial begin
@@ -68,6 +95,14 @@ module test_top;
         reset_epoch_count = 0;
         rx_pipe_debug_count = 0;
         tx_eieos_debug_count = 0;
+        ep_tx_debug_count = 0;
+        sh11_triggered = 1'b0;
+        sh11_ep_dump = 1'b0;
+        sh11_vip_head = 0;
+        sh11_ep_head = 0;
+        sh11_ep_post = 0;
+        ep_rxblk_trace_count = 0;
+        ep_ltssm_trace_last = 6'h3f;
         global_random_seed = 0;
         apply_reset_epoch();
     end
@@ -177,7 +212,7 @@ module test_top;
 
     always @(posedge root0.port0.pipe_clk) begin
         if (!vip_reset && (DUT.phy_active_rate == 2'b10) &&
-            (rx_pipe_debug_count < 512) &&
+            (rx_pipe_debug_count < 8192) &&
             ((rx_pipe_debug_count < 96) ||
              root0.port0.pcs0_rx_valid || root0.port0.pcs0_rx_data_valid ||
              root0.port0.pcs0_rx_start_block ||
@@ -196,6 +231,231 @@ module test_top;
                      root0.port0.pcs0_rx_ei_code,
                      root0.port0.pcs0_rx_status);
             rx_pipe_debug_count = rx_pipe_debug_count + 1;
+        end
+    end
+
+    // K15_SVT l0fix31k: 0d-handoff forensics.  The +-27-byte VIP/EP
+    // descrambler phase offset at the first scrambled idle block requires
+    // both sides' LFSR accounting to be visible.  Print (a) every EP os_tx
+    // EIEOS completion (the only in-stream LFSR reset), (b) the
+    // Recovery.Idle handoff moment with both sources' LFSR states, and
+    // (c) the first SDS beat actually driven by the idle source.
+    reg handoff_prev_owner;
+    always @(posedge DUT.phy_pclk or negedge ep_perst_n) begin
+        if (!ep_perst_n) begin
+            handoff_prev_owner <= 1'b0;
+        end else if (DUT.phy_active_rate == 2'b10) begin
+            if (ep_ltssm_state >= 6'h0b &&
+                ep_ltssm_state <= 6'h0d &&
+                DUT.u_ltssm_mac.u_gen3_os_tx.stream_state == 2'd0 &&
+                DUT.u_ltssm_mac.u_gen3_os_tx.word_index == 2'd3 &&
+                DUT.u_ltssm_mac.gen3_os_tx_valid)
+                $display("K15_SVT_EIEOS_RESET t_ps=%0t ltssm=%02h lfsr_next_tick=%06h",
+                         $time, ep_ltssm_state,
+                         DUT.u_ltssm_mac.u_gen3_os_tx.lfsr_state);
+            if (DUT.u_ltssm_mac.gen3_idle_tx_owner &&
+                !handoff_prev_owner)
+                $display("K15_SVT_HANDOFF t_ps=%0t ltssm=%02h os_lfsr=%06h os_lfsr_after=%06h idle_lfsr=%06h",
+                         $time, ep_ltssm_state,
+                         DUT.u_ltssm_mac.u_gen3_os_tx.lfsr_state,
+                         DUT.u_ltssm_mac.gen3_os_tx_lfsr_after_word,
+                         DUT.u_ltssm_mac.u_gen3_idle_tx.lfsr_state);
+            handoff_prev_owner <= DUT.u_ltssm_mac.gen3_idle_tx_owner;
+        end else begin
+            handoff_prev_owner <= 1'b0;
+        end
+    end
+
+    // K15_L0FIX sh=11 capture: VIP RX history ring on pipe_clk.
+    always @(posedge root0.port0.pipe_clk) begin
+        if (vip_reset) begin
+            sh11_triggered <= 1'b0;
+            sh11_vip_head <= 0;
+            sh11_vip_post <= 0;
+        end else begin
+            sh11_vip_ring[sh11_vip_head] <= {
+                root0.port0.pcs0_rx_status[1:0],
+                root0.port0.pcs0_rx_ei_code[7:0],
+                root0.port0.pcs0_rx_valid,
+                root0.port0.pcs0_rx_data_valid,
+                root0.port0.pcs0_rx_start_block,
+                root0.port0.pcs0_rx_sync_header,
+                root0.port0.pcs0_rx_data};
+            sh11_vip_head <= (sh11_vip_head == SH11_RING-1) ? 0 :
+                             sh11_vip_head + 1;
+            if (!sh11_triggered && (DUT.phy_active_rate == 2'b10) &&
+                root0.port0.pcs0_rx_valid &&
+                (root0.port0.pcs0_rx_sync_header == 2'b11)) begin
+                sh11_triggered <= 1'b1;
+                $display("K15_SVT_SH11_HIT t_ps=%0t", $time);
+                $display("K15_SVT_SH11_NOW valid=%0d dv=%0d start=%0d sh=%02b data=%08h ei=%02h status=%0b",
+                         root0.port0.pcs0_rx_valid,
+                         root0.port0.pcs0_rx_data_valid,
+                         root0.port0.pcs0_rx_start_block,
+                         root0.port0.pcs0_rx_sync_header,
+                         root0.port0.pcs0_rx_data,
+                         root0.port0.pcs0_rx_ei_code[7:0],
+                         root0.port0.pcs0_rx_status[1:0]);
+                for (sh11_j = 0; sh11_j < SH11_RING; sh11_j = sh11_j + 1) begin
+                    // oldest first; entry (head+1) is the oldest beat
+                    $display("K15_SVT_SH11_PRE n=-%0d valid=%0d dv=%0d start=%0d sh=%02b data=%08h ei=%02h status=%0b",
+                             SH11_RING - sh11_j,
+                             sh11_vip_ring[(sh11_vip_head + sh11_j) % SH11_RING][36],
+                             sh11_vip_ring[(sh11_vip_head + sh11_j) % SH11_RING][35],
+                             sh11_vip_ring[(sh11_vip_head + sh11_j) % SH11_RING][34],
+                             sh11_vip_ring[(sh11_vip_head + sh11_j) % SH11_RING][33:32],
+                             sh11_vip_ring[(sh11_vip_head + sh11_j) % SH11_RING][31:0],
+                             sh11_vip_ring[(sh11_vip_head + sh11_j) % SH11_RING][43:36],
+                             sh11_vip_ring[(sh11_vip_head + sh11_j) % SH11_RING][45:44]);
+                end
+            end else if (sh11_triggered && (sh11_vip_post < SH11_RING) &&
+                         (root0.port0.pcs0_rx_valid ||
+                          root0.port0.pcs0_rx_data_valid)) begin
+                $display("K15_SVT_SH11_POST valid=%0d dv=%0d start=%0d sh=%02b data=%08h ei=%02h status=%0b",
+                         root0.port0.pcs0_rx_valid,
+                         root0.port0.pcs0_rx_data_valid,
+                         root0.port0.pcs0_rx_start_block,
+                         root0.port0.pcs0_rx_sync_header,
+                         root0.port0.pcs0_rx_data,
+                         root0.port0.pcs0_rx_ei_code[7:0],
+                         root0.port0.pcs0_rx_status[1:0]);
+                sh11_vip_post <= sh11_vip_post + 1;
+            end
+        end
+    end
+
+    // K15_L0FIX sh=11 capture: EP TX history ring on phy_pclk, dumped one
+    // sh11_triggered delay later (both clocks run at the same nominal rate).
+    always @(posedge DUT.phy_pclk) begin
+        if (vip_reset) begin
+            sh11_ep_dump <= 1'b0;
+            sh11_ep_head <= 0;
+            sh11_ep_post <= 0;
+        end else begin
+            sh11_ep_ring[sh11_ep_head] <= {
+                DUT.phy_txdata_valid,
+                DUT.phy_txstart_block,
+                DUT.phy_txsync_header,
+                DUT.phy_txdata};
+            sh11_ep_head <= (sh11_ep_head == SH11_RING-1) ? 0 :
+                            sh11_ep_head + 1;
+            if (sh11_triggered && !sh11_ep_dump) begin
+                sh11_ep_dump <= 1'b1;
+                for (sh11_j = 0; sh11_j < SH11_RING; sh11_j = sh11_j + 1) begin
+                    $display("K15_SVT_SH11_EPPRE n=-%0d valid=%0d start=%0d sh=%02b data=%08h",
+                             SH11_RING - sh11_j,
+                             sh11_ep_ring[(sh11_ep_head + sh11_j) % SH11_RING][35],
+                             sh11_ep_ring[(sh11_ep_head + sh11_j) % SH11_RING][34],
+                             sh11_ep_ring[(sh11_ep_head + sh11_j) % SH11_RING][33:32],
+                             sh11_ep_ring[(sh11_ep_head + sh11_j) % SH11_RING][31:0]);
+                end
+            end else if (sh11_ep_dump && (sh11_ep_post < SH11_RING)) begin
+                $display("K15_SVT_SH11_EPPOST n=%0d valid=%0d start=%0d sh=%02b data=%08h",
+                         sh11_ep_post,
+                         DUT.phy_txdata_valid,
+                         DUT.phy_txstart_block,
+                         DUT.phy_txsync_header,
+                         DUT.phy_txdata);
+                sh11_ep_post <= sh11_ep_post + 1;
+            end
+        end
+    end
+
+    // K15_L0FIX: EP LTSSM trace once Gen3 is active (the interesting window
+    // is post-speed-change; pre-Gen3 training transitions are noise).
+    always @(posedge DUT.phy_pclk or negedge ep_perst_n) begin
+        if (!ep_perst_n) begin
+            ep_ltssm_trace_last <= 6'h3f;
+        end else if ((ep_ltssm_state != ep_ltssm_trace_last) &&
+                     seen_gen3_rate && (DUT.phy_active_rate == 2'b10)) begin
+            $display("K15_SVT_EP_LTSSM t_ps=%0t state=%02h rate=%02b",
+                     $time, ep_ltssm_state, DUT.phy_active_rate);
+            ep_ltssm_trace_last <= ep_ltssm_state;
+        end else if (ep_ltssm_state != ep_ltssm_trace_last) begin
+            ep_ltssm_trace_last <= ep_ltssm_state;
+        end
+    end
+
+    // K15_L0FIX: re-arm the beat captures at the EP's first Gen3
+    // Recovery.Idle entry.  The window then covers Recovery.Idle TX, the
+    // SDS/L0 handoff and the first idle blocks as the VIP sees them.
+    always @(posedge DUT.phy_pclk or negedge ep_perst_n) begin
+        if (!ep_perst_n) begin
+            recov_idle_cap_armed <= 1'b0;
+        end else if (!recov_idle_cap_armed &&
+                     (ep_ltssm_state == 6'h0d) &&
+                     (DUT.phy_active_rate == 2'b10)) begin
+            recov_idle_cap_armed <= 1'b1;
+            $display("K15_SVT_CAP_REARM t_ps=%0t ep_state=0d", $time);
+            rx_pipe_debug_count = 0;
+            ep_tx_debug_count = 0;
+        end
+    end
+
+    // K15_L0FIX: EP TX PIPE beat capture (mirrors the RP_PIPE_RX monitor).
+    always @(posedge DUT.phy_pclk) begin
+        if (!vip_reset && (DUT.phy_active_rate == 2'b10) &&
+            (ep_tx_debug_count < 512) &&
+            ((ep_tx_debug_count < 96) ||
+             DUT.phy_txdata_valid || DUT.phy_txstart_block ||
+             (DUT.phy_txsync_header != 2'b00))) begin
+            #1;
+            $display("K15_SVT_EP_TX_PIPE n=%0d t_ps=%0t valid=%0d start=%0d sh=%02b data=%08h",
+                     ep_tx_debug_count, $time,
+                     DUT.phy_txdata_valid, DUT.phy_txstart_block,
+                     DUT.phy_txsync_header, DUT.phy_txdata);
+            ep_tx_debug_count = ep_tx_debug_count + 1;
+        end
+    end
+
+    // K15_L0FIX: EP RX block-kind trace (what the VIP transmits).  Gated to
+    // non-L0 EP states and capped so the L0 idle stream cannot flood the log;
+    // the VIP's L0 entry is observed while the EP is still in Recovery.Idle.
+    always @(posedge DUT.phy_pclk) begin
+        if (vip_reset) begin
+            ep_rxblk_last <= 3'd0;
+        end else if ((DUT.phy_active_rate == 2'b10) &&
+                     (ep_ltssm_state != 6'h0a) &&
+                     (ep_rxblk_trace_count < 2000)) begin
+            if (DUT.u_ltssm_mac.u_gen3_os_rx.block_kind == 3'd0) begin
+                ep_rxblk_last <= 3'd0;
+            end else if (DUT.u_ltssm_mac.u_gen3_os_rx.block_kind !=
+                         ep_rxblk_last) begin
+                ep_rxblk_last <= DUT.u_ltssm_mac.u_gen3_os_rx.block_kind;
+                ep_rxblk_w0 <= DUT.phy_rxdata;
+                ep_rxblk_trace_count = ep_rxblk_trace_count + 1;
+                $display("K15_SVT_EP_RXBLK t_ps=%0t kind=%0d w0=%08h valid=%0d status=%0b ep_state=%02h",
+                         $time, DUT.u_ltssm_mac.u_gen3_os_rx.block_kind,
+                         DUT.phy_rxdata, DUT.phy_rxvalid, DUT.phy_rxstatus,
+                         ep_ltssm_state);
+            end
+        end
+    end
+
+    // l0fix30j: 0d exit-path debug.  The EP sits in Recovery.Idle despite
+    // 11+ decoded VIP idle blocks; print every idle_valid pulse with the
+    // exit inputs, plus a slow heartbeat exposing the os_rx internals
+    // (parse_error / descrambler state) that decide whether idle_valid
+    // can fire at all.
+    reg [15:0] idle0d_pulse_cnt;
+    always @(posedge DUT.phy_pclk) begin
+        if (!vip_reset && (DUT.phy_active_rate == 2'b10) &&
+            (ep_ltssm_state == 6'h0d)) begin
+            idle0d_pulse_cnt <= idle0d_pulse_cnt + 1'b1;
+            if (DUT.u_ltssm_mac.gen3_os_idle_valid)
+                $display("K15_SVT_0D_IDLE t_ps=%0t n=%0d ts=%0d force=%b",
+                         $time, idle0d_pulse_cnt, DUT.u_ltssm_mac.rx_ts_count,
+                         DUT.u_ltssm_mac.force_recovery);
+            else if (idle0d_pulse_cnt[9:0] == 0)
+                $display("K15_SVT_0D_HEART t_ps=%0t n=%0d ts=%0d force=%b perr=%b idlev=%b kind=%0d dw=%08h",
+                         $time, idle0d_pulse_cnt, DUT.u_ltssm_mac.rx_ts_count,
+                         DUT.u_ltssm_mac.force_recovery,
+                         DUT.u_ltssm_mac.u_gen3_os_rx.parse_error,
+                         DUT.u_ltssm_mac.u_gen3_os_rx.idle_valid,
+                         DUT.u_ltssm_mac.u_gen3_os_rx.block_kind,
+                         DUT.u_ltssm_mac.u_gen3_os_rx.descrambled_data);
+        end else begin
+            idle0d_pulse_cnt <= 16'd0;
         end
     end
 

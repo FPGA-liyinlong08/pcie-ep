@@ -55,22 +55,60 @@ module pcie_gen3_idle_tx (
     localparam [9:0] SKP_GAP_A = 10'd370;
     localparam [9:0] SKP_GAP_B = 10'd371;
 `endif
+    // l0fix29 finding: the first SKP OS block in L0 breaks the RP GT's
+    // 128b/130b framing (3 aa beats decoded, 4th beat alien, sb never
+    // asserts again) and shifts the EP gap grid by 4 beats (SKP block not
+    // counted by the gap counter) -- the Xilinx demo EP shows NO SKP OS
+    // events at the RP RX PIPE output in L0 at all.  K15_L0_SKP_OFF
+    // disables the scheduled SKP OS in the idle stream entirely; SVT VIP
+    // SKP-interval compliance must be solved separately.
+`ifdef K15_L0_SKP_OFF
+    localparam SKP_OS_DISABLE = 1'b1;
+`else
+    localparam SKP_OS_DISABLE = 1'b0;
+`endif
+    // K15_SVT l0fix30i finding: the 1-beat v=0 gap beat reaches the wire as
+    // 4 bytes of TXDATA residue with no block framing (the GT secureip does
+    // NOT substitute an SKP OS there in a data stream).  The Xilinx RP GT
+    // survives because its 65-beat comp event is a *deletion* phase-aligned
+    // onto the gap (PHASE=4), which swallows exactly those 4 bytes.  The SVT
+    // VIP comp event is an *insertion* (1-beat data_valid=0 stall, mask +
+    // repeat): the VIP PCS counts stalls correctly (12 clean blocks verified
+    // across 3 stalls) but cannot swallow the unframed gap bytes -- the next
+    // block boundary check reads their sh bits (2'b00) and shuts the
+    // receiver down (status=6).  K15_L0_GAP_OFF removes the gap beat from
+    // the idle stream entirely for SVT-class receivers; rate matching is
+    // then carried by the scheduled SKP OS blocks (370/371-block cadence)
+    // and the VIP's own benign stalls.
+`ifdef K15_L0_GAP_OFF
+    localparam GAP_OS_DISABLE = 1'b1;
+`else
+    localparam GAP_OS_DISABLE = 1'b0;
+`endif
     // K15 RP L0 fix: 1-beat PIPE valid gap (TXDATA_VALID low) every 16
-    // blocks, at a block boundary.  A Gen3 block occupies 130 bit times on
-    // the wire, so the wire's payload capacity is 64/65 of the 250 MHz /
-    // 32-bit PIPE interface rate; a continuous stream over-drives the GT TX
-    // buffer by exactly 1 beat per 65 (every 260ns) and the model drops it,
-    // which the RP RX GT repairs by repeating a *data* beat (no SKP nearby)
-    // -- the observed 260ns bubble and the endless RP L0<->Recovery loop.
-    // The GT secureip substitutes a real SKP OS during every valid gap
-    // (same mechanism as the training transmitter), giving the partner RX
-    // elastic buffer SKP symbols to clock-correct with: at one gap per 16
-    // blocks the EP TX buffer is exactly balanced (64/65 = 128/130).
-    // Cadence note: one gap per 15 blocks (os_tx training density) drains
-    // the EP TX buffer, and explicit SKP OS blocks alone (the earlier
-    // 4/5-block and 370/371-block cadences) change nothing -- the drop is
-    // duty-cycle driven, not SKP-content driven.
+    // blocks, at a block boundary, for a gap period of exactly 65 beats
+    // (16 blocks x 4 + 1 gap).  l0fix27 root cause: the RP GT RX runs a
+    // structural clock-compensation cycle of exactly 65 beats (the 128b/130b
+    // payload duty at the 250MHz/32-bit PIPE rate) and deletes 1 beat per
+    // cycle no matter what the EP transmits (zero refclk ppm difference does
+    // NOT suppress it).  The deletion is benign only when it lands on an EP
+    // slack gap -- the Xilinx demo EP gaps every 65 beats and its RP never
+    // leaves L0 (297 benign deletions observed); our EP's gap grid sat at a
+    // different cadence/phase, so the deletion landed mid-stream: mask beat +
+    // data-path-ahead-of-framing + descrambler-realignment aliens -> sh=00
+    // at block starts -> rxstatus=100 -> exit L0 -> endless Recovery loop.
+    // The elastic buffer was exonerated by l0fix27 BUF_TRACE (chronic +2
+    // watermark, but never an overflow transition through the fatal window).
+    // K15_L0_GAP_PHASE (0..15): blocks of initial offset applied to the gap
+    // grid after each SDS, to scan the gap phase against the RP's deletion
+    // cycle (period is identical at 65 beats, so the relative phase is
+    // stable and one scan covers all block-aligned alignments).
     localparam [4:0] RATE_GAP_BLOCKS = 5'd16;
+`ifdef K15_L0_GAP_PHASE
+    localparam [4:0] RATE_GAP_PHASE = 5'd`K15_L0_GAP_PHASE;
+`else
+    localparam [4:0] RATE_GAP_PHASE = 5'd0;
+`endif
 
     reg [1:0] state;
     reg [1:0] word_index;
@@ -129,11 +167,16 @@ module pcie_gen3_idle_tx (
             word_index <= 2'd0;
             if (state == SEND_SDS) begin
                 state <= SEND_IDLE;
-                rate_gap_cnt <= 5'd0;
-            end else if (rate_gap_cnt >= RATE_GAP_BLOCKS) begin
+                // Phase knob: offset the gap grid after each SDS.  With
+                // PHASE=0 the first gap fires after 16 blocks (65-beat
+                // period); PHASE=k shifts the whole grid k blocks earlier.
+                rate_gap_cnt <= RATE_GAP_PHASE;
+            end else if (!GAP_OS_DISABLE &&
+                         rate_gap_cnt >= RATE_GAP_BLOCKS - 5'd1) begin
                 rate_gap_cnt <= 5'd0;
                 state <= SEND_GAP;
-            end else if (skp_gap_count == (gap_run ? SKP_GAP_B : SKP_GAP_A)) begin
+            end else if (!SKP_OS_DISABLE &&
+                         skp_gap_count == (gap_run ? SKP_GAP_B : SKP_GAP_A)) begin
                 skp_gap_count <= 10'd0;
                 gap_run <= ~gap_run;
                 state <= SEND_SKP;

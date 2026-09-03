@@ -1331,7 +1331,10 @@ module rp_pcie3_uscale_core_top
   output wire   [1:0] pl_eq_phase,
   input  wire         pcie_perstn1_in, 
   output wire         pcie_perstn0_out,
-  output wire         pcie_perstn1_out
+  output wire         pcie_perstn1_out,
+  // K15_L0FIX debug-only: expose gt_pcierategen3[0] from the PHY wrapper
+  // all the way to pcie3_uscale_rp_top.  Remove for non-debug builds.
+  output wire         K15_PG3_OUT
   );
   localparam  [1:0]  AXISTEN_IF_WIDTH           = ((C_DATA_WIDTH == 256) ? 2'b10: ((C_DATA_WIDTH == 128) ? 2'b01 : 2'b00));
   localparam  [1:0]  CRM_USER_CLK_FREQ          = ((USER_CLK_FREQ == 3) ? 2'b10: ((USER_CLK_FREQ == 2) ? 2'b01 : 2'b00));
@@ -3125,6 +3128,9 @@ rp_deemph deemph_i
 );
 //----------------------------------------RXCDR HOLD---------------------------------------------------//
 wire phy_rxcdrhold;
+// K15_L0FIX debug-only: gt_pcierategen3[0] is exposed via the K15_PG3_OUT
+// output of rp_phy_wrapper (instance gt_top_i below), and that signal is
+// connected straight through to this module's K15_PG3_OUT port for the TB.
 
 rp_rxcdrhold rxcdrhold_i
 (
@@ -3315,9 +3321,11 @@ rp_phy_wrapper #
     //--------------------------------------------------------------------------
     .PHY_TXMARGIN                      ( pipe_tx0_margin ),          
     .PHY_TXSWING                       ( pipe_tx0_swing  ),           
-    .PHY_RXCDRHOLD                     ( phy_rxcdrhold),    
-    .PHY_TXDEEMPH                      ( phy_txdeemph_out)    
-    
+    .PHY_RXCDRHOLD                     ( phy_rxcdrhold),
+    .PHY_TXDEEMPH                      ( phy_txdeemph_out),
+    // K15_L0FIX debug-only: expose wrapper's pcierategen3[0] to the TB.
+    .K15_PG3_OUT                       (K15_PG3_OUT)
+
 );
 
   rp_pcie3_uscale_top 
@@ -14707,7 +14715,11 @@ module rp_phy_wrapper #
     output      [(PHY_LANE*3)-1:0]      PHY_RXEQ_FSM,                 
     output                              PHY_RST_IDLE,                 
     output                              PHY_RRST_N,
-    output                              PHY_PRST_N        
+    output                              PHY_PRST_N,
+    // K15_L0FIX debug-only: expose gt_pcierategen3[0] to the TB.  The wire
+    // is otherwise hidden inside an unnamed generate-if and VCS XMR cannot
+    // cross it.  Remove for non-debug builds.
+    output                              K15_PG3_OUT
 );
 
 //--------------------------------------------------------------------------------------------------
@@ -14778,7 +14790,10 @@ module rp_phy_wrapper #
     wire        [(PHY_LANE*2)-1:0]      gt_pcierateqpllreset;               
     wire        [PHY_LANE-1:0]          gt_pcierateidle;            
     wire        [PHY_LANE-1:0]          gt_pciesynctxsyncdone;                    
-    wire        [PHY_LANE-1:0]          gt_pcierategen3;  
+    wire        [PHY_LANE-1:0]          gt_pcierategen3;
+    // K15_L0FIX debug-only: continuous-assign out of the wrapper so the TB
+    // can monitor pcierategen3 transitions around the L0-entry window.
+    assign K15_PG3_OUT = gt_pcierategen3[0];
     wire        [PHY_LANE-1:0]          gt_pcieusergen3rdy; 
     wire        [PHY_LANE-1:0]          gt_pcieuserratestart;  
     

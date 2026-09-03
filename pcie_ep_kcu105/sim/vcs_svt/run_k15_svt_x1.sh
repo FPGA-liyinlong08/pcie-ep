@@ -184,6 +184,25 @@ rtl_defines=()
 if [[ "${header_held_ab}" == "1" ]]; then
     rtl_defines+=(+define+K15_AB_HEADER_HELD)
 fi
+# Gen3 L0 fix: exact 65-beat rate-match gap period (idle_tx off-by-one fix is
+# unconditional) plus an optional grid phase knob.  SVT keeps L0 SKP OSs
+# ENABLED (no K15_L0_SKP_OFF) -- the VIP's max_rx_skp_interval check requires
+# explicit SKP OSs; the SKP-breaks-framing artifact is Xilinx-RP-GT specific.
+if [[ -n "${K15_L0_GAP_PHASE:-}" ]]; then
+    rtl_defines+=("+define+K15_L0_GAP_PHASE=${K15_L0_GAP_PHASE}")
+fi
+# l0fix30i: the 1-beat gap beat reaches the VIP as 4 unframed TXDATA-residue
+# bytes mid-block (the GT only swallows them via the RP's deletion-type comp
+# event; the VIP's comp is an insertion and dies on them).  SVT-class
+# receivers therefore run the idle stream with NO gap beats -- rate matching
+# rides on the scheduled SKP OS blocks and the VIP's own benign stalls.
+rtl_defines+=("+define+K15_L0_GAP_OFF")
+# l0fix31k: same treatment for the Recovery TS stream -- each 1-beat gap
+# reaches the VIP as one extra repeated byte and the VIP's descrambler LFSR
+# counts it (+1 phase drift per gap -> false non-IDL token in Recovery.Idle).
+# The periodic EIEOS is scheduled directly (no gap in front of it); framed
+# EIEOS blocks re-seed both scramblers.
+rtl_defines+=("+define+K15_SVT_RCVR_GAP_OFF")
 run_logged "${vcs_home}/bin/vlogan" -full64 -sverilog -work xil_defaultlib \
     "${rtl_defines[@]}" \
     "${rtl_paths[@]}" "${vivado_home}/data/verilog/src/glbl.v"
