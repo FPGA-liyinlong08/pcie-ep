@@ -36,7 +36,9 @@ make ku040-hw-program \
   -tclargs localhost:3122 path/to/image.bit program
 ```
 
-公共实现位于 `scripts/program_ku040.tcl`。它会检查 JTAG target，要求发现且只发现
+公共实现位于 `scripts/program_ku040.tcl`。它会按默认序列号
+`210308AC5C97`（可用 `KU040_JTAG_SERIAL` 覆盖）显式选择 JTAG target，并要求该
+target 发现且只发现
 一个 `xcku040*` 器件，然后执行 `program_hw_devices`。这里是 FPGA SRAM 下载，
 不是断电保持的 QSPI/Flash 固化。
 

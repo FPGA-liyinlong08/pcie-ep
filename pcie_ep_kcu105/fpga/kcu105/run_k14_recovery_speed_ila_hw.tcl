@@ -26,9 +26,37 @@ if {![file exists $bit_path]} { error "K14 bitstream missing: $bit_path" }
 if {![file exists $ltx_path]} { error "K14 probes missing: $ltx_path" }
 file mkdir $capture_dir
 
+proc k15_masked_compare {width assignments} {
+  set bits [string repeat x $width]
+  foreach assignment $assignments {
+    lassign $assignment bit value
+    if {$bit < 0 || $bit >= $width || $value ni {0 1}} {
+      error "K15 invalid masked compare assignment: bit=$bit value=$value"
+    }
+    set string_index [expr {$width - 1 - $bit}]
+    set bits [string replace $bits $string_index $string_index $value]
+  }
+  return "eq${width}'b${bits}"
+}
+
 open_hw_manager
 connect_hw_server -url $server_url -allow_non_jtag
-open_hw_target
+set target_serial [expr {[info exists ::env(KU040_JTAG_SERIAL)] ?
+                          $::env(KU040_JTAG_SERIAL) : "210308AC5C97"}]
+set matching_targets {}
+puts "K14_HW_TARGET_COUNT=[llength [get_hw_targets]]"
+foreach target [get_hw_targets] {
+  set target_name [get_property NAME $target]
+  puts "K14_HW_TARGET name=$target_name"
+  if {[string match "*$target_serial*" $target_name]} {
+    lappend matching_targets $target
+  }
+}
+if {[llength $matching_targets] != 1} {
+  error "K14 expected one JTAG target containing serial $target_serial, found [llength $matching_targets]"
+}
+set selected_target [lindex $matching_targets 0]
+open_hw_target $selected_target
 set devices [get_hw_devices -filter {PART =~ "xcku040*"}]
 if {[llength $devices] != 1} {
   error "K14 expected one xcku040 device, found [llength $devices]"
@@ -54,6 +82,43 @@ set target_probe_name [expr {[info exists ::env(K14_ILA_TRIGGER_PROBE)] ?
                               "k14_event_state_w"}]
 set trigger_compare [expr {[info exists ::env(K14_ILA_TRIGGER_COMPARE)] ?
                             $::env(K14_ILA_TRIGGER_COMPARE) : "eq4'h8"}]
+set phase2_trigger_mode [expr {[info exists ::env(K15_PHASE2_TRIGGER_MODE)] ?
+                                $::env(K15_PHASE2_TRIGGER_MODE) : ""}]
+if {$phase2_trigger_mode ne ""} {
+  switch -- $phase2_trigger_mode {
+    phase2-request {
+      set target_probe_name k15_phase2_debug_w
+      set trigger_compare [k15_masked_compare 118 {{79 1} {78 1}}]
+    }
+    rxeq-done {
+      set target_probe_name k15_phase2_debug_w
+      set trigger_compare [k15_masked_compare 118 {{63 1}}]
+    }
+    proposal-wait {
+      set target_probe_name k15_phase2_debug_w
+      set trigger_compare [k15_masked_compare 118 {{88 0} {87 1} {86 0}}]
+    }
+    phase2-done {
+      set target_probe_name k15_phase2_debug_w
+      # debug[93] is Phase2 sticky[4].  Raw phase_done (debug[81]) is
+      # shared by every equalization phase and therefore also triggers on
+      # the normal Phase0 0x28 -> 0x29 transition.
+      set trigger_compare [k15_masked_compare 118 {{93 1}}]
+    }
+    phase2-failed {
+      set target_probe_name k15_phase2_debug_w
+      # Likewise use the Phase2-gated failure sticky, not raw phase_failed.
+      set trigger_compare [k15_masked_compare 118 {{94 1}}]
+    }
+    fallback {
+      set target_probe_name k14_timeout_fallback_w
+      set trigger_compare eq1'b1
+    }
+    default {
+      error "K15 invalid Phase2 trigger mode: $phase2_trigger_mode"
+    }
+  }
+}
 set trigger_pos [expr {[info exists ::env(K14_ILA_TRIGGER_POS)] ?
                         $::env(K14_ILA_TRIGGER_POS) : 2048}]
 foreach probe [get_hw_probes -of_objects $ila] {
@@ -98,7 +163,7 @@ if {$action eq "program-arm" || $action eq "program-capture-wait" ||
     set_property TRIGGER_COMPARE_VALUE $rate_trigger_compare $rate_trigger_probe
   }
   run_hw_ila $ila
-  puts "K14_RECOVERY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe] rate_compare=$rate_trigger_compare pos=$trigger_pos"
+  puts "K14_RECOVERY_ILA_ARM_PASS trigger=[get_property NAME $trigger_probe] compare=[get_property TRIGGER_COMPARE_VALUE $trigger_probe] rate_compare=$rate_trigger_compare phase2_mode=$phase2_trigger_mode pos=$trigger_pos"
 }
 if {$action eq "program-capture-wait" || $action eq "arm-capture-wait" ||
     $action eq "capture-wait" || $action eq "upload"} {

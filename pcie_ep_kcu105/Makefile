@@ -26,6 +26,7 @@ DESIGNWARE_HOME ?= /home/wx/synopsys/designware
 	k11b-vcs-serial k11b2-lint k11b2-vcs-serial k11b2-vcs-stress k11b2-vivado \
 	k11b2-hw-probe k11b2-hw-program k11b2-hw-acceptance k11b2-hw-program-debug \
 	k14-recovery-speed-vivado k14-recovery-speed-hw-program-arm \
+	k14-recovery-speed-hw-arm-only k14-recovery-speed-hw-arm-capture-wait \
 	k14-recovery-speed-hw-capture-wait k14-recovery-speed-hw-upload \
 	k14-recovery-speed-hw-repeat k14-recovery-speed-test k14-direct-vcs \
 	k14-rate-id-ab-vcs \
@@ -703,6 +704,16 @@ k14-recovery-speed-hw-program-arm:
 	$(VIVADO) -mode batch -nojournal -nolog \
 		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
 		-tclargs $(KU040_SERVER) program-arm
+
+k14-recovery-speed-hw-arm-only:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) arm-only
+
+k14-recovery-speed-hw-arm-capture-wait:
+	$(VIVADO) -mode batch -nojournal -nolog \
+		-source fpga/kcu105/run_k14_recovery_speed_ila_hw.tcl \
+		-tclargs $(KU040_SERVER) arm-capture-wait
 
 k14-recovery-speed-hw-capture-wait:
 	$(VIVADO) -mode batch -nojournal -nolog \

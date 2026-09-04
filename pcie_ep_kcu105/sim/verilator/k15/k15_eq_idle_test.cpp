@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
     // The downstream moves to its Phase 2: an EC=10 pair carrying its
     // transmitter settings ends Phase 1 and is handed to Phase 2 as the
     // maintain-reflection seed.
-    set_tuple(d, 0x32, 0, 36, 12);
+    set_tuple(d, 0x3a, 0, 35, 5);
     pulse_ts(d); require(d.operation_state != 6,
                          "phase1 one partner EC10 insufficient");
     pulse_ts(d);
@@ -128,11 +128,11 @@ int main(int argc, char **argv) {
     // reflects the advertisement received in the EC=10 pair that ended
     // Phase 1 ("maintain current settings"): Use Preset, preset field and
     // coefficient fields are all echoed, so the stream content is
-    // identical to the partner's advertisement tuple (0x32).
+    // identical to the partner's P7 advertisement tuple (0x3a).
     enter_phase(d, 2);
-    require(d.tx_eq_control == 0x32,
+    require(d.tx_eq_control == 0x3a,
             "phase2 first request reflects the partner advertisement");
-    require(d.tx_eq_data == eq_data(0x32, 0, 36, 12),
+    require(d.tx_eq_data == eq_data(0x3a, 0, 35, 5),
             "phase2 maintain request echoes the partner coefficients");
     require(d.operation_state == 1, "phase2 issues first RX adapt");
     d.eq_done = 1; d.eq_result = 2; d.eq_rsp_preset_sel = 1;
@@ -148,6 +148,10 @@ int main(int argc, char **argv) {
     pulse_ts(d); tick(d);
     require(d.operation_state == 1, "phase2 re-adapts after acceptance");
     require(d.eq_req_preset == 6, "phase2 retry adapts to accepted P6");
+    require(d.tx_eq_control == 0xb2,
+            "phase2 retry keeps requesting the accepted P6");
+    require(d.tx_eq_data == eq_data(0xb2, 0, 40, 0),
+            "phase2 retry does not revert to the old P7 tuple");
     d.eq_done = 1; d.eq_result = 1; tick(d);
     d.eq_done = 0; d.eq_result = 0; tick(d);
     require(d.operation_state == 6, "phase2 concludes on RX success");

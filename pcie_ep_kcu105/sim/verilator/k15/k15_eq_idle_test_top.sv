@@ -73,7 +73,7 @@ module k15_eq_idle_test_top (
         .tx_eq_data(tx_eq_data), .phase_done(phase_done),
         .phase_failed(phase_failed), .phase1_exit_skip(phase1_exit_skip),
         .phase_ts_count(phase_ts_count),
-        .operation_state(operation_state)
+        .operation_state(operation_state), .phase2_debug()
     );
 
     pcie_gen3_idle_tx u_idle_tx (

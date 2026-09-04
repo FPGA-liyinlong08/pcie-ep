@@ -107,7 +107,15 @@ module pcie_ltssm_mac_gen1 #(
     // semantic fields to the K13 controller; callers must not infer an EQ
     // request from a Rate ID capability bit.
     output wire [7:0]  os_eq_control,
-    output wire [23:0] os_eq_data
+    output wire [23:0] os_eq_data,
+    // Observation-only K15 equalization state for the board ILA.
+    output wire [2:0]  dbg_eq_operation_state,
+    output wire [3:0]  dbg_eq_phase_ts_count,
+    output wire        dbg_eq_phase_done,
+    output wire        dbg_eq_phase_failed,
+    output wire [7:0]  dbg_eq_tx_control,
+    output wire [23:0] dbg_eq_tx_data,
+    output wire [31:0] dbg_eq_phase2_internal
 );
     // Explicit Gen3 EIEOS markers are also exported to the hardware ILA so
     // the first serial EIEOS edge can be aligned with PHY readiness.
@@ -238,9 +246,17 @@ module pcie_ltssm_mac_gen1 #(
     reg eq_completed_8g;
     wire [3:0] eq_phase_ts_count;
     wire [2:0] eq_operation_state;
+    wire [31:0] eq_phase2_debug;
     assign gen3_eq_active = eq_phase_valid;
     assign gen3_eq_phase = eq_phase_w;
     assign gen3_eq_failed = eq_phase_failed;
+    assign dbg_eq_operation_state = eq_operation_state;
+    assign dbg_eq_phase_ts_count = eq_phase_ts_count;
+    assign dbg_eq_phase_done = eq_phase_done;
+    assign dbg_eq_phase_failed = eq_phase_failed;
+    assign dbg_eq_tx_control = k15_tx_eq_control;
+    assign dbg_eq_tx_data = k15_tx_eq_data;
+    assign dbg_eq_phase2_internal = eq_phase2_debug;
     wire       gen1_os_ts1_valid, gen1_os_ts2_valid, gen1_os_malformed;
     wire [7:0] gen1_os_link_number, gen1_os_lane_number;
     wire [7:0] gen1_os_n_fts, gen1_os_rate_id, gen1_os_training_control;
@@ -633,7 +649,8 @@ module pcie_ltssm_mac_gen1 #(
         .phase_done(eq_phase_done), .phase_failed(eq_phase_failed),
         .phase1_exit_skip(eq_phase1_skip),
         .phase_ts_count(eq_phase_ts_count),
-        .operation_state(eq_operation_state)
+        .operation_state(eq_operation_state),
+        .phase2_debug(eq_phase2_debug)
     );
 
     pcie_gen1_os_tx u_os_tx (

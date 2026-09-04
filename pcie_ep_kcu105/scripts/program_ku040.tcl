@@ -24,7 +24,23 @@ namespace eval ::ku040 {
             open_hw_manager
             set manager_open 1
             connect_hw_server -url $server_url -allow_non_jtag
-            open_hw_target
+            set target_serial [expr {[info exists ::env(KU040_JTAG_SERIAL)] ?
+                                      $::env(KU040_JTAG_SERIAL) :
+                                      "210308AC5C97"}]
+            set matching_targets {}
+            puts "${label}_HW_TARGET_COUNT=[llength [get_hw_targets]]"
+            foreach target [get_hw_targets] {
+                set target_name [get_property NAME $target]
+                puts "${label}_HW_TARGET name=$target_name"
+                if {[string match "*$target_serial*" $target_name]} {
+                    lappend matching_targets $target
+                }
+            }
+            if {[llength $matching_targets] != 1} {
+                error "$label expected one JTAG target containing serial $target_serial, found [llength $matching_targets]"
+            }
+            set selected_target [lindex $matching_targets 0]
+            open_hw_target $selected_target
             set target_open 1
 
             set devices [get_hw_devices]

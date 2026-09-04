@@ -103,6 +103,12 @@ module kcu105_pcie_ep_gen1_top #(
     wire eq_rsp_preset_sel;
     wire gen3_eq_active, gen3_eq_failed;
     wire [1:0] gen3_eq_phase;
+    wire [2:0] dbg_eq_operation_state;
+    wire [3:0] dbg_eq_phase_ts_count;
+    wire dbg_eq_phase_done, dbg_eq_phase_failed;
+    wire [7:0] dbg_eq_tx_control;
+    wire [23:0] dbg_eq_tx_data;
+    wire [31:0] dbg_eq_phase2_internal;
     reg [24:0] heartbeat_count;
 
     wire dbg_operational_seen, dbg_link_loss_seen;
@@ -335,6 +341,96 @@ module kcu105_pcie_ep_gen1_top #(
                 auto_retrain_pulse;
             (* mark_debug = "true" *) wire k14_mailbox_valid_w =
                 mailbox_valid;
+            // Phase 2 can remain active for TRAIN_TIMEOUT_CYCLES (24 ms at
+            // 250 MHz), much longer than the 8192-sample ILA window.  Keep
+            // milestones sticky so a fallback trigger still tells which
+            // command/protocol boundaries were crossed earlier.
+            reg [5:0] k15_phase2_sticky_r;
+            reg [22:0] k15_phase2_elapsed_r;
+            reg k15_rxeq_done_q;
+            reg k15_phase2_active_q;
+            wire k15_phase2_active = (ltssm_state == 6'h2a);
+            wire k15_eq_req_accept = k15_phase2_active &&
+                                      eq_req_valid && eq_req_ready;
+            wire k15_eq_proposal = k15_phase2_active && eq_done &&
+                                    (eq_result == 3'd2);
+            wire k15_proposal_match = k15_phase2_active &&
+                                      dbg_eq_phase2_internal[0] &&
+                                      dbg_eq_phase2_internal[3] &&
+                                      dbg_eq_phase2_internal[4];
+            wire k15_rxeq_done_rise = phy_rxeq_done &&
+                                       !k15_rxeq_done_q;
+
+            always @(posedge phy_pclk or negedge pipe_rst_n) begin
+                if (!pipe_rst_n) begin
+                    k15_phase2_sticky_r <= 6'd0;
+                    k15_phase2_elapsed_r <= 23'd0;
+                    k15_rxeq_done_q <= 1'b0;
+                    k15_phase2_active_q <= 1'b0;
+                end else begin
+                    k15_rxeq_done_q <= phy_rxeq_done;
+                    k15_phase2_active_q <= k15_phase2_active;
+                    if (k15_phase2_active && !k15_phase2_active_q) begin
+                        k15_phase2_elapsed_r <= 23'd1;
+                        k15_phase2_sticky_r <=
+                            {dbg_eq_phase_failed, dbg_eq_phase_done,
+                             k15_proposal_match, k15_eq_proposal,
+                             k15_rxeq_done_rise, k15_eq_req_accept};
+                    end else if (k15_phase2_active) begin
+                        if (!(&k15_phase2_elapsed_r))
+                            k15_phase2_elapsed_r <=
+                                k15_phase2_elapsed_r + 1'b1;
+                        if (k15_eq_req_accept)
+                            k15_phase2_sticky_r[0] <= 1'b1;
+                        if (k15_rxeq_done_rise)
+                            k15_phase2_sticky_r[1] <= 1'b1;
+                        if (k15_eq_proposal)
+                            k15_phase2_sticky_r[2] <= 1'b1;
+                        if (k15_proposal_match)
+                            k15_phase2_sticky_r[3] <= 1'b1;
+                        if (dbg_eq_phase_done)
+                            k15_phase2_sticky_r[4] <= 1'b1;
+                        if (dbg_eq_phase_failed)
+                            k15_phase2_sticky_r[5] <= 1'b1;
+                    end
+                end
+            end
+
+            // Fixed-width aliases make post-synthesis ILA insertion and CSV
+            // decoding deterministic.  See the K15 Phase-2 board report for
+            // the complete bit allocation.
+            (* mark_debug = "true", keep = "true" *)
+            wire [117:0] k15_phase2_debug_w = {
+                k15_phase2_elapsed_r,       // [117:95]
+                k15_phase2_sticky_r,        // [94:89]
+                dbg_eq_operation_state,     // [88:86]
+                dbg_eq_phase_ts_count,      // [85:82]
+                dbg_eq_phase_done,          // [81]
+                dbg_eq_phase_failed,        // [80]
+                eq_req_valid,               // [79]
+                eq_req_ready,               // [78]
+                eq_req_kind,                // [77:75]
+                eq_busy,                    // [74]
+                eq_done,                    // [73]
+                eq_result,                  // [72:70]
+                phy_rxeq_ctrl,              // [69:68]
+                phy_rxeq_txpreset,          // [67:64]
+                phy_rxeq_done,              // [63]
+                phy_rxeq_adapt_done,        // [62]
+                phy_rxeq_preset_sel,        // [61]
+                phy_rxeq_new_txcoeff,       // [60:43]
+                os_ts1_valid,               // [42]
+                os_malformed,               // [41]
+                os_eq_control,              // [40:33]
+                os_eq_data,                 // [32:9]
+                dbg_eq_tx_control,          // [8:1]
+                os_tx_complete              // [0]
+            };
+            (* mark_debug = "true", keep = "true" *)
+            wire [37:0] k15_phase2_detail_w = {
+                dbg_eq_phase2_internal[13:0], // [37:24]
+                dbg_eq_tx_data                // [23:0]
+            };
             k02_phy_event_recorder u_k14_event_recorder (
                 .clk(phy_pclk), .rst(!pipe_rst_n),
                 .qpll1lock(qpll1lock_record_in),
@@ -514,7 +610,14 @@ module kcu105_pcie_ep_gen1_top #(
         .os_link_number(os_link_number), .os_lane_number(os_lane_number),
         .os_rate_id(os_rate_id), .os_training_control(os_training_control),
         .os_tx_complete(os_tx_complete), .os_eq_control(os_eq_control),
-        .os_eq_data(os_eq_data)
+        .os_eq_data(os_eq_data),
+        .dbg_eq_operation_state(dbg_eq_operation_state),
+        .dbg_eq_phase_ts_count(dbg_eq_phase_ts_count),
+        .dbg_eq_phase_done(dbg_eq_phase_done),
+        .dbg_eq_phase_failed(dbg_eq_phase_failed),
+        .dbg_eq_tx_control(dbg_eq_tx_control),
+        .dbg_eq_tx_data(dbg_eq_tx_data),
+        .dbg_eq_phase2_internal(dbg_eq_phase2_internal)
     );
 
     // K15 reaches a stable Gen3 L0 with an idle-only 128b/130b stream. Keep
@@ -570,7 +673,9 @@ module kcu105_pcie_ep_gen1_top #(
         dbg_link_loss_pipe, os_malformed, os_link_number, os_lane_number,
         os_training_control, os_tx_complete, os_eq_control, os_eq_data,
         phy_rate_state, speed_state, gen3_eq_active, gen3_eq_phase,
-        eq_busy, eq_done, eq_result};
+        eq_busy, eq_done, eq_result, dbg_eq_operation_state,
+        dbg_eq_phase_ts_count, dbg_eq_phase_done, dbg_eq_phase_failed,
+        dbg_eq_tx_control, dbg_eq_tx_data, dbg_eq_phase2_internal};
 endmodule
 
 `default_nettype wire

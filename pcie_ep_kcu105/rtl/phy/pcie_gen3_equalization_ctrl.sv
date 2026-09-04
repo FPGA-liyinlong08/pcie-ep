@@ -66,7 +66,11 @@ module pcie_gen3_equalization_ctrl #(
     // Recovery.RcvrLock, not Phase 2.
     output reg         phase1_exit_skip,
     output reg  [3:0]  phase_ts_count,
-    output reg  [2:0]  operation_state
+    output reg  [2:0]  operation_state,
+    // Observation-only Phase-2 state.  Keep the protocol outputs above
+    // unchanged; this packed bus lets the board ILA distinguish a PHY RXEQ
+    // stall from a proposal/TS1 matching failure.
+    output wire [31:0] phase2_debug
 );
     localparam [2:0] EQ_TX_PRESET = 3'd0;
     localparam [2:0] EQ_TX_COEFF  = 3'd1;
@@ -219,6 +223,22 @@ module pcie_gen3_equalization_ctrl #(
         (proposal_preset_sel ?
          (incoming_preset == proposal_coeff[3:0]) :
          (incoming_coeff == proposal_coeff));
+    assign phase2_debug = {
+        proposal_coeff,          // [31:14]
+        exit_pending,            // [13]
+        request_pending,         // [12]
+        transition_tuple_valid,  // [11]
+        timeout_expired,         // [10]
+        last_accepted_valid,     // [9]
+        incoming_ec,             // [8:7]
+        legal_ts1,               // [6]
+        incoming_reject,         // [5]
+        proposal_content_matches,// [4]
+        second_same_ts,          // [3]
+        consecutive_have,        // [2]
+        proposal_preset_sel,     // [1]
+        proposal_pending         // [0]
+    };
 
     always @* begin
         eq_req_valid = 1'b0;
@@ -487,6 +507,26 @@ module pcie_gen3_equalization_ctrl #(
                                 phase_failed <= 1'b1;
                                 operation_state <= OP_FAIL;
                             end else begin
+                                // The accepted proposal is now the active
+                                // request to the downstream transmitter.
+                                // Keep streaming that request while the PHY
+                                // performs the follow-up RX adaptation.  If
+                                // reflected_control is left at the Phase-1
+                                // transition tuple, the wire asks the peer
+                                // to return to the old preset while
+                                // phy_rxeq_txpreset names the new one.
+                                reflected_control <= proposal_preset_sel ?
+                                    {1'b1, proposal_coeff[3:0], 1'b0, 2'b10} :
+                                    {1'b0, partner_preset_w, 1'b0, 2'b10};
+                                reflected_data <= encode_eq_data(
+                                    proposal_preset_sel ?
+                                        {1'b1, proposal_coeff[3:0],
+                                         1'b0, 2'b10} :
+                                        {1'b0, partner_preset_w,
+                                         1'b0, 2'b10},
+                                    proposal_preset_sel ? initial_coeff_w :
+                                                          proposal_coeff,
+                                    1'b0);
                                 last_accepted_valid <= 1'b1;
                                 last_accepted_preset_sel <= proposal_preset_sel;
                                 last_accepted_coeff <= proposal_coeff;

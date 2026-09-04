@@ -260,34 +260,21 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
     [k14_pin_net {.*u_phy_wrapper/u_pcie_phy/phy_pclk$}]
 
   set probe0 [concat \
-    [k14_primitive_pin GTHE3_COMMON QPLL1LOCK] \
-    [k14_primitive_pin GTHE3_COMMON QPLL1RESET] \
-    [k14_primitive_bus_pin GTHE3_CHANNEL PCIERATEQPLLRESET 2] \
-    [k14_primitive_pin GTHE3_CHANNEL PCIERATEGEN3] \
-    [k14_primitive_pin GTHE3_CHANNEL PCIEUSERGEN3RDY] \
     [k14_bus {.*k14_phy_rate_w\[[0-1]\]$} 2] \
-    [k14_bus {.*k14_phy_powerdown_w\[[0-1]\]$} 2] \
-    [k14_net {.*k14_phy_txei_w$}] \
-    [k14_net {.*k14_detect_assist_w$}] \
-    [k14_net {.*k14_cdr_hold_w$}] \
     [k14_bus {.*k14_rate_state_w\[[0-3]\]$} 4] \
     [k14_bus {.*k14_speed_state_w\[[0-2]\]$} 3] \
     [k14_bus {.*k14_ltssm_state_w\[[0-5]\]$} 6] \
     [k14_bus {.*k14_event_state_w\[[0-3]\]$} 4] \
     [k14_net {^u_endpoint/phy_phystatus$}] \
-    [k14_net {.*k14_rp_gen3_request_seen_w$}] \
-    [k14_net {.*k14_partner_pending_w$}] \
-    [k14_net {.*k14_partner_armed_w$}] \
-    [k14_net {.*k14_partner_accept_w$}] \
     [k14_net {.*k14_gen3_rate_success_w$}] \
     [k14_net {.*k14_timeout_fallback_w$}] \
-    [k14_net {.*k14_gen1_fallback_success_w$}] \
-    [k14_net {.*k14_auto_retrain_w$}] \
-    [k14_net {.*k14_mailbox_valid_w$}]]
+    [k14_net {.*k14_gen1_fallback_success_w$}]]
   k14_add_probe u_ila_k14 0 $probe0
-  set probe1 [k14_bus {.*k14_event_record_w\[[0-9]+\]$} 118]
+  set probe1 [k14_bus {.*k15_phase2_debug_w\[[0-9]+\]$} 118]
   k14_add_probe u_ila_k14 1 $probe1
-  puts "K14_RECOVERY_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1]"
+  set probe2 [k14_bus {.*k15_phase2_detail_w\[[0-9]+\]$} 38]
+  k14_add_probe u_ila_k14 2 $probe2
+  puts "K15_PHASE2_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2]"
 }
 
 if {$resume_routed_dcp eq ""} {
