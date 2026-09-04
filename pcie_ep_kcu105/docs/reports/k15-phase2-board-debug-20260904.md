@@ -225,3 +225,36 @@ P4 回退是一个真实 RTL 缺陷，当前修复已经由实板证明生效，
 TS1 表达、第二次 RXEQ 的发起时机，以及
 `pcie_gen3_equalization_ctrl -> pcie_phy_command_ctrl` 两阶段事务闭环。后续应在
 保持 P4 修复的基础上做上述语义 A/B，不把主板或 Xilinx PHY IP 预设为根因。
+
+## 24 ms EQ timeout 与 Phase3 实板复验
+
+为验证 Phase2 时间预算，新增 `GEN3_EQ_TIMEOUT_CYCLES` 参数并透传到
+`pcie_phy_command_ctrl.EQ_TIMEOUT_CYCLES`；Phase2 协议状态机未改动。构建同时
+使用 `GEN3_SPEED_TIMEOUT_CYCLES=6000000`、`GEN3_EQ_TIMEOUT_CYCLES=6000000`，并将
+构建脚本默认 `LTSSM_TX_RATE_ID` 修正为 `8'h0e`。
+
+实现产物（KU040 `210308AC5C97`）：
+
+- bit SHA256：`3303f2cbf89a23dfb03d839eddc7b9505309f7ff6961e9833f47065df52b5ebc`；
+- LTX SHA256：`5c87e09a1769423f8bba3795fa3d33419557ffaf5acb2016b8669d3653c8fced`；
+- `LTSSM_TX_RATE_ID=8'h0e`；
+- 内外 timeout 均为 `6000000` cycles；
+- DRC error=0，WNS/WHS=`-0.482/+0.004 ns`。
+
+实板结果：
+
+1. 第二次 RX Adapt 在 `2000243` 个 250 MHz 周期（约 `8.001 ms`）完成，Phase2
+   sticky=`0x1f`，包含 `phase_done`，证明内部 4 ms EQ timeout 已不再提前截断。
+2. 精确 `LTSSM=0x2b` 触发命中，Phase3 窗口内保持 `0x2b`；对端重复发送
+   `EC=11` 系数请求 `control=0x23/data=0x802800`，本端同样保持 EC=11，未见
+   `EC=00` 结束，随后远程主机仍未枚举 `01:00.0`。
+3. 下一版诊断 bit 增加独立 54-bit probe，记录 `eq_req_coeff`、
+   `phy_txeq_new_coeff`、`eq_rsp_coeff`，用于确认 GT 返回系数与本端反射系数是否
+   不一致。
+
+捕获文件位于构建目录
+`fpga/kcu105/build_k15_eq_timeout24ms_20260904_0e/capture/`：
+
+- `phase2_request/20260904_232447_k14_recovery_speed.csv`；
+- `phase2_done/20260904_232848_k14_recovery_speed.csv`；
+- `phase3/20260904_233123_k14_recovery_speed.csv`。

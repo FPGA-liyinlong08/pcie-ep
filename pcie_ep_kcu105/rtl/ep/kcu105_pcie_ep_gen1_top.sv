@@ -15,6 +15,7 @@ module kcu105_pcie_ep_gen1_top #(
     // Phase D experimental path.  Zero is the signed Phase C Gen1 release.
     parameter integer GEN3_RATE_CHANGE_ENABLE = 1,
     parameter integer GEN3_SPEED_TIMEOUT_CYCLES = 1_000_000,
+    parameter integer GEN3_EQ_TIMEOUT_CYCLES = 1_000_000,
     parameter integer GEN3_AUTO_RETRAIN_CYCLES = 0,
     // K15 reversible PHY-envelope knobs. Production defaults enable the
     // Figure-1 canonical preset/query flow; Query may be disabled for A/B.
@@ -431,6 +432,16 @@ module kcu105_pcie_ep_gen1_top #(
                 dbg_eq_phase2_internal[13:0], // [37:24]
                 dbg_eq_tx_data                // [23:0]
             };
+            // Phase-3 TXEQ diagnostics: retain the requested coefficient,
+            // the coefficient reported by the GT, and the semantic response
+            // captured by the raw command owner.  This probe is diagnostic
+            // only and does not participate in protocol decisions.
+            (* mark_debug = "true", keep = "true" *)
+            wire [53:0] k15_phase3_detail_w = {
+                eq_req_coeff,        // [53:36]
+                phy_txeq_new_coeff,  // [35:18]
+                eq_rsp_coeff         // [17:0]
+            };
             k02_phy_event_recorder u_k14_event_recorder (
                 .clk(phy_pclk), .rst(!pipe_rst_n),
                 .qpll1lock(qpll1lock_record_in),
@@ -499,6 +510,7 @@ module kcu105_pcie_ep_gen1_top #(
     );
 
     pcie_phy_command_ctrl #(
+        .EQ_TIMEOUT_CYCLES(GEN3_EQ_TIMEOUT_CYCLES),
         .K15_AB_CDR_HOLD(K15_AB_CDR_HOLD),
         .K15_AB_PRERATE_TXEQ(K15_AB_PRERATE_TXEQ),
         .K15_AB_PRERATE_QUERY(K15_AB_PRERATE_QUERY),

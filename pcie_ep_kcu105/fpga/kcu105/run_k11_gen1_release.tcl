@@ -26,6 +26,22 @@ set k15_ab_prerate_txeq 1
 set k15_ab_prerate_query 1
 set k15_ab_prerate_dwell 0
 set k15_ab_prerate_preset 4
+set gen3_speed_timeout_cycles 1000000
+if {[info exists ::env(K15_GEN3_SPEED_TIMEOUT_CYCLES)]} {
+  set gen3_speed_timeout_cycles $::env(K15_GEN3_SPEED_TIMEOUT_CYCLES)
+}
+if {![string is integer -strict $gen3_speed_timeout_cycles] ||
+    $gen3_speed_timeout_cycles < 1} {
+  error "K15_GEN3_SPEED_TIMEOUT_CYCLES must be a positive integer"
+}
+set gen3_eq_timeout_cycles 1000000
+if {[info exists ::env(K15_GEN3_EQ_TIMEOUT_CYCLES)]} {
+  set gen3_eq_timeout_cycles $::env(K15_GEN3_EQ_TIMEOUT_CYCLES)
+}
+if {![string is integer -strict $gen3_eq_timeout_cycles] ||
+    $gen3_eq_timeout_cycles < 1} {
+  error "K15_GEN3_EQ_TIMEOUT_CYCLES must be a positive integer"
+}
 if {[info exists ::env(K15_AB_CDR_HOLD)]} {
   set k15_ab_cdr_hold $::env(K15_AB_CDR_HOLD)
 }
@@ -54,7 +70,7 @@ if {$k15_ab_cdr_hold > 1 || $k15_ab_prerate_txeq > 1 ||
     $k15_ab_prerate_query > 1 || $k15_ab_prerate_preset > 10} {
   error "K15 A/B boolean/preset parameter out of range"
 }
-set k14_tx_rate_id "8'h02"
+set k14_tx_rate_id "8'h0e"
 if {[info exists ::env(K14_HW_TX_RATE_ID)]} {
   if {$::env(K14_HW_TX_RATE_ID) ni {02 0e}} {
     error "K14_HW_TX_RATE_ID must be 02 or 0e"
@@ -139,6 +155,8 @@ if {$resume_routed_dcp ne ""} {
       -generic K15_AB_PRERATE_QUERY=$k15_ab_prerate_query \
       -generic K15_AB_PRERATE_DWELL_CYCLES=$k15_ab_prerate_dwell \
       -generic K15_AB_PRERATE_PRESET=$k15_ab_prerate_preset \
+      -generic GEN3_SPEED_TIMEOUT_CYCLES=$gen3_speed_timeout_cycles \
+      -generic GEN3_EQ_TIMEOUT_CYCLES=$gen3_eq_timeout_cycles \
       -generic LTSSM_TX_RATE_ID=$k14_tx_rate_id
   } else {
     synth_design -top $top_name -part $part_name \
@@ -274,7 +292,9 @@ if {$k14_recovery_speed && $resume_routed_dcp eq ""} {
   k14_add_probe u_ila_k14 1 $probe1
   set probe2 [k14_bus {.*k15_phase2_detail_w\[[0-9]+\]$} 38]
   k14_add_probe u_ila_k14 2 $probe2
-  puts "K15_PHASE2_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2]"
+  set probe3 [k14_bus {.*k15_phase3_detail_w\[[0-9]+\]$} 54]
+  k14_add_probe u_ila_k14 3 $probe3
+  puts "K15_PHASE2_ILA_INSERT_PASS probe0_width=[llength $probe0] probe1_width=[llength $probe1] probe2_width=[llength $probe2] probe3_width=[llength $probe3]"
 }
 
 if {$resume_routed_dcp eq ""} {
@@ -391,6 +411,8 @@ puts $summary "G9_WAIT_REMOTE_DETECT=1"
 puts $summary "G9_WAIT_REMOTE_DETECT_CYCLES=$g9_cycles"
 puts $summary "PHY_COMMAND_CTRL_COUNT=1"
 puts $summary "GEN3_RATE_CHANGE_ENABLE=$k14_recovery_speed"
+puts $summary "GEN3_SPEED_TIMEOUT_CYCLES=$gen3_speed_timeout_cycles"
+puts $summary "GEN3_EQ_TIMEOUT_CYCLES=$gen3_eq_timeout_cycles"
 if {$k14_recovery_speed} {
   puts $summary "K14_PLACE_DIRECTIVE=$k14_place_directive"
   puts $summary "K14_ALLOW_TIMING_VIOLATION=$k14_allow_timing_violation"
@@ -407,5 +429,7 @@ puts $summary "DRC_ERROR_COUNT=[llength $drc_errors]"
 puts $summary "DEBUG_CORE_COUNT=[llength [get_debug_cores -quiet]]"
 puts $summary "bitstream=$bit_path"
 close $summary
+puts "GEN3_SPEED_TIMEOUT_CYCLES=$gen3_speed_timeout_cycles"
+puts "GEN3_EQ_TIMEOUT_CYCLES=$gen3_eq_timeout_cycles"
 puts "[expr {$k14_recovery_speed ? "K14_RECOVERY_SPEED_IMPL_PASS" :
                                       "K11_GEN1_COMMAND_BOUNDARY_IMPL_PASS"}] WNS=$wns WHS=$whs"

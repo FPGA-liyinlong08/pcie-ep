@@ -10,6 +10,8 @@ vivado_bin="${VIVADO_BIN:-/home/Xilinx/Vivado/2021.2/bin/vivado}"
 export XILINX_LOCAL_USER_DATA=no
 export K14_RECOVERY_SPEED=1
 export K14_IMPL_BUILD_DIR="${build_dir}"
+export K15_GEN3_SPEED_TIMEOUT_CYCLES="${K15_GEN3_SPEED_TIMEOUT_CYCLES:-1000000}"
+export K15_GEN3_EQ_TIMEOUT_CYCLES="${K15_GEN3_EQ_TIMEOUT_CYCLES:-1000000}"
 if [[ -e "${build_dir}/k14_recovery_speed_ila.bit" ||
       -e "${build_dir}/k14_recovery_speed_ila.ltx" ]]; then
   echo "错误：K14输出目录已有bit/ltx，为避免覆盖请设置新的K14_BUILD_DIR：${build_dir}" >&2
@@ -35,5 +37,23 @@ if grep -q '^ERROR:' "${build_dir}/vivado.log"; then
 fi
 sha256sum "${build_dir}/k14_recovery_speed_ila.bit" \
   > "${build_dir}/bitstream.sha256"
+sha256sum "${build_dir}/k14_recovery_speed_ila.ltx" \
+  > "${build_dir}/debug_probes.sha256"
+source_commit="$(git -C "${project_dir}" rev-parse HEAD)"
+bit_sha256="$(awk '{print $1}' "${build_dir}/bitstream.sha256")"
+ltx_sha256="$(awk '{print $1}' "${build_dir}/debug_probes.sha256")"
+{
+  echo "SOURCE_COMMIT=${source_commit}"
+  echo "GEN3_SPEED_TIMEOUT_CYCLES=${K15_GEN3_SPEED_TIMEOUT_CYCLES}"
+  echo "GEN3_EQ_TIMEOUT_CYCLES=${K15_GEN3_EQ_TIMEOUT_CYCLES}"
+  echo "PHY_PCLK_HZ=250000000"
+  echo "PHY_PCLK_PERIOD_NS=4.000"
+  echo "BIT_SHA256=${bit_sha256}"
+  echo "LTX_SHA256=${ltx_sha256}"
+  echo "BOARD_RESULT=PENDING_HARDWARE_CAPTURE"
+  cat "${build_dir}/summary.txt"
+} > "${build_dir}/build_evidence.txt"
 cat "${build_dir}/summary.txt"
 cat "${build_dir}/bitstream.sha256"
+cat "${build_dir}/debug_probes.sha256"
+cat "${build_dir}/build_evidence.txt"
